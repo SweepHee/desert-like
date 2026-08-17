@@ -1,0 +1,20 @@
+{
+  "name": "desertlike",
+  "private": true,
+  "type": "module",
+  "workspaces": ["packages/*"],
+  "engines": {
+    "node": ">=22.18"
+  },
+  "scripts": {
+    "battle": "node packages/sim/src/cli/battle.ts",
+    "determinism": "node packages/sim/src/cli/determinism.ts",
+    "typecheck": "tsc -p packages/sim --pretty && tsc -p packages/client --pretty && tsc -p packages/server --pretty",
+    "dev": "npm run dev -w @desertlike/client",
+    "server": "npm run start -w @desertlike/server"
+  },
+  "devDependencies": {
+    "@types/node": "^26.2.0",
+    "typescript": "^5.9.3"
+  }
+}

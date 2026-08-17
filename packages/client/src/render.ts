@@ -1,0 +1,1593 @@
+/**
+ * PixiJS 탑뷰 렌더러 + 카메라 + 코드 연출(FX).
+ *
+ * 프레임 애니메이션 없이 정지 스프라이트를 코드로 움직인다:
+ *  - 걷기: 통통 바운스 + 좌우 기울기
+ *  - 근접 공격: 대상 방향 돌진 후 복귀
+ *  - 원거리 공격: 반동 + 투사체 비행 + 명중 임팩트
+ *  - 피격: 붉은 플래시 / 사망: 옆으로 쓰러지며 페이드아웃
+ * 전부 시각 연출일 뿐 시뮬 상태는 건드리지 않는다 (결정론 무관).
+ */
+import {
+  Application, Assets, ColorMatrixFilter, Container, Graphics, Rectangle, Sprite, Texture,
+} from 'pixi.js';
+import {
+  DEFS, FP, MAPS, DEFAULT_MAP, laneCenterY, mapHalfH, tiles,
+  type Game, type MapDef,
+} from '@desertlike/sim';
+import { artOf } from './sprites.ts';
+import type { Audio, SfxKey } from './audio.ts';
+
+export const TILE = 26;
+const Y_SQUASH = 0.86;
+const PAD_TOP = 46;
+const PAD_BOTTOM = 26;
+
+// 현재 맵 (renderer.setMap 으로 교체)
+let curMap: MapDef = MAPS[DEFAULT_MAP]!;
+
+/**
+ * 코리도어 바깥 지형을 보여주기 위한 "렌더 전용" 세로 여백 (FP).
+ *
+ * 평원처럼 레인 반폭이 맵 반높이와 같은 맵은 화면 전체가 레인 안으로 판정돼
+ * 경계 타일도 소품도 나오지 않는다. 시뮬 좌표는 건드리지 않고 렌더 캔버스만
+ * 위아래로 넓혀서 숲/암반 지대가 실제로 보이게 한다.
+ */
+const EDGE_MARGIN = tiles(3);
+
+/** 렌더 기준 맵 반높이 (시뮬 반높이 + 바깥 지형 여백). */
+function renderHalfH(m: MapDef = curMap): number {
+  return mapHalfH(m) + EDGE_MARGIN;
+}
+
+/** 월드 픽셀 크기 (줌 적용 전, 현재 맵 기준). */
+export function worldW(): number {
+  return (curMap.length / FP) * TILE;
+}
+export function worldH(): number {
+  return ((renderHalfH() * 2) / FP) * TILE * Y_SQUASH + PAD_TOP + PAD_BOTTOM;
+}
+
+/**
+ * 픽셀랩 등 외부 에셋으로 교체된 유닛. 없으면 절차 생성 스프라이트 사용.
+ * 배열이면 외형 변형(variant) — 유닛 id 로 결정론적으로 배정된다.
+ * (예: 엘프 궁수는 생산 시 여/남 50:50 — docs/races/sylvarin.md)
+ */
+export const ASSET_UNITS: Record<string, string | string[]> = {
+  s_gouto: '/assets/units/s_gouto.png',
+  s_elf_archer: ['/assets/units/s_elf_archer_f.png', '/assets/units/s_elf_archer_m.png'],
+  s_marmot: '/assets/units/s_marmot.png',
+  s_vine_hunter: '/assets/units/s_vine_hunter.png',
+  s_mushroom_bomber: '/assets/units/s_mushroom_bomber.png',
+  s_druid: '/assets/units/s_druid.png',
+  s_treekeeper: '/assets/units/s_treekeeper.png',
+  s_thorn_witch: '/assets/units/s_thorn_witch.png',
+  s_treant: '/assets/units/s_treant.png',
+  s_apostle: '/assets/units/s_apostle.png',
+  s_owl: '/assets/units/s_owl.png',
+  s_butterfly: '/assets/units/s_butterfly.png',
+  s_wyvern: '/assets/units/s_wyvern.png',
+  s_unicorn: '/assets/units/s_unicorn.png',
+  s_fairy: '/assets/units/s_fairy.png',
+  s_marksman: '/assets/units/s_marksman.png',
+  s_sage: '/assets/units/s_sage.png',
+  m_plushbear: '/assets/units/m_plushbear.png',
+  m_clockwork_soldier: '/assets/units/m_clockwork_soldier.png',
+  m_button_doll: '/assets/units/m_button_doll.png',
+  m_puppet_swordsman: '/assets/units/m_puppet_swordsman.png',
+  m_clockwork_spider: '/assets/units/m_clockwork_spider.png',
+  m_clown_doll: '/assets/units/m_clown_doll.png',
+  m_cursed_doll: '/assets/units/m_cursed_doll.png',
+  m_casper: '/assets/units/m_casper.png',
+  m_puppet_ann: '/assets/units/m_puppet_ann.png',
+  m_specter_teddy: '/assets/units/m_specter_teddy.png',
+  m_gore_teddy: '/assets/units/m_gore_teddy.png',
+  m_alice: '/assets/units/m_alice.png',
+  m_grandfather_clock: '/assets/units/m_grandfather_clock.png',
+  m_pennywise: '/assets/units/m_pennywise.png',
+  m_thread_needle: '/assets/units/m_thread_needle.png',
+  m_clocktower_gear: '/assets/units/m_clocktower_gear.png',
+  p_deadman: '/assets/units/p_deadman.png',
+  p_skeleton: '/assets/units/p_skeleton.png',
+  p_hound: '/assets/units/p_hound.png',
+  p_bone_thrower: '/assets/units/p_bone_thrower.png',
+  p_headless_knight: '/assets/units/p_headless_knight.png',
+  p_corpsecaller: '/assets/units/p_corpsecaller.png',
+  p_banshee: '/assets/units/p_banshee.png',
+  p_thanatos: '/assets/units/p_thanatos.png',
+  p_corpse_golem: '/assets/units/p_corpse_golem.png',
+  p_wraith: '/assets/units/p_wraith.png',
+  p_mammon: '/assets/units/p_mammon.png',
+  p_summoner: '/assets/units/p_summoner.png',
+  p_lich: '/assets/units/p_lich.png',
+  p_demilich: '/assets/units/p_demilich.png',
+  p_minion_ghoul: '/assets/units/p_minion_ghoul.png',
+  p_minion_undead: '/assets/units/p_minion_undead.png',
+  p_minion_skeleton: '/assets/units/p_minion_skeleton.png',
+  p_minion_rat: '/assets/units/p_minion_rat.png',
+  // 캠페인 전용 특수 유닛 — 기존 에셋 재활용 (크기 배율로 위압감)
+  c_ash_revenant: '/assets/units/p_wraith.png',
+  c_mad_ballerina: '/assets/units/m_puppet_ann.png',
+  c_bone_colossus: '/assets/units/p_corpse_golem.png',
+  c_dread_gargoyle: '/assets/units/p_demilich.png',
+  c_kurga: '/assets/units/p_lich.png',
+  c_mammon_lord: '/assets/units/p_mammon.png',
+  c_balthar: '/assets/units/p_demilich.png',
+  // 구조물·수호자 (종족 무관)
+  nexus: '/assets/units/nexus.png',
+  tower: '/assets/units/tower.png',
+  dragon: '/assets/units/dragon.png',
+  hollow: '/assets/units/hollow.png',
+};
+
+/** 상점 아이콘용 정면(south) 스프라이트. 전장은 측면, 아이콘은 정면. */
+const ASSET_ICONS: Record<string, string> = {
+  s_gouto: '/assets/units/s_gouto_icon.png',
+  s_elf_archer: '/assets/units/s_elf_archer_icon.png',
+  s_marmot: '/assets/units/s_marmot_icon.png',
+  s_vine_hunter: '/assets/units/s_vine_hunter_icon.png',
+  s_mushroom_bomber: '/assets/units/s_mushroom_bomber_icon.png',
+  s_druid: '/assets/units/s_druid_icon.png',
+  s_treekeeper: '/assets/units/s_treekeeper_icon.png',
+  s_thorn_witch: '/assets/units/s_thorn_witch_icon.png',
+  s_treant: '/assets/units/s_treant_icon.png',
+  s_apostle: '/assets/units/s_apostle_icon.png',
+  s_owl: '/assets/units/s_owl_icon.png',
+  s_butterfly: '/assets/units/s_butterfly_icon.png',
+  s_wyvern: '/assets/units/s_wyvern_icon.png',
+  s_unicorn: '/assets/units/s_unicorn_icon.png',
+  s_fairy: '/assets/units/s_fairy_icon.png',
+  s_marksman: '/assets/units/s_marksman_icon.png',
+  s_sage: '/assets/units/s_sage_icon.png',
+  m_plushbear: '/assets/units/m_plushbear_icon.png',
+  m_clockwork_soldier: '/assets/units/m_clockwork_soldier_icon.png',
+  m_button_doll: '/assets/units/m_button_doll_icon.png',
+  m_puppet_swordsman: '/assets/units/m_puppet_swordsman_icon.png',
+  m_clockwork_spider: '/assets/units/m_clockwork_spider_icon.png',
+  m_clown_doll: '/assets/units/m_clown_doll_icon.png',
+  m_cursed_doll: '/assets/units/m_cursed_doll_icon.png',
+  m_casper: '/assets/units/m_casper_icon.png',
+  m_puppet_ann: '/assets/units/m_puppet_ann_icon.png',
+  m_specter_teddy: '/assets/units/m_specter_teddy_icon.png',
+  m_gore_teddy: '/assets/units/m_gore_teddy_icon.png',
+  m_alice: '/assets/units/m_alice_icon.png',
+  m_grandfather_clock: '/assets/units/m_grandfather_clock_icon.png',
+  m_pennywise: '/assets/units/m_pennywise_icon.png',
+  m_thread_needle: '/assets/units/m_thread_needle_icon.png',
+  m_clocktower_gear: '/assets/units/m_clocktower_gear_icon.png',
+  p_deadman: '/assets/units/p_deadman_icon.png',
+  p_skeleton: '/assets/units/p_skeleton_icon.png',
+  p_hound: '/assets/units/p_hound_icon.png',
+  p_bone_thrower: '/assets/units/p_bone_thrower_icon.png',
+  p_headless_knight: '/assets/units/p_headless_knight_icon.png',
+  p_corpsecaller: '/assets/units/p_corpsecaller_icon.png',
+  p_banshee: '/assets/units/p_banshee_icon.png',
+  p_thanatos: '/assets/units/p_thanatos_icon.png',
+  p_corpse_golem: '/assets/units/p_corpse_golem_icon.png',
+  p_wraith: '/assets/units/p_wraith_icon.png',
+  p_mammon: '/assets/units/p_mammon_icon.png',
+  p_summoner: '/assets/units/p_summoner_icon.png',
+  p_lich: '/assets/units/p_lich_icon.png',
+  p_demilich: '/assets/units/p_demilich_icon.png',
+};
+
+/** 상점 아이콘 등에 쓸 대표 에셋 URL. 정면 아이콘 > 전장 스프라이트 순. */
+export function assetIconUrl(defId: string): string | undefined {
+  const icon = ASSET_ICONS[defId];
+  if (icon) return icon;
+  const v = ASSET_UNITS[defId];
+  return Array.isArray(v) ? v[0] : v;
+}
+
+/**
+ * 공격 중 잠시 교체되는 "공격 자세" 스프라이트 (원거리 조준 등).
+ * 변형 배열은 ASSET_UNITS 와 같은 순서로 대응해야 한다.
+ */
+/** 공격 애니메이션: [변형][프레임] URL. 공격 순간 프레임을 순차 재생한다. */
+const atk4 = (id: string): string[][] => [[0, 1, 2, 3].map((n) => `/assets/units/${id}_atk${n}.png`)];
+
+const ASSET_ATTACK_ANIMS: Record<string, string[][]> = {
+  // 엘프 궁수: 변형(여/남)별 4프레임 발사 모션 (화살 뽑기→시위 당기기→발사)
+  s_elf_archer: [
+    [0, 1, 2, 3].map((n) => `/assets/units/s_elf_archer_f_atk${n}.png`),
+    [0, 1, 2, 3].map((n) => `/assets/units/s_elf_archer_m_atk${n}.png`),
+  ],
+  s_gouto: atk4('s_gouto'),
+  m_plushbear: atk4('m_plushbear'),
+  m_clockwork_spider: atk4('m_clockwork_spider'),
+  m_clown_doll: atk4('m_clown_doll'),
+  m_casper: atk4('m_casper'),
+  m_specter_teddy: atk4('m_specter_teddy'),
+  m_puppet_ann: atk4('m_puppet_ann'),
+  s_marmot: atk4('s_marmot'),
+  s_vine_hunter: atk4('s_vine_hunter'),
+  s_mushroom_bomber: atk4('s_mushroom_bomber'),
+  s_druid: atk4('s_druid'),
+  s_treekeeper: atk4('s_treekeeper'),
+  s_thorn_witch: atk4('s_thorn_witch'),
+  s_treant: atk4('s_treant'),
+  s_apostle: atk4('s_apostle'),
+  s_owl: atk4('s_owl'),
+  s_butterfly: atk4('s_butterfly'),
+  s_wyvern: atk4('s_wyvern'),
+  s_unicorn: atk4('s_unicorn'),
+  s_fairy: atk4('s_fairy'),
+  s_marksman: atk4('s_marksman'),
+  s_sage: atk4('s_sage'),
+  m_clockwork_soldier: atk4('m_clockwork_soldier'),
+  m_puppet_swordsman: atk4('m_puppet_swordsman'),
+  m_cursed_doll: atk4('m_cursed_doll'),
+  m_button_doll: atk4('m_button_doll'),
+  m_alice: atk4('m_alice'),
+  m_grandfather_clock: atk4('m_grandfather_clock'),
+  m_pennywise: atk4('m_pennywise'),
+  m_thread_needle: atk4('m_thread_needle'),
+  m_clocktower_gear: atk4('m_clocktower_gear'),
+  m_gore_teddy: atk4('m_gore_teddy'),
+  p_deadman: atk4('p_deadman'),
+  p_skeleton: atk4('p_skeleton'),
+  p_hound: atk4('p_hound'),
+  p_bone_thrower: atk4('p_bone_thrower'),
+  p_headless_knight: atk4('p_headless_knight'),
+  p_corpsecaller: atk4('p_corpsecaller'),
+  p_banshee: atk4('p_banshee'),
+  p_thanatos: atk4('p_thanatos'),
+  p_corpse_golem: atk4('p_corpse_golem'),
+  p_wraith: atk4('p_wraith'),
+  p_mammon: atk4('p_mammon'),
+  p_summoner: atk4('p_summoner'),
+  p_lich: atk4('p_lich'),
+  p_demilich: atk4('p_demilich'),
+  p_minion_ghoul: atk4('p_minion_ghoul'),
+  p_minion_undead: atk4('p_minion_undead'),
+  p_minion_skeleton: atk4('p_minion_skeleton'),
+  p_minion_rat: atk4('p_minion_rat'),
+  // 수호자 (중간보스)
+  dragon: atk4('dragon'),
+  hollow: atk4('hollow'),
+  // 캠페인 특수 유닛 — 원본 유닛 모션 재활용
+  c_ash_revenant: atk4('p_wraith'),
+  c_mad_ballerina: atk4('m_puppet_ann'),
+  c_bone_colossus: atk4('p_corpse_golem'),
+  c_dread_gargoyle: atk4('p_demilich'),
+  c_kurga: atk4('p_lich'),
+  c_mammon_lord: atk4('p_mammon'),
+  c_balthar: atk4('p_demilich'),
+};
+
+/**
+ * 원거리 공격의 투사체 그림. 유닛별로 어떤 탄이 날아가는지 지정한다.
+ * 여기 없는 유닛은 기존처럼 종족색 선분으로 폴백한다.
+ */
+type ProjKind = 'arrow' | 'bullet' | 'bone' | 'bolt_nature' | 'bolt_curse' | 'bomb' | 'pollen' | 'fireball';
+
+const PROJECTILE_OF: Record<string, ProjKind> = {
+  // 실바린
+  s_elf_archer: 'arrow',
+  s_owl: 'arrow',
+  s_mushroom_bomber: 'bomb',
+  s_druid: 'bolt_nature',
+  s_thorn_witch: 'bolt_nature',
+  s_apostle: 'bolt_nature',
+  s_butterfly: 'pollen',
+  s_unicorn: 'bolt_nature',
+  s_fairy: 'bolt_nature',
+  s_marksman: 'arrow',
+  s_sage: 'bolt_nature',
+  // 판데모니엄
+  p_bone_thrower: 'bone',
+  p_corpsecaller: 'bolt_curse',
+  p_banshee: 'bolt_curse',
+  p_lich: 'fireball',
+  c_kurga: 'fireball',
+  c_balthar: 'bolt_curse',
+  c_dread_gargoyle: 'bolt_curse',
+  p_demilich: 'bolt_curse',
+  // 마리오네타
+  m_clockwork_soldier: 'bullet',
+  m_casper: 'bolt_curse',
+  m_puppet_ann: 'bolt_curse',
+  m_specter_teddy: 'pollen',
+  m_alice: 'bolt_curse',
+  m_grandfather_clock: 'bomb',
+  m_thread_needle: 'arrow',
+  m_clocktower_gear: 'bullet',
+  m_pennywise: 'bolt_curse',
+  // 구조물·수호자
+  tower: 'bullet',
+  nexus: 'bullet',
+  dragon: 'fireball',
+  hollow: 'bolt_curse',
+};
+
+/**
+ * 탄종별 표시 설정.
+ *  size   — 화면 px
+ *  rotate — 날아가는 방향으로 돌릴지 (구형 탄은 false)
+ *  spin   — 회전하지 않는 탄이 스스로 도는 속도 (rad/ms)
+ *  aim    — 그림이 이미 향하고 있는 각도(rad). 생성된 그림이 오른쪽이 아니라
+ *           대각선을 보고 있어서, 그만큼 빼줘야 진행 방향과 맞는다.
+ */
+const D45 = -Math.PI / 4; // 우상향 대각선으로 그려진 탄들
+const PROJECTILE_STYLE: Record<ProjKind, { size: number; rotate: boolean; spin?: number; aim?: number }> = {
+  arrow: { size: 18, rotate: true, aim: D45 },
+  bullet: { size: 13, rotate: true, aim: -Math.PI / 2 }, // 총알 그림은 위를 향해 그려졌다
+  bone: { size: 15, rotate: false, spin: 0.02 }, // 던진 뼈는 빙글빙글
+  bolt_nature: { size: 16, rotate: true, aim: D45 },
+  bolt_curse: { size: 16, rotate: true, aim: D45 },
+  bomb: { size: 17, rotate: false, spin: 0.008 },
+  pollen: { size: 16, rotate: false },
+  fireball: { size: 20, rotate: true },
+};
+
+/**
+ * 구조물 팀 색. 넥서스·수호탑은 양 팀이 같은 그림이라 편이 구분되지 않았다.
+ * 2팀은 붉게 물들여 한눈에 갈리도록 한다 (팀 컬러와 동일 계열).
+ */
+const STRUCTURE_TEAM_TINT: readonly [number, number] = [0xbcd4ff, 0xff8a72];
+
+/** 스프라이트 폭 배율 오버라이드 (기본 공식: 충돌반경×2×2.2타일). */
+const ASSET_SIZE_MUL: Record<string, number> = {
+  nexus: 0.85,  // 세로로 긴 건물이라 폭 축소
+  tower: 0.8,
+  // 캠페인 특수 유닛: 원본보다 크게 — 한눈에 "특별한 놈"으로 읽히게
+  c_ash_revenant: 1.5,
+  c_mad_ballerina: 1.4,
+  c_bone_colossus: 1.9,
+  c_dread_gargoyle: 1.5,
+  c_kurga: 1.7,
+  c_mammon_lord: 1.6,
+  c_balthar: 2.1,
+};
+
+/**
+ * 지형 테마 (픽셀랩 Wang 타일셋 32px 16타일 + 바깥 지대 소품).
+ *
+ * wang: 코너 인덱스 = NW*8 + NE*4 + SW*2 + SE → 시트 내 좌표.
+ *       1 = upper = 걷는 길(레인), 0 = lower = 바깥 지형(진입 불가).
+ *       좌표는 타일셋 메타데이터의 bounding_box 에서 추출한 값이라 시트마다 다르다.
+ */
+const TILE_PX = 32;
+
+/** 16타일 시트의 표준 배치. 현재 생성한 세 시트 모두 이 배치를 쓴다. */
+const WANG_16: Record<number, readonly [number, number]> = {
+  0: [64, 32], 1: [96, 32], 2: [64, 64], 3: [32, 64],
+  4: [64, 0], 5: [96, 64], 6: [0, 32], 7: [96, 96],
+  8: [32, 32], 9: [64, 96], 10: [32, 0], 11: [0, 64],
+  12: [96, 0], 13: [0, 0], 14: [32, 96], 15: [0, 96],
+};
+
+interface GroundTheme {
+  readonly sheet: string;
+  /** 배치가 다른 시트를 쓰게 되면 여기서 덮어쓴다. */
+  readonly wang: Record<number, readonly [number, number]>;
+  /** 레인 밖에 흩뿌릴 소품 파일명 (assets/tiles/<name>.png). */
+  readonly props: readonly string[];
+  /** 레인 안(걷는 길)에 낮은 밀도로 깔 납작한 지면 장식. */
+  readonly laneProps?: readonly string[];
+  /**
+   * 지면 타일에 탈색·감광 필터를 씌운다 (불탄 지형).
+   * 같은 숲 시트를 재활용하므로 초록 구역과 형태가 이어져 경계가 자연스럽다.
+   * 소품은 필터를 타지 않아 잔불이 그대로 빛난다.
+   */
+  readonly scorched?: boolean;
+}
+
+const THEMES: Record<string, GroundTheme> = {
+  forest: {
+    sheet: '/assets/tiles/forest.png',
+    wang: WANG_16,
+    // 길 위 장식은 생성물이 네모 배경째 얹혀 보여서 일단 비웠다.
+    // 길 타일 자체(흙길)에 이미 결이 있어 단조롭지 않다.
+    props: ['forest_tree', 'forest_bush', 'forest_grass'],
+  },
+  burnt: {
+    sheet: '/assets/tiles/forest.png',
+    wang: WANG_16,
+    scorched: true,
+    props: ['burnt_tree', 'burnt_stump'],
+  },
+  desert: {
+    sheet: '/assets/tiles/desert.png',
+    wang: WANG_16,
+    props: ['prop_cactus', 'prop_skull', 'prop_tree'],
+  },
+  // 장난감 나라 (캠페인 2막 — 마리오네타 왕국)
+  toy: {
+    sheet: '/assets/tiles/toy.png',
+    wang: WANG_16,
+    props: ['prop_teddy', 'prop_rockinghorse', 'prop_blocks'],
+  },
+};
+
+/**
+ * 맵별 지형 테마. 2개면 왼쪽(1팀)→오른쪽(2팀)으로 갈리며 경계는 들쭉날쭉하다.
+ * 평원: 생생한 숲 → 슬리피 할로우가 태운 불탄 숲.
+ */
+const MAP_THEMES: Record<string, readonly string[]> = {
+  plains: ['forest', 'burnt'],
+  valley: ['desert'],
+  toybox: ['toy'],
+};
+
+/** 맵 바깥(캔버스 여백) 색. 지형과 이어지는 톤으로. */
+const MAP_BG: Record<string, number> = {
+  plains: 0x1d2a19, // 깊은 숲 그늘
+  valley: 0x9c7c4e,
+  toybox: 0x3a2438, // 장난감 방의 어둑한 자주빛
+};
+
+/** 액티브 스킬 시전 모션 프레임 (없는 유닛은 공격 모션 재활용). */
+const skill4 = (id: string): string[] => [0, 1, 2, 3].map((n) => `/assets/units/${id}_skill${n}.png`);
+
+const ASSET_SKILL_ANIMS: Record<string, string[]> = {
+  m_clockwork_soldier: skill4('m_clockwork_soldier'), // 태엽 감기
+  s_treekeeper: skill4('s_treekeeper'),               // 뿌리박기
+};
+
+/**
+ * 비행 유닛의 부유 모션 프레임. 2장 이상이면 순환 재생(진짜 프레임 애니메이션),
+ * 1장이면 기본 포즈와 교대. 없는 비행 유닛은 스쿼시 착시로 폴백.
+ */
+const fly4 = (id: string): string[] => [0, 1, 2, 3].map((n) => `/assets/units/${id}_fly${n}.png`);
+
+const ASSET_FLAP_FRAMES: Record<string, string[]> = {
+  s_owl: fly4('s_owl'),
+  s_butterfly: fly4('s_butterfly'),
+  // 앤: 실에 매달려 팔다리가 흔들리는 4프레임
+  m_puppet_ann: fly4('m_puppet_ann'),
+  // 수호자: 드래곤 날갯짓, 할로우 유령마 부유 질주
+  dragon: fly4('dragon'),
+  hollow: fly4('hollow'),
+  p_demilich: fly4('p_demilich'),
+  c_dread_gargoyle: fly4('p_demilich'),
+  c_balthar: fly4('p_demilich'),
+  m_casper: fly4('m_casper'),
+  m_pennywise: fly4('m_pennywise'),
+  m_thread_needle: fly4('m_thread_needle'),
+  s_wyvern: fly4('s_wyvern'),
+  s_unicorn: fly4('s_unicorn'),
+  s_fairy: fly4('s_fairy'),
+};
+
+/**
+ * 업그레이드 보유 시 교체되는 외형 스킨 (다음 웨이브 스폰부터 적용).
+ * 스킨 사용 중에는 공격/부유 프레임 애니메이션은 생략된다 (코드 연출만).
+ */
+const ASSET_UPGRADE_SKINS: Record<string, { upgrade: string; url: string; scaleMul: number; atk?: string[] }> = {
+  // 검은 군마: 목없는 기사가 흑마를 타고 다닌다 (기마 전용 공격 프레임 포함)
+  p_headless_knight: {
+    upgrade: 'pu_knight_horse',
+    url: '/assets/units/p_headless_knight_horse.png',
+    scaleMul: 1.35,
+    atk: [0, 1, 2, 3].map((n) => `/assets/units/p_headless_knight_horse_atk${n}.png`),
+  },
+};
+
+function sx(x: number): number {
+  return (x / FP) * TILE;
+}
+function sy(y: number): number {
+  return ((y + renderHalfH()) / FP) * TILE * Y_SQUASH + PAD_TOP;
+}
+
+const RANGED_THRESHOLD = tiles(2);
+
+interface UnitFx {
+  lastCooldown: number;
+  lastHealCd: number;
+  lastSkillCd: number;
+  /** 스킬별 직전 쿨 — 어느 스킬이 방금 발동했는지 판별용. */
+  lastSkillCds: number[];
+  lastHp: number;
+  /** ms 타임스탬프. 0 = 비활성. */
+  flashUntil: number;
+  lungeStart: number;
+  lungeDx: number;
+  lungeDy: number;
+  recoilStart: number;
+  recoilDx: number;
+  /** 공격 애니메이션 재생 구간 [aimStart, aimUntil). */
+  aimStart: number;
+  aimUntil: number;
+  /** 스킬 시전 애니메이션 재생 구간 (전용 프레임 보유 유닛만). */
+  skillStart: number;
+  skillUntil: number;
+  /** 회복 이펙트 표시 종료 시각 (ms). */
+  healGlowUntil: number;
+  walkPhase: number;
+  moving: boolean;
+  /** 생성 시점의 기본 스케일 (팀 반전 포함). 날갯짓 스쿼시의 기준값. */
+  baseScaleX: number;
+  baseScaleY: number;
+  /** 업그레이드 스킨 사용 중 — 프레임 애니메이션 텍스처 교체를 생략한다. */
+  hasSkin: boolean;
+}
+
+interface Projectile {
+  x0: number; y0: number; x1: number; y1: number;
+  start: number; dur: number;
+  color: number;
+  splash: number; // 화면 px, 0 = 단일
+  /** 탄 그림 종류. 없으면 색 선분으로 그린다. */
+  kind?: ProjKind;
+  /** 회전 탄(뼈·폭탄)의 시작 각도 — 탄마다 달라야 돌아가는 게 자연스럽다. */
+  spin0: number;
+}
+
+interface Impact {
+  x: number; y: number; start: number; radius: number; color: number;
+}
+
+interface Corpse {
+  sp: Sprite;
+  start: number;
+}
+
+export interface Renderer {
+  app: Application;
+  /** 게임 시작 시 맵 교체 — 지형을 다시 그리고 카메라를 리셋한다. */
+  setMap(m: MapDef): void;
+  /** 시뮬 스텝 직전에 호출 — 보간용 이전 위치 스냅샷. */
+  beforeStep(g: Game): void;
+  draw(g: Game, alpha: number): void;
+  panBy(dxScreenPx: number, dyScreenPx?: number): void;
+  centerOn(xWorldPx: number): void;
+  zoomBy(factor: number, anchorX?: number, anchorY?: number): void;
+  view(): { x0: number; x1: number };
+  /** 화면 좌표에서 가장 가까운 유닛 id (없으면 null). 클릭 선택용. */
+  pick(g: Game, screenX: number, screenY: number): number | null;
+  /** 선택 표시 링을 그릴 유닛 id (null = 해제). */
+  setSelected(id: number | null): void;
+  /** 효과음 재생기 연결 (없으면 무음으로 동작). */
+  setAudio(a: Audio): void;
+}
+
+export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
+  const app = new Application();
+  await app.init({
+    resizeTo: mount,
+    // 맵 바깥 여백색. setMap 에서 맵 테마에 맞춰 바꾼다.
+    backgroundColor: MAP_BG[DEFAULT_MAP] ?? 0x9c7c4e,
+    antialias: false,
+    roundPixels: true,
+  });
+  app.canvas.id = 'gamecanvas'; // CSS 가 미니맵 캔버스와 구분해서 잡도록
+  mount.appendChild(app.canvas);
+
+  // 외부 에셋 로드 (실패하면 절차 생성으로 폴백)
+  const assetTex = new Map<string, Texture[]>();
+  await Promise.all(
+    Object.entries(ASSET_UNITS).map(async ([defId, urls]) => {
+      const list = Array.isArray(urls) ? urls : [urls];
+      const texs: Texture[] = [];
+      for (const url of list) {
+        try {
+          const tex: Texture = await Assets.load(url);
+          tex.source.scaleMode = 'nearest';
+          texs.push(tex);
+        } catch {
+          // 이 변형만 폴백 — 나머지 변형은 계속 로드
+        }
+      }
+      if (texs.length > 0) assetTex.set(defId, texs);
+    }),
+  );
+  async function loadTex(url: string): Promise<Texture | null> {
+    try {
+      const tex: Texture = await Assets.load(url);
+      tex.source.scaleMode = 'nearest';
+      return tex;
+    } catch {
+      return null;
+    }
+  }
+
+  // 공격 애니메이션 텍스처: [변형][프레임] (없으면 교체 없이 기본 자세 유지)
+  const attackTex = new Map<string, Texture[][]>();
+  await Promise.all(
+    Object.entries(ASSET_ATTACK_ANIMS).map(async ([defId, variants]) => {
+      const loaded: Texture[][] = [];
+      for (const frames of variants) {
+        const texs: Texture[] = [];
+        for (const url of frames) {
+          const t = await loadTex(url);
+          if (t) texs.push(t);
+          else break; // 프레임은 앞에서부터 연속으로만 사용
+        }
+        if (texs.length > 0) loaded.push(texs);
+      }
+      if (loaded.length > 0) attackTex.set(defId, loaded);
+    }),
+  );
+  // 업그레이드 스킨 텍스처 (+ 스킨 전용 공격 프레임)
+  const skinTex = new Map<string, Texture>();
+  const skinAtkTex = new Map<string, Texture[]>();
+  await Promise.all(
+    Object.entries(ASSET_UPGRADE_SKINS).map(async ([defId, cfg]) => {
+      const t = await loadTex(cfg.url);
+      if (t) skinTex.set(defId, t);
+      if (cfg.atk) {
+        const texs: Texture[] = [];
+        for (const url of cfg.atk) {
+          const f = await loadTex(url);
+          if (f) texs.push(f);
+          else break;
+        }
+        if (texs.length > 0) skinAtkTex.set(defId, texs);
+      }
+    }),
+  );
+  // 스킬 시전 모션 프레임
+  const skillAnimTex = new Map<string, Texture[]>();
+  await Promise.all(
+    Object.entries(ASSET_SKILL_ANIMS).map(async ([defId, urls]) => {
+      const texs: Texture[] = [];
+      for (const url of urls) {
+        const t = await loadTex(url);
+        if (t) texs.push(t);
+        else break;
+      }
+      if (texs.length > 0) skillAnimTex.set(defId, texs);
+    }),
+  );
+  // 지형 테마별 Wang 타일 + 소품 텍스처. 시트가 없는 테마는 코드 지형으로 폴백.
+  const themeTiles = new Map<string, Map<number, Texture>>();
+  const themeProps = new Map<string, Texture[]>();
+  const themeLaneProps = new Map<string, Texture[]>();
+  await Promise.all(
+    Object.entries(THEMES).map(async ([name, theme]) => {
+      const sheet = await loadTex(theme.sheet);
+      if (sheet) {
+        const tiles = new Map<number, Texture>();
+        for (const [idx, [tx, ty]] of Object.entries(theme.wang)) {
+          tiles.set(Number(idx), new Texture({
+            source: sheet.source,
+            frame: new Rectangle(tx, ty, TILE_PX, TILE_PX),
+          }));
+        }
+        themeTiles.set(name, tiles);
+      }
+      const props: Texture[] = [];
+      for (const p of theme.props) {
+        const t = await loadTex(`/assets/tiles/${p}.png`);
+        if (t) props.push(t);
+      }
+      if (props.length > 0) themeProps.set(name, props);
+      const lane: Texture[] = [];
+      for (const p of theme.laneProps ?? []) {
+        const t = await loadTex(`/assets/tiles/${p}.png`);
+        if (t) lane.push(t);
+      }
+      if (lane.length > 0) themeLaneProps.set(name, lane);
+    }),
+  );
+  // 투사체 그림 (없으면 색 선분 폴백)
+  const projTex = new Map<ProjKind, Texture>();
+  await Promise.all(
+    (Object.keys(PROJECTILE_STYLE) as ProjKind[]).map(async (kind) => {
+      const t = await loadTex(`/assets/fx/proj_${kind}.png`);
+      if (t) projTex.set(kind, t);
+    }),
+  );
+
+  // 장판 데칼 (없으면 코드 타원 폴백)
+  const zoneTex = new Map<string, Texture>();
+  await Promise.all(
+    [
+      'thorns', 'spores', 'forest', 'grave', 'blaze',
+      // 마법 시전 자국 (효과 없음 — 그림만)
+      'quake', 'frost', 'gravity', 'hellfire', 'fireburst', 'feast',
+    ].map(async (kind) => {
+      const t = await loadTex(`/assets/fx/zone_${kind}.png`);
+      if (t) zoneTex.set(kind, t);
+    }),
+  );
+  // 부유/날갯짓 프레임
+  const flapTex = new Map<string, Texture[]>();
+  await Promise.all(
+    Object.entries(ASSET_FLAP_FRAMES).map(async ([defId, urls]) => {
+      const texs: Texture[] = [];
+      for (const url of urls) {
+        const t = await loadTex(url);
+        if (t) texs.push(t);
+        else break;
+      }
+      if (texs.length > 0) flapTex.set(defId, texs);
+    }),
+  );
+
+  const world = new Container();
+  const groundTiles = new Container();  // 픽셀 지형 타일 (Wang)
+  const scorchedTiles = new Container(); // 불탄 구역 타일 — 탈색 필터를 씌운다
+  const groundProps = new Container();   // 나무·덤불·지면 장식 (필터 없음)
+  groundProps.sortableChildren = true;
+  {
+    // 채도를 크게 낮추고 살짝 어둡게 → 재에 덮인 숲
+    const f = new ColorMatrixFilter();
+    f.desaturate();
+    f.brightness(0.62, true);
+    scorchedTiles.filters = [f];
+  }
+  const ground = new Graphics();       // 폴백 지형 + 진영 틴트/중앙선 오버레이
+  const zonesGr = new Graphics(); // 장판 폴백 (데칼 텍스처가 없을 때)
+  const zoneLayer = new Container(); // 장판 픽셀 데칼
+  const shadows = new Graphics();
+  const corpseLayer = new Container();
+  const units = new Container();
+  units.sortableChildren = true;
+  const fx = new Graphics();
+  const projLayer = new Container(); // 투사체 스프라이트 (유닛 위, 체력바 아래)
+  const bars = new Graphics();
+  world.addChild(
+    groundTiles, scorchedTiles, groundProps, ground,
+    zonesGr, zoneLayer, shadows, corpseLayer, units, fx, projLayer, bars,
+  );
+  app.stage.addChild(world);
+
+  /** 지형 타일 격자 재구축 (맵 교체·초기화 시). 타일이 없으면 drawGround 폴백. */
+  function buildGroundTiles(): void {
+    for (const layer of [groundTiles, scorchedTiles, groundProps]) {
+      for (const c of layer.removeChildren()) c.destroy();
+    }
+    const m = curMap;
+    const names = MAP_THEMES[m.id] ?? ['desert'];
+    if (!names.some((n) => themeTiles.has(n))) return;
+
+    const tilesX = m.length / FP;
+    const halfH = renderHalfH(m);
+    const tilesY = Math.ceil((halfH * 2) / FP);
+    const th = TILE * Y_SQUASH;
+    const laneHalf = m.halfW / FP;
+
+    /**
+     * 이 칸에 쓸 테마. 테마가 2개면 맵 중앙에서 갈린다.
+     * 경계는 행마다 물결치고, 그 부근 몇 칸은 두 테마를 흩뿌려 섞어서
+     * 칼로 자른 직선이 아니라 "불이 번지다 만" 자국처럼 보이게 한다.
+     */
+    const BLEND = 4; // 섞이는 띠의 반폭 (타일)
+    const themeAt = (i: number, j: number): string => {
+      if (names.length < 2) return names[0]!;
+      const wave = Math.sin(j * 0.9) * 2.2 + Math.sin(j * 0.37 + 1.3) * 1.7;
+      const d = i - (tilesX / 2 + wave); // 경계로부터의 거리 (+ = 불탄 쪽)
+      if (d <= -BLEND) return names[0]!;
+      if (d >= BLEND) return names[1]!;
+      const h = ((i * 73856093) ^ (j * 19349663)) >>> 0;
+      const burntChance = ((d + BLEND) / (BLEND * 2)) * 1000;
+      return h % 1000 < burntChance ? names[1]! : names[0]!;
+    };
+    // Wang 코너 판정: 꼭짓점이 코리도어(걷는 길) 안인가
+    const laneV = (vx: number, vy: number): number => {
+      const wx = Math.max(0, Math.min(m.length, vx * FP));
+      const cy = (laneCenterY(m, wx) + halfH) / FP;
+      return Math.abs(vy - cy) <= laneHalf ? 1 : 0;
+    };
+    // 같은 타일이 반복될 때의 단조로움을 덜기 위한 아주 미세한 명암 변주.
+    // 규칙적인 식으로 고르면 체커보드가 보이므로 해시로 흩는다.
+    const SHADES = [0xffffff, 0xfafafa, 0xf5f5f5];
+    for (let i = 0; i < tilesX; i++) {
+      for (let j = 0; j < tilesY; j++) {
+        const name = themeAt(i, j);
+        const tiles = themeTiles.get(name);
+        if (!tiles) continue;
+        const idx = laneV(i, j) * 8 + laneV(i + 1, j) * 4 + laneV(i, j + 1) * 2 + laneV(i + 1, j + 1);
+        const tex = tiles.get(idx);
+        if (!tex) continue;
+        const sp = new Sprite(tex);
+        sp.x = i * TILE;
+        sp.y = PAD_TOP + j * th;
+        sp.width = TILE;
+        sp.height = th;
+        sp.tint = SHADES[(((i * 73856093) ^ (j * 83492791)) >>> 0) % SHADES.length]!;
+        (THEMES[name]?.scorched ? scorchedTiles : groundTiles).addChild(sp);
+      }
+    }
+    // 소품 산포. 레인 밖은 나무·덤불처럼 서 있는 것, 레인 안은 납작한 지면 장식만.
+    for (let i = 1; i < tilesX - 1; i++) {
+      const cyT = (laneCenterY(m, i * FP + 500) + halfH) / FP;
+      for (let j = 0; j < tilesY; j++) {
+        // 레인 경계에서 얼마나 벗어났나 (0 이하 = 길 위)
+        const out = Math.abs(j + 0.5 - cyT) - (laneHalf + 0.6);
+        const inBand = out <= 0;
+        const theme = themeAt(i, j);
+        const props = inBand ? themeLaneProps.get(theme) : themeProps.get(theme);
+        if (!props || props.length === 0) continue;
+        const h = ((i * 73856093) ^ (j * 19349663)) >>> 0;
+        // 길가는 우거지게, 멀어질수록 성기게 (협곡처럼 바깥이 넓은 맵에서 과밀 방지)
+        const density = inBand ? 8 : out < 2 ? 24 : out < 5 ? 13 : 6;
+        if (h % 100 >= density) continue;
+        const tex = props[h % props.length]!;
+        const sp = new Sprite(tex);
+        sp.anchor.set(0.5, 1);
+        sp.scale.set(((inBand ? TILE * 0.85 : TILE * 1.5) / tex.width));
+        sp.x = i * TILE + ((h >> 4) % TILE);
+        sp.y = PAD_TOP + j * th + ((h >> 8) % Math.max(1, Math.floor(th))) + th * 0.5;
+        // 앞줄이 뒷줄을 가리도록 y 순으로 겹치기 (지면 장식은 항상 아래)
+        sp.zIndex = inBand ? 0 : sp.y;
+        groundProps.addChild(sp);
+      }
+    }
+  }
+
+  const tiled = (): boolean => groundTiles.children.length + scorchedTiles.children.length > 0;
+  buildGroundTiles();
+  drawGround(ground, tiled());
+
+  const sprites = new Map<number, Sprite>();
+  /** 스프라이트 id → defId. 유닛이 사라진 뒤(=사망) 어떤 소리를 낼지 알아야 해서 따로 들고 있는다. */
+  const spriteDefId = new Map<number, string>();
+  // 전향(인형의 실) 감지: 스폰 시 팀을 기억해뒀다가 달라지면 표식을 남긴다
+  const spriteTeam = new Map<number, 0 | 1>();
+  const charmedIds = new Set<number>();
+  const zoneSprites = new Map<number, { sp: Sprite; born: number }>();
+  const prevPos = new Map<number, { x: number; y: number }>();
+  const unitFx = new Map<number, UnitFx>();
+  const projectiles: Projectile[] = [];
+  const projPool: Sprite[] = []; // 투사체 스프라이트 재사용 풀
+  const impacts: Impact[] = [];
+  const corpses: Corpse[] = [];
+
+  // 카메라
+  let camX = 0;
+  let camY = 0;
+  let userZoom = 1;
+  let zoom = 1;
+  // 선택된 유닛 (클릭 정보창)
+  let selectedId: number | null = null;
+  // 효과음 (setAudio 로 주입, 없으면 무음)
+  let audio: Audio | null = null;
+  const sfx = (key: SfxKey, screenX: number, volume = 1): void => {
+    audio?.play(key, { screenX, volume });
+  };
+
+  /** 유닛의 피격음 키 — 장갑/존재 태그에 따라 재질이 갈린다. */
+  const hitKeyOf = (defId: string): SfxKey => {
+    const tags = DEFS[defId]?.tags ?? [];
+    if (tags.includes('construct')) return 'hit_construct';
+    if (tags.includes('plate')) return 'hit_plate';
+    if (tags.includes('leather')) return 'hit_leather';
+    return 'hit_cloth';
+  };
+  /** 유닛의 사망음 키. */
+  const deathKeyOf = (defId: string): SfxKey => {
+    const tags = DEFS[defId]?.tags ?? [];
+    if (tags.includes('construct')) return 'death_construct';
+    if (tags.includes('undead')) return 'death_undead';
+    return 'death_bio';
+  };
+  const USER_ZOOM_MIN = 0.3;
+  const USER_ZOOM_MAX = 3.0;
+
+  function visibleW(): number {
+    return app.screen.width / zoom;
+  }
+  function visibleH(): number {
+    return app.screen.height / zoom;
+  }
+  function clampCam(): void {
+    const maxX = Math.max(0, worldW() - visibleW());
+    camX = Math.min(Math.max(camX, 0), maxX);
+    const maxY = Math.max(0, worldH() - visibleH());
+    camY = Math.min(Math.max(camY, 0), maxY);
+  }
+  function applyCamera(): void {
+    const fit = Math.min(2.4, Math.max(0.8, app.screen.height / worldH()));
+    zoom = fit * userZoom;
+    clampCam();
+    world.scale.set(zoom);
+    world.x = worldW() * zoom <= app.screen.width
+      ? (app.screen.width - worldW() * zoom) / 2
+      : -camX * zoom;
+    world.y = worldH() * zoom <= app.screen.height
+      ? (app.screen.height - worldH() * zoom) / 2
+      : -camY * zoom;
+  }
+
+  const raceColor = (defId: string): number => {
+    const race = DEFS[defId]?.race;
+    return race === 'sylvarin' ? 0xc9e08a : race === 'pandemonium' ? 0x9a7fe8 : race === 'marionetta' ? 0xffb35c : 0xffe98a;
+  };
+
+  function draw(g: Game, alpha: number): void {
+    applyCamera();
+    const now = performance.now();
+    // 화면 밖 소리를 버리고 좌우 팬을 계산하기 위해 가시 범위를 알려준다
+    audio?.setViewport(camX, camX + visibleW());
+    shadows.clear();
+    fx.clear();
+    bars.clear();
+
+    // ── 장판 ──
+    zonesGr.clear();
+    const zoneSeen = new Set<number>();
+    for (const z of g.zones) {
+      const remain = z.untilTick - g.tick;
+      if (remain <= 0) continue;
+      // 생성 직후 0.3초 확대 등장, 만료 0.5초 전부터 페이드아웃 + 은은한 맥동
+      const fade = Math.min(1, remain / 10);
+      const pulse = 0.88 + 0.12 * Math.sin(now * 0.003 + z.id * 2.1);
+      const cx = sx(z.x), cy = sy(z.y);
+      const r = (z.radius / FP) * TILE;
+      const tex = zoneTex.get(z.kind);
+      if (tex) {
+        zoneSeen.add(z.id);
+        let zs = zoneSprites.get(z.id);
+        if (!zs) {
+          const sp = new Sprite(tex);
+          sp.anchor.set(0.5);
+          zs = { sp, born: now };
+          zoneSprites.set(z.id, zs);
+          zoneLayer.addChild(sp);
+        }
+        const sp = zs.sp;
+        if (sp.texture !== tex) sp.texture = tex; // 새 게임에서 id 재사용 대비
+        sp.x = cx;
+        sp.y = cy;
+        // 데칼 폭을 장판 지름에 맞춘다 (데칼 자체가 납작한 타원이라 y 는 비율 유지).
+        // 생성 후 250ms 동안 자라나며 등장.
+        const grow = Math.min(1, 0.55 + (0.45 * (now - zs.born)) / 250);
+        const s = ((r * 2.15) / tex.width) * grow;
+        sp.scale.set(s);
+        sp.alpha = 0.82 * fade * pulse;
+      } else {
+        const color = z.kind === 'thorns' ? 0xd4574a
+          : z.kind === 'spores' ? 0xb07fe0
+          : z.kind === 'grave' ? 0x7a5fd0 // 사후의 경계
+          : z.kind === 'blaze' ? 0xff7a2e // 블레이즈 — 불구덩이
+          : z.kind === 'quake' ? 0xa8845c // 어스퀘이크 — 갈라진 땅
+          : z.kind === 'frost' ? 0x9fdcff // 블리자드 — 얼음
+          : z.kind === 'gravity' ? 0xb06ad0 // 리버스그라비티 — 중력진
+          : z.kind === 'hellfire' ? 0x7fe89a // 지옥불 — 저주 화염
+          : z.kind === 'fireburst' ? 0xffa03d // 화염구 폭발
+          : z.kind === 'feast' ? 0x9a5fd0 // 망자의 만찬
+          : 0x5fcf6a;
+        zonesGr.ellipse(cx, cy, r, r * 0.62).fill({ color, alpha: 0.14 * fade * pulse });
+        zonesGr.ellipse(cx, cy, r, r * 0.62).stroke({ color, width: 1.5, alpha: 0.45 * fade * pulse });
+      }
+    }
+    // 사라진 장판 스프라이트 정리
+    for (const [id, zs] of zoneSprites) {
+      if (!zoneSeen.has(id)) {
+        zs.sp.destroy();
+        zoneSprites.delete(id);
+      }
+    }
+    const seen = new Set<number>();
+    const byId = new Map<number, (typeof g.entities)[number]>();
+    for (const e of g.entities) if (e.alive) byId.set(e.id, e);
+
+    for (const e of g.entities) {
+      if (!e.alive) continue;
+      seen.add(e.id);
+      const d = DEFS[e.defId]!;
+      let sp = sprites.get(e.id);
+      if (!sp) {
+        const variants = assetTex.get(e.defId);
+        // 변형은 유닛 id 로 결정론적 배정 (엘프 궁수 여/남 50:50 등)
+        const custom = variants ? variants[e.id % variants.length] : undefined;
+        // 업그레이드 스킨: 소유 플레이어가 해당 업그레이드를 보유하면 교체
+        const skinCfg = ASSET_UPGRADE_SKINS[e.defId];
+        const useSkin = !!skinCfg && e.owner >= 0
+          && !!g.players[e.owner]?.upgrades[skinCfg.upgrade] && skinTex.has(e.defId);
+        sp = new Sprite(useSkin ? skinTex.get(e.defId)! : (custom ?? artOf(e.defId, e.team).texture));
+        sp.anchor.set(0.5, 1);
+        const sizeMul = ASSET_SIZE_MUL[e.defId] ?? 1;
+        const targetW = Math.max(20, (d.radius / FP) * 2 * TILE * 2.2) * (useSkin ? skinCfg!.scaleMul : 1) * sizeMul;
+        sp.scale.set(targetW / sp.texture.width);
+        if (e.team === 1 && d.tier !== 'structure') sp.scale.x = -sp.scale.x;
+        sprites.set(e.id, sp);
+        spriteDefId.set(e.id, e.defId);
+        spriteTeam.set(e.id, e.team);
+        units.addChild(sp);
+        prevPos.set(e.id, { x: e.x, y: e.y });
+        unitFx.set(e.id, {
+          lastCooldown: e.cooldown, lastHealCd: e.healCooldown,
+          lastSkillCd: e.skillCds.reduce((a, b) => a + b, 0), lastSkillCds: [...e.skillCds], lastHp: e.hp, flashUntil: 0,
+          lungeStart: 0, lungeDx: 0, lungeDy: 0,
+          recoilStart: 0, recoilDx: 0, aimStart: 0, aimUntil: 0, skillStart: 0, skillUntil: 0, healGlowUntil: 0,
+          walkPhase: Math.random() * 6.28, moving: false,
+          baseScaleX: sp.scale.x, baseScaleY: sp.scale.y,
+          hasSkin: useSkin,
+        });
+      }
+      const vfx = unitFx.get(e.id)!;
+
+      // 전향(인형의 실): 팀이 바뀌었다 — 바라보는 방향을 뒤집고 표식을 남긴다
+      if (spriteTeam.get(e.id) !== e.team) {
+        spriteTeam.set(e.id, e.team);
+        vfx.baseScaleX = -vfx.baseScaleX;
+        sp.scale.x = -sp.scale.x;
+        charmedIds.add(e.id);
+      }
+
+      // ── 이벤트 감지 (시뮬 상태 변화 → 연출 트리거) ──
+      // 발사: 쿨다운이 늘었다 = 이번 스텝에 공격했다
+      if (e.cooldown > vfx.lastCooldown && d.weapon) {
+        const target = e.targetId >= 0 ? byId.get(e.targetId) : undefined;
+        // 수호자(중간보스) 광역 스윙: 넓은 충격파가 퍼진다 (드래곤 = 화염, 할로우 = 저주)
+        if (target && d.tier === 'guardian' && d.weapon.splash) {
+          const bossR = (d.weapon.splash / FP) * TILE;
+          const bossColor = e.defId === 'dragon' ? 0xff8a3d : 0x9a6ae0;
+          impacts.push({ x: sx(target.x), y: sy(target.y) - 4, start: now, radius: bossR, color: bossColor });
+          impacts.push({ x: sx(target.x), y: sy(target.y) - 4, start: now + 120, radius: bossR * 0.65, color: bossColor });
+        }
+        if (target) {
+          const ranged = d.weapon.range >= RANGED_THRESHOLD;
+          const fromX = sx(e.x), fromY = sy(e.y);
+          const toX = sx(target.x), toY = sy(target.y);
+          if (ranged) {
+            vfx.recoilStart = now;
+            vfx.recoilDx = fromX < toX ? -2.5 : 2.5;
+            vfx.aimStart = now;
+            vfx.aimUntil = now + 700; // 발사 애니메이션 구간
+            projectiles.push({
+              x0: fromX, y0: fromY - sp.height * 0.55,
+              x1: toX, y1: toY - 8,
+              start: now, dur: 100 + Math.hypot(toX - fromX, toY - fromY) * 1.1,
+              color: raceColor(e.defId),
+              splash: d.weapon.splash ? (d.weapon.splash / FP) * TILE : 0,
+              ...(PROJECTILE_OF[e.defId] ? { kind: PROJECTILE_OF[e.defId] } : {}),
+              spin0: (e.id % 17) * 0.37,
+            });
+          } else {
+            vfx.lungeStart = now;
+            const dx = toX - fromX, dy = toY - fromY;
+            const len = Math.hypot(dx, dy) || 1;
+            vfx.lungeDx = (dx / len) * 7;
+            vfx.lungeDy = (dy / len) * 7;
+            vfx.aimStart = now;
+            vfx.aimUntil = now + 400; // 근접 휘두르기 애니메이션 (있는 유닛만)
+          }
+          // 공격음: 원거리는 마법/투사체로 나눠서
+          const magic = ranged && d.weapon.range >= tiles(3) && (d.heal !== undefined || d.weapon.zone !== undefined);
+          sfx(ranged ? (magic ? 'atk_magic' : 'atk_ranged') : 'atk_melee', fromX, 0.6);
+        }
+      }
+      vfx.lastCooldown = e.cooldown;
+      // 힐 시전 감지 → 시전 애니메이션
+      if (e.healCooldown > vfx.lastHealCd) {
+        vfx.aimStart = now;
+        vfx.aimUntil = now + 600;
+        sfx('cast_heal', sx(e.x), 0.55);
+      }
+      vfx.lastHealCd = e.healCooldown;
+      // 액티브 스킬 발동 감지 → 확산 링 이펙트 (strike 는 대상 위치, 그 외 자기 위치)
+      // 쿨다운 합이 크게 뛰면 이번 스텝에 스킬을 시전한 것 (틱당 감소는 소폭).
+      const skillCdSum = e.skillCds.length > 0 ? e.skillCds.reduce((a, b) => a + b, 0) : 0;
+      if (skillCdSum > vfx.lastSkillCd + 4) {
+        const strike = d.actives?.find((a) => a.kind === 'strike');
+        const strikeTarget = strike && e.targetId >= 0 ? byId.get(e.targetId) : undefined;
+        const cx = strikeTarget ? sx(strikeTarget.x) : sx(e.x);
+        const cy = strikeTarget ? sy(strikeTarget.y) - 6 : sy(e.y) - 10;
+        // 방금 발동한 스킬의 종류로 링 색을 가른다 (도발 = 보라, 반사 = 빨강)
+        let castKind: string | undefined;
+        for (let i = 0; i < e.skillCds.length; i++) {
+          if ((e.skillCds[i] ?? 0) > (vfx.lastSkillCds?.[i] ?? 0) + 4) castKind = d.actives?.[i]?.kind;
+        }
+        impacts.push({
+          x: cx, y: cy, start: now,
+          radius: castKind === 'taunt' ? 34 : castKind === 'reflect' ? 30
+            : strike?.splash ? (strike.splash / FP) * TILE : 18,
+          color: castKind === 'taunt' ? 0xb06ad0
+            : castKind === 'reflect' ? 0xff4d4d
+            : castKind === 'fear' ? 0x7a3de0
+            : strikeTarget ? 0xffd23d : 0x7ddcff,
+        });
+        if (skillAnimTex.has(e.defId)) {
+          // 전용 시전 프레임 재생
+          vfx.skillStart = now;
+          vfx.skillUntil = now + 650;
+        } else {
+          // 공격 모션 재활용
+          vfx.aimStart = now;
+          vfx.aimUntil = now + (strikeTarget ? 400 : 600);
+        }
+        sfx('cast_skill', cx, 0.85);
+      }
+      vfx.lastSkillCd = skillCdSum;
+      vfx.lastSkillCds = [...e.skillCds];
+      // 회복 감지 (힐/재생/흡혈) → 초록 플러스 이펙트
+      if (e.hp > vfx.lastHp) vfx.healGlowUntil = now + 450;
+      // 피격: 체력이 줄었다 — 맞은 쪽 재질에 따라 타격음이 갈린다
+      if (e.hp < vfx.lastHp) {
+        vfx.flashUntil = now + 110;
+        sfx(hitKeyOf(e.defId), sx(e.x), 0.5);
+      }
+      vfx.lastHp = e.hp;
+
+      // ── 위치/보간 ──
+      const pv = prevPos.get(e.id)!;
+      const ix = pv.x + (e.x - pv.x) * alpha;
+      const iy = pv.y + (e.y - pv.y) * alpha;
+      const movedNow = e.x !== pv.x || e.y !== pv.y;
+      vfx.moving = movedNow;
+
+      let px = sx(ix);
+      let py = sy(iy);
+      const shadowY = py;
+      let rot = 0;
+
+      // 걷기 바운스 (지상 유닛만)
+      if (!d.flying && vfx.moving && d.speed > 0) {
+        vfx.walkPhase += 0.35;
+        py -= Math.abs(Math.sin(vfx.walkPhase)) * 2.2;
+        rot = Math.sin(vfx.walkPhase) * 0.06;
+      }
+      // 비행 봅 + 날갯짓 (리버스그라비티로 지상화되면 땅에 붙는다)
+      const groundedNow = g.tick < e.groundedUntil;
+      if (d.flying && !groundedNow) {
+        py -= 26 + Math.sin((g.tick + e.id * 13) * 0.12) * 3;
+        const flapFrames = vfx.hasSkin ? undefined : flapTex.get(e.defId);
+        if (flapFrames && now >= vfx.aimUntil) {
+          // 부유 모션 (공격 애니메이션 중에는 양보)
+          let want: Texture | undefined;
+          if (flapFrames.length >= 2) {
+            // 다프레임: 순환 재생 (~140ms/프레임)
+            const fi = Math.floor((now + e.id * 137) / 140) % flapFrames.length;
+            want = flapFrames[fi];
+          } else {
+            // 1프레임: 기본 포즈와 교대
+            const baseT = assetTex.get(e.defId)?.[e.id % (assetTex.get(e.defId)?.length ?? 1)];
+            const up = Math.sin(now * 0.02 + e.id * 1.7) > 0;
+            want = up ? flapFrames[0] : baseT;
+          }
+          if (want && sp.texture !== want) sp.texture = want;
+          sp.scale.y = vfx.baseScaleY;
+          sp.scale.x = vfx.baseScaleX;
+        } else if (flapFrames) {
+          sp.scale.y = vfx.baseScaleY;
+          sp.scale.x = vfx.baseScaleX;
+        } else {
+          // 프레임이 없는 비행체는 스쿼시 착시로 폴백
+          const flap = Math.sin(now * 0.02 + e.id * 1.7);
+          sp.scale.y = vfx.baseScaleY * (1 + 0.09 * flap);
+          sp.scale.x = vfx.baseScaleX * (1 - 0.05 * flap);
+        }
+      }
+      // 근접 돌진 (150ms 왕복)
+      if (vfx.lungeStart > 0) {
+        const t = (now - vfx.lungeStart) / 150;
+        if (t < 1) {
+          const k = Math.sin(t * Math.PI); // 0→1→0
+          px += vfx.lungeDx * k;
+          py += vfx.lungeDy * k;
+        } else vfx.lungeStart = 0;
+      }
+      // 원거리 반동 (120ms)
+      if (vfx.recoilStart > 0) {
+        const t = (now - vfx.recoilStart) / 120;
+        if (t < 1) px += vfx.recoilDx * (1 - t);
+        else vfx.recoilStart = 0;
+      }
+
+      sp.x = px;
+      sp.y = py;
+      sp.rotation = rot;
+      sp.zIndex = shadowY + (d.flying ? 4000 : 0);
+      // 피격 플래시 > 무적(백금색) > 중독/화상(연녹색) > 혼란(보라) > 자가 버프(금색) > 기본
+      const sbSkill = d.actives?.find((a) => a.kind === 'selfbuff');
+      const buffedNow = sbSkill !== undefined && g.tick < e.buffUntil;
+      const invulnNow = g.tick < e.invulnUntil;
+      const confusedNow = g.tick < e.confusedUntil;
+      const asleepNow = g.tick < e.sleepUntil;
+      const weakenedNow = g.tick < e.weakenedUntil;
+      const frozenNow = g.tick < e.frozenUntil;
+      const fearedNow = g.tick < e.fearedUntil;
+      // 수호자 생존 중인 넥서스는 보호막 상태 (때려도 안 들어간다)
+      const shieldedNow = e.defId === 'nexus' && !g.guardianDown[e.team];
+      sp.tint = now < vfx.flashUntil ? 0xff7a6a
+        : invulnNow ? 0xfff6d0
+        // 빙결: 얼음빛 — 수면보다 차갑고 밝게
+        : frozenNow ? 0x9fdcff
+        : g.tick < e.dotUntil ? 0xb8f0a0
+        // 혼란: 넋이 나간 듯 잿빛으로 (한눈에 "얘 지금 안 싸운다"가 읽히게)
+        : confusedNow ? 0x8a8a8a
+        // 수면: 푸르스름하게 가라앉힌다
+        : asleepNow ? 0x8fa8d8
+        // 공포: 새하얗게 질린다
+        : fearedNow ? 0xe8e0f0
+        : buffedNow ? 0xffe6a0
+        // 약화: 핏기 빠진 회보라
+        : weakenedNow ? 0xc4b0c8
+        // 구조물은 팀 색으로 물들인다 (양 팀이 같은 그림이라 편 구분이 안 됐다)
+        : d.tier === 'structure' ? STRUCTURE_TEAM_TINT[e.team] : 0xffffff;
+      // 뿌리박기류: 지속 중 발밑에 갈색 뿌리 링
+      if (buffedNow && sbSkill?.holdGround) {
+        fx.ellipse(px, shadowY, 12, 5.5).stroke({ color: 0x8a6a3d, width: 2, alpha: 0.8 });
+      }
+      // 무적 (인비저블): 금색 보호막 링 (맥동)
+      if (invulnNow) {
+        const shim = 0.55 + 0.3 * Math.sin(now * 0.012);
+        fx.ellipse(px, py - sp.height * 0.45, sp.width * 0.62, sp.height * 0.55)
+          .stroke({ color: 0xffd86a, width: 2, alpha: shim });
+      }
+      // 혼란: 머리 위에서 별 세 개가 빙글빙글 (기절 만화 연출)
+      if (confusedNow) {
+        const hy = py - sp.height - 8;
+        const spin = now * 0.005;
+        for (let k = 0; k < 3; k++) {
+          const a = spin + (k * Math.PI * 2) / 3;
+          const ox = Math.cos(a) * 8;
+          const oy = Math.sin(a) * 3; // 납작한 궤도 = 원근감
+          const r = 1.6 + Math.sin(a) * 0.5; // 뒤로 갈수록 작게
+          fx.circle(px + ox, hy + oy, r).fill({ color: 0xffe14d, alpha: 0.55 + Math.sin(a) * 0.35 });
+        }
+      }
+      // 빙결: 유닛을 감싸는 얼음 결정 (육각 스파이크 링)
+      if (frozenNow) {
+        const icy = py - sp.height * 0.45;
+        for (let k = 0; k < 6; k++) {
+          const a = (k * Math.PI) / 3 + 0.3;
+          const rx = Math.cos(a) * sp.width * 0.55;
+          const ry = Math.sin(a) * sp.height * 0.5;
+          fx.moveTo(px + rx * 0.6, icy + ry * 0.6).lineTo(px + rx, icy + ry)
+            .stroke({ color: 0xcfeeff, width: 2, alpha: 0.85 });
+        }
+        fx.ellipse(px, icy, sp.width * 0.58, sp.height * 0.52)
+          .stroke({ color: 0x9fdcff, width: 1.5, alpha: 0.7 });
+      }
+      // 가시 봉제 (공격 반사) 지속 중: 붉은 가시 링이 회전한다
+      if (g.tick < e.reflectUntil) {
+        const ry = py - sp.height * 0.45;
+        const spin = now * 0.003;
+        for (let k = 0; k < 8; k++) {
+          const a = spin + (k * Math.PI) / 4;
+          const rx = Math.cos(a) * sp.width * 0.6;
+          const rz = Math.sin(a) * sp.height * 0.55;
+          fx.moveTo(px + rx * 0.78, ry + rz * 0.78).lineTo(px + rx * 1.12, ry + rz * 1.12)
+            .stroke({ color: 0xff5a4d, width: 2, alpha: 0.85 });
+        }
+        fx.ellipse(px, ry, sp.width * 0.62, sp.height * 0.56)
+          .stroke({ color: 0xff5a4d, width: 1.5, alpha: 0.5 + 0.2 * Math.sin(now * 0.01) });
+      }
+      // 전향(인형의 실): 머리 위 분홍 실에 매달린 하트 표식
+      if (charmedIds.has(e.id)) {
+        const hy = py - sp.height - 12;
+        const sway = Math.sin(now * 0.004 + e.id) * 2;
+        fx.moveTo(px + sway, hy - 6).lineTo(px, hy + 1).stroke({ color: 0xff9ad0, width: 1, alpha: 0.8 });
+        fx.circle(px - 1.4, hy + 2.4, 1.7).fill({ color: 0xff7ab8, alpha: 0.95 });
+        fx.circle(px + 1.4, hy + 2.4, 1.7).fill({ color: 0xff7ab8, alpha: 0.95 });
+        fx.moveTo(px - 3, hy + 3).lineTo(px, hy + 6.5).lineTo(px + 3, hy + 3)
+          .stroke({ color: 0xff7ab8, width: 2.4, alpha: 0.95 });
+      }
+      // 공포: 머리 위에서 떨리는 보라 느낌표
+      if (fearedNow) {
+        const hy = py - sp.height - 9;
+        const jit = Math.sin(now * 0.03 + e.id * 3) * 1.4;
+        fx.rect(px - 1.2 + jit, hy - 6, 2.4, 6).fill({ color: 0xb06ad0, alpha: 0.95 });
+        fx.circle(px + jit, hy + 3, 1.4).fill({ color: 0xb06ad0, alpha: 0.95 });
+      }
+      // 수면: 머리 위로 떠오르는 Z (세 개가 시차를 두고 위로 흘러간다)
+      if (asleepNow) {
+        const hy = py - sp.height - 6;
+        for (let k = 0; k < 3; k++) {
+          const t = ((now * 0.0006 + k / 3) % 1);
+          const zx = px + 5 + t * 7;
+          const zy = hy - t * 13;
+          const s = 2.4 + t * 1.6;
+          const al = 0.85 * (1 - t);
+          fx.moveTo(zx - s, zy - s).lineTo(zx + s, zy - s)
+            .lineTo(zx - s, zy + s).lineTo(zx + s, zy + s)
+            .stroke({ color: 0xdfe8ff, width: 1.4, alpha: al });
+        }
+      }
+      // 약화: 발밑에서 아래로 처지는 보라 화살표
+      if (weakenedNow && !asleepNow) {
+        const wy = shadowY - 2 + Math.sin(now * 0.006 + e.id) * 1.2;
+        fx.moveTo(px - 4, wy - 3).lineTo(px, wy + 2).lineTo(px + 4, wy - 3)
+          .stroke({ color: 0xb06ad0, width: 1.6, alpha: 0.9 });
+      }
+      // 넥서스 보호막: 수호자가 살아 있는 동안 청록 방벽이 맥동한다
+      if (shieldedNow) {
+        const shim = 0.4 + 0.25 * Math.sin(now * 0.004);
+        fx.ellipse(px, py - sp.height * 0.4, sp.width * 0.75, sp.height * 0.68)
+          .stroke({ color: 0x7ad8ff, width: 2.5, alpha: shim });
+      }
+      // 군세강화: 머리 위 주황 이중 화살촉
+      if (g.tick < e.atkBuffUntil && !confusedNow) {
+        const hy = py - sp.height - 5;
+        const bob = Math.sin(now * 0.008 + e.id) * 1.2;
+        for (const o of [0, 4]) {
+          fx.moveTo(px - 4, hy + o + bob).lineTo(px, hy + o - 4 + bob).lineTo(px + 4, hy + o + bob)
+            .stroke({ color: 0xff9a3d, width: 1.6, alpha: 0.9 });
+        }
+      }
+      // 숲의 가호: 발밑 연둣빛 점
+      if (g.tick < e.forestUntil) {
+        const tw = 0.5 + 0.4 * Math.sin(now * 0.006 + e.id * 2.3);
+        fx.circle(px + 7, shadowY - 3, 1.6).fill({ color: 0x9fe86a, alpha: tw });
+        fx.circle(px - 7, shadowY - 5, 1.3).fill({ color: 0x9fe86a, alpha: 1 - tw * 0.6 });
+      }
+      // 회복: 초록 플러스 떠오름
+      if (now < vfx.healGlowUntil) {
+        const t = 1 - (vfx.healGlowUntil - now) / 450;
+        const hy = py - sp.height - 4 - t * 10;
+        fx.rect(px - 1.2, hy - 4, 2.4, 8).fill({ color: 0x6fe87a, alpha: 0.9 * (1 - t) });
+        fx.rect(px - 4, hy - 1.2, 8, 2.4).fill({ color: 0x6fe87a, alpha: 0.9 * (1 - t) });
+      }
+      // 속박: 발밑에 포획 실 링 표시
+      if (g.tick < e.rootedUntil) {
+        fx.ellipse(px, shadowY, 10, 4.5).stroke({ color: 0xf0f0f0, width: 1.5, alpha: 0.85 });
+        fx.moveTo(px - 8, shadowY - 2).lineTo(px + 8, shadowY + 2).stroke({ color: 0xf0f0f0, width: 1, alpha: 0.6 });
+        fx.moveTo(px - 8, shadowY + 2).lineTo(px + 8, shadowY - 2).stroke({ color: 0xf0f0f0, width: 1, alpha: 0.6 });
+      }
+      // 공격 애니메이션 재생. 업그레이드 스킨 중엔 스킨 전용 프레임을 사용.
+      if (vfx.hasSkin) {
+        const frames = skinAtkTex.get(e.defId);
+        if (frames) {
+          if (now < vfx.aimUntil && vfx.aimUntil > vfx.aimStart) {
+            const prog = (now - vfx.aimStart) / (vfx.aimUntil - vfx.aimStart);
+            const fi = Math.min(frames.length - 1, Math.floor(prog * frames.length));
+            const want = frames[fi];
+            if (want && sp.texture !== want) sp.texture = want;
+          } else {
+            const base = skinTex.get(e.defId);
+            if (base && sp.texture !== base) sp.texture = base;
+          }
+        }
+      } else if (now < vfx.skillUntil && vfx.skillUntil > vfx.skillStart && skillAnimTex.has(e.defId)) {
+        // 스킬 시전 프레임 재생 (공격 모션보다 우선)
+        const frames = skillAnimTex.get(e.defId)!;
+        const prog = (now - vfx.skillStart) / (vfx.skillUntil - vfx.skillStart);
+        const fi = Math.min(frames.length - 1, Math.floor(prog * frames.length));
+        const want = frames[fi];
+        if (want && sp.texture !== want) sp.texture = want;
+      } else {
+        const atkVariants = attackTex.get(e.defId);
+        if (atkVariants) {
+          const baseVariants = assetTex.get(e.defId);
+          const vi = e.id % (baseVariants?.length ?? atkVariants.length);
+          if (now < vfx.aimUntil && vfx.aimUntil > vfx.aimStart) {
+            const frames = atkVariants[vi % atkVariants.length]!;
+            const prog = (now - vfx.aimStart) / (vfx.aimUntil - vfx.aimStart);
+            const fi = Math.min(frames.length - 1, Math.floor(prog * frames.length));
+            const want = frames[fi];
+            if (want && sp.texture !== want) sp.texture = want;
+          } else if (!flapTex.has(e.defId)) {
+            // 부유 프레임 보유 유닛의 평시 텍스처는 부유 로직이 관리한다
+            const want = baseVariants?.[vi];
+            if (want && sp.texture !== want) sp.texture = want;
+          }
+        }
+      }
+
+      const on = px > camX - 60 && px < camX + visibleW() + 60;
+      sp.visible = on;
+      if (!on) continue;
+
+      // 그림자
+      const rw = Math.max(6, (d.radius / FP) * TILE * 1.6);
+      shadows.ellipse(sx(ix), shadowY - 1, rw, rw * 0.42).fill({ color: 0x3a2a18, alpha: d.flying ? 0.2 : 0.32 });
+      // 선택 링
+      if (e.id === selectedId) {
+        fx.ellipse(sx(ix), shadowY - 1, rw + 4, (rw + 4) * 0.42).stroke({ color: 0xffe98a, width: 2 });
+      }
+
+      // 체력바
+      const isStruct = d.tier === 'structure';
+      if (e.hp < d.maxHp || isStruct) {
+        const w = isStruct ? 40 : 18;
+        // 업그레이드로 최대 체력이 늘어난 유닛은 유효 정의 기준으로 비율 계산
+        const maxHp = e.defOv?.maxHp ?? d.maxHp;
+        const hpr = Math.min(1, Math.max(0, e.hp / maxHp));
+        const bx = px - w / 2;
+        const by = py - sp.height - 5;
+        bars.rect(bx, by, w, 3.5).fill({ color: 0x120d08, alpha: 0.85 });
+        bars.rect(bx, by, w * hpr, 3.5).fill(hpr > 0.5 ? 0x6fce62 : hpr > 0.25 ? 0xe0b840 : 0xe0524a);
+      }
+    }
+
+    // ── 사망 처리: 사라진 유닛 → 시체 연출 ──
+    for (const [id, sp] of sprites) {
+      if (seen.has(id)) continue;
+      const deadDefId = spriteDefId.get(id);
+      // 구조물 파괴는 별도 이벤트(towerDown)로 처리하므로 여기선 유닛만
+      if (deadDefId && DEFS[deadDefId]?.tier !== 'structure') {
+        sfx(deathKeyOf(deadDefId), sp.x, 0.45);
+      }
+      sprites.delete(id);
+      spriteTeam.delete(id);
+      charmedIds.delete(id);
+      spriteDefId.delete(id);
+      prevPos.delete(id);
+      unitFx.delete(id);
+      // 구조물은 그냥 제거, 유닛은 쓰러지는 시체로 전환
+      units.removeChild(sp);
+      corpseLayer.addChild(sp);
+      sp.rotation = sp.scale.x >= 0 ? Math.PI / 2 : -Math.PI / 2;
+      sp.tint = 0xb8b8b8;
+      corpses.push({ sp, start: now });
+    }
+    // 시체 페이드아웃 (1.6초)
+    for (let i = corpses.length - 1; i >= 0; i--) {
+      const c = corpses[i]!;
+      const t = (now - c.start) / 1600;
+      if (t >= 1) {
+        c.sp.destroy();
+        corpses.splice(i, 1);
+      } else {
+        c.sp.alpha = 1 - t * t;
+      }
+    }
+
+    // ── 투사체 ──
+    // 스프라이트는 매 프레임 만들지 않고 풀에서 재사용한다 (교전 중 수십 발이 동시에 난다)
+    let projUsed = 0;
+    for (let i = projectiles.length - 1; i >= 0; i--) {
+      const p = projectiles[i]!;
+      const t = (now - p.start) / p.dur;
+      if (t >= 1) {
+        impacts.push({ x: p.x1, y: p.y1, start: now, radius: p.splash > 0 ? p.splash : 7, color: p.color });
+        // 광역 투사체만 폭발음 (단발 착탄은 피격음으로 충분 — 소리 과밀 방지)
+        if (p.splash > 0) sfx('explosion', p.x1, 0.7);
+        projectiles.splice(i, 1);
+        continue;
+      }
+      const cx = p.x0 + (p.x1 - p.x0) * t;
+      // 살짝 포물선
+      const arc = Math.sin(t * Math.PI) * 9;
+      const cy = p.y0 + (p.y1 - p.y0) * t - arc;
+      const ang = Math.atan2(p.y1 - p.y0, p.x1 - p.x0);
+
+      const tex = p.kind ? projTex.get(p.kind) : undefined;
+      if (tex && p.kind) {
+        // 스프라이트 탄: 이번 프레임에 쓸 것만 풀에서 꺼내 쓴다
+        const style = PROJECTILE_STYLE[p.kind];
+        const sp = projPool[projUsed] ?? (() => {
+          const s = new Sprite();
+          s.anchor.set(0.5);
+          projLayer.addChild(s);
+          projPool.push(s);
+          return s;
+        })();
+        projUsed++;
+        if (sp.texture !== tex) sp.texture = tex;
+        sp.visible = true;
+        sp.x = cx;
+        sp.y = cy;
+        sp.scale.set(style.size / tex.width);
+        // 화살·탄환은 날아가는 방향으로, 뼈·폭탄은 빙글빙글
+        // 왼쪽으로 날아갈 땐 좌우로 뒤집어 그림이 거꾸로 서지 않게 한다.
+        const leftward = style.rotate && Math.abs(ang) > Math.PI / 2;
+        if (style.rotate) {
+          sp.rotation = leftward ? ang + Math.PI + (style.aim ?? 0) : ang - (style.aim ?? 0);
+        } else {
+          sp.rotation = p.spin0 + (style.spin ?? 0) * (now - p.start);
+        }
+        sp.scale.x = Math.abs(sp.scale.x) * (leftward ? -1 : 1);
+      } else {
+        const lx = Math.cos(ang) * 4, ly = Math.sin(ang) * 4;
+        fx.moveTo(cx - lx, cy - ly).lineTo(cx + lx, cy + ly).stroke({ color: p.color, width: 2 });
+      }
+    }
+    // 이번 프레임에 안 쓴 풀 스프라이트는 숨긴다
+    for (let i = projUsed; i < projPool.length; i++) projPool[i]!.visible = false;
+    // ── 임팩트 링 (220ms) ──
+    for (let i = impacts.length - 1; i >= 0; i--) {
+      const im = impacts[i]!;
+      const t = (now - im.start) / 220;
+      if (t >= 1) {
+        impacts.splice(i, 1);
+        continue;
+      }
+      if (t < 0) continue; // 예약된 2차 충격파 (수호자 이중 링) — 아직 시작 전
+      fx.circle(im.x, im.y, im.radius * (0.4 + t * 0.6)).stroke({ color: im.color, width: 2, alpha: 1 - t });
+    }
+  }
+
+  return {
+    app,
+    setMap(m) {
+      curMap = m;
+      app.renderer.background.color = MAP_BG[m.id] ?? 0x9c7c4e;
+      buildGroundTiles();
+      drawGround(ground, tiled());
+      camX = 0;
+      camY = 0;
+      clampCam();
+    },
+    beforeStep(g) {
+      // 스텝 전 위치를 저장해 두면 draw()가 prev→current 를 alpha 로 보간한다.
+      // (매 프레임이 아니라 스텝 직전에만 갱신해야 20Hz 계단 현상이 없다)
+      for (const e of g.entities) {
+        if (e.alive) prevPos.set(e.id, { x: e.x, y: e.y });
+      }
+    },
+    draw,
+    panBy(dx, dy = 0) {
+      camX += dx / zoom;
+      camY += dy / zoom;
+      clampCam();
+    },
+    centerOn(x) {
+      applyCamera(); // 첫 호출 시 줌이 아직 fit 계산 전일 수 있어 먼저 확정
+      camX = x - visibleW() / 2;
+      clampCam();
+    },
+    zoomBy(factor, anchorX, anchorY) {
+      const ax = anchorX ?? app.screen.width / 2;
+      const ay = anchorY ?? app.screen.height / 2;
+      const wx = (ax - world.x) / zoom;
+      const wy = (ay - world.y) / zoom;
+      userZoom = Math.min(USER_ZOOM_MAX, Math.max(USER_ZOOM_MIN, userZoom * factor));
+      applyCamera();
+      camX = wx - ax / zoom;
+      camY = wy - ay / zoom;
+      clampCam();
+    },
+    view() {
+      return { x0: camX, x1: camX + visibleW() };
+    },
+    pick(g, screenX, screenY) {
+      // 화면 → 월드 px 역변환 후 발밑 기준 최근접 탐색
+      const wx = (screenX - world.x) / zoom;
+      const wy = (screenY - world.y) / zoom;
+      let best: number | null = null;
+      let bestD = 26 * 26; // 최대 26px 반경
+      for (const e of g.entities) {
+        if (!e.alive) continue;
+        const d = DEFS[e.defId]!;
+        const px = sx(e.x);
+        const py = sy(e.y) - (d.flying ? 26 : 0) - 8; // 몸통 중심 근사
+        const dx = px - wx;
+        const dy = py - wy;
+        const dist = dx * dx + dy * dy;
+        if (dist < bestD) {
+          bestD = dist;
+          best = e.id;
+        }
+      }
+      return best;
+    },
+    setSelected(id) {
+      selectedId = id;
+    },
+    setAudio(a) {
+      audio = a;
+    },
+  };
+}
+
+function drawGround(gr: Graphics, tiled = false): void {
+  gr.clear();
+  const m = curMap;
+  const tilesX = m.length / FP;
+  const halfH = renderHalfH(m);
+  const tilesY = Math.ceil((halfH * 2) / FP);
+  const th = TILE * Y_SQUASH;
+  const laneHalfTiles = m.halfW / FP;
+
+  // 코리도어 밖 = 암반, 안 = 모래 체커. 열 단위로 중앙선을 따라간다.
+  // (tiled = 픽셀 타일이 깔린 경우: 베이스는 생략하고 진영 틴트·중앙선만 오버레이)
+  for (let i = 0; i < tilesX; i++) {
+    const cx = i * FP + 500; // 타일 중심 x (FP)
+    const centerTileY = (laneCenterY(m, cx) + halfH) / FP; // 타일 좌표계 중심
+    if (!tiled) {
+      for (let j = 0; j < tilesY; j++) {
+        const inLane = Math.abs(j + 0.5 - centerTileY) <= laneHalfTiles;
+        if (inLane) {
+          const even = (i + j) % 2 === 0;
+          gr.rect(i * TILE, PAD_TOP + j * th, TILE, th).fill(even ? 0xcfae70 : 0xc7a566);
+          if ((i * 7 + j * 13) % 5 === 0) {
+            gr.rect(i * TILE + ((i * 11) % 18) + 3, PAD_TOP + j * th + ((j * 7) % 14) + 3, 3, 2)
+              .fill({ color: 0xb8955a, alpha: 0.7 });
+          }
+        } else {
+          // 절벽/암반 지대
+          const even = (i * 3 + j) % 2 === 0;
+          gr.rect(i * TILE, PAD_TOP + j * th, TILE, th).fill(even ? 0x6e5638 : 0x645034);
+        }
+      }
+    }
+    // 진영 바닥 표시 (코리도어 안에서만)
+    const tint = i * FP < m.towerX[0] ? 0x5788cc : i * FP >= m.towerX[1] ? 0xcc6a57 : 0;
+    if (tint !== 0) {
+      const top = (centerTileY - laneHalfTiles) * th;
+      gr.rect(i * TILE, PAD_TOP + top, TILE, laneHalfTiles * 2 * th).fill({ color: tint, alpha: 0.06 });
+    }
+  }
+  // 중앙선
+  gr.rect(worldW() / 2 - 1, PAD_TOP, 2, tilesY * th).fill({ color: 0x8a6c42, alpha: 0.5 });
+}
+
+export { sx as worldToPxX };

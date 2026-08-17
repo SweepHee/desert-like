@@ -1,0 +1,5 @@
+# 배포에 불필요한 것들 (업로드 용량·시간 절감)
+node_modules
+packages/*/node_modules
+packages/client/dist
+docs

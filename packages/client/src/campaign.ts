@@ -1,0 +1,520 @@
+/**
+ * 실바린 캠페인 「자정의 세계수」 — 18스테이지.
+ * 시나리오 원본: docs/campaign-sylvarin.md
+ *
+ * 구조: 스테이지 데이터(해금 유닛·적 구성·미션·대사) + 진행 저장(localStorage)
+ * + 대화 오버레이. 전투 자체는 기존 솔로(봇전) 엔진을 그대로 쓴다 —
+ * 캠페인 레이어는 상점 필터·승리 조건·시드만 오버라이드한다.
+ */
+import type { BotDifficulty, RaceId, TeamId } from '@desertlike/sim';
+
+export interface DialogueLine {
+  readonly who: string;   // 화자 이름 (PORTRAITS 키). '' = 내레이션
+  readonly text: string;
+}
+
+export interface CampaignStage {
+  readonly id: number;    // 1..18
+  readonly act: 1 | 2 | 3;
+  readonly title: string;
+  readonly goal: string;  // 전투 중 상단에 표시되는 목표 한 줄
+  readonly briefing: readonly DialogueLine[];
+  readonly outro: readonly DialogueLine[];
+  /** 이 스테이지에서 상점에 열리는 실바린 유닛 (누적 명시). */
+  readonly allowedUnits: readonly string[];
+  /** 적 봇 구성 (팀 2). */
+  readonly enemies: readonly RaceId[];
+  /** 아군 봇 구성 (팀 1, 나 제외). */
+  readonly allies: readonly RaceId[];
+  readonly botDifficulty: BotDifficulty;
+  /**
+   * destroy = 적 넥서스 파괴 / survive = surviveSec 버티면 승리 (먼저 부숴도 승리)
+   * tower   = 적 수호탑만 부수면 승리 (수호자가 깨어나는 순간 클리어 — 초반 스테이지용)
+   */
+  readonly mission: 'destroy' | 'survive' | 'tower';
+  readonly surviveSec?: number;
+  readonly seed: number;
+  readonly startMoney?: number;
+  /** true = 수호탑·수호자 없이 넥서스전만 (탑 제거 + 넥서스 보호막 해제). */
+  readonly noTowers?: boolean;
+  /** 인컴·테크 상한 (전원 공통 — 봇 포함). 생략 시 기본. */
+  readonly incomeCap?: number;
+  readonly techCap?: number;
+  /** 적 봇이 압도적으로 선호하는 유닛 (스테이지 성향 — 예: 공중 스테이지). */
+  readonly enemyPreferredUnits?: readonly string[];
+  /**
+   * 캠페인 전용 특수 유닛 스폰 스크립트.
+   * atSec = 1회성 등장 시각 / everySec = 반복 주기 (첫 등장도 everySec 시점).
+   */
+  readonly spawns?: readonly {
+    readonly defId: string;
+    readonly label: string;      // 경고 배너에 뜨는 이름
+    readonly atSec?: number;
+    readonly everySec?: number;
+    readonly count?: number;     // 기본 1
+  }[];
+  /** 맵 오버라이드 (기본 잿불 숲). 'valley' = 사막 협곡. */
+  readonly mapId?: string;
+  /** 아군 봇 합류 알림 문구 (allies 가 있을 때 시작 배너로 표시). */
+  readonly allyNote?: string;
+  /**
+   * 협공 맵: 아군 진영 한복판에 적 「망자 주둔지」가 박혀 있다.
+   * 주둔지가 살아 있는 동안 everySec 마다 그 자리에서 적 부대가 쏟아진다 —
+   * 앞뒤 양면전. 주둔지를 부수면 후방 웨이브가 멈춘다 (부가 목표).
+   */
+  readonly warcamp?: {
+    readonly everySec: number;
+    readonly units: readonly string[]; // 웨이브 구성 (defId 나열 = 그대로 스폰)
+  };
+}
+
+/** 화자 → 포트레이트 이미지. 없는 화자는 이름만 표시(내레이션 포함). */
+export const PORTRAITS: Record<string, string> = {
+  '카엘': '/assets/portraits/kael.png',
+  '엘로윈': '/assets/portraits/elowyn.png',
+  '티아': '/assets/portraits/tia.png',
+  '브리아': '/assets/portraits/bria.png',
+  '실피': '/assets/portraits/silphy.png',
+  '앨리스': '/assets/portraits/alice.png',
+  '쿠르가': '/assets/portraits/kurga.png',
+  '마몬': '/assets/portraits/mammon.png',
+  '발타르': '/assets/portraits/balthar.png',
+  '슬리피 할로우': '/assets/portraits/hollow.png',
+  '오웬': '/assets/portraits/hollow.png',
+  '사도': '/assets/portraits/apostle.png',
+  '마멋 족장': '/assets/units/s_marmot_icon.png',
+  '광대 인형': '/assets/units/m_clown_doll_icon.png',
+};
+
+/** 적/중립 진영 화자 — 대화창에서 오른쪽에 선다. */
+const RIGHT_SIDE = new Set(['쿠르가', '마몬', '발타르', '슬리피 할로우', '앨리스', '광대 인형', '마멋 족장']);
+export function speakerSide(who: string): 'left' | 'right' {
+  return RIGHT_SIDE.has(who) ? 'right' : 'left';
+}
+
+// 해금 누적 단계 (스테이지 데이터에서 참조)
+const U1 = ['s_gouto', 's_elf_archer'];
+const U2 = [...U1, 's_vine_hunter'];
+const U3 = [...U2, 's_marmot'];
+const U4 = [...U3, 's_druid', 's_mushroom_bomber'];
+const U5 = [...U4, 's_owl', 's_butterfly'];
+const U8 = [...U5, 's_thorn_witch'];
+const U11 = [...U8, 's_wyvern', 's_unicorn', 's_fairy'];
+const U13 = [...U11, 's_marksman', 's_treekeeper'];
+const U14 = [...U13, 's_apostle', 's_treant'];
+const U17 = [...U14, 's_sage'];
+
+const seedOf = (id: number): number => (id * 7919 + 3) | 0;
+
+export const SYLVARIN_CAMPAIGN: readonly CampaignStage[] = [
+  // ═══ 1막 「재의 새벽」 ═══
+  {
+    id: 1, act: 1, title: '국경의 봉화', goal: '적 수호탑을 파괴하라 — 문지기가 깨어나면 철수한다',
+    allowedUnits: U1, enemies: ['pandemonium'], allies: [], botDifficulty: 'easy',
+    mission: 'tower', seed: seedOf(1), startMoney: 350, incomeCap: 3, techCap: 2,
+    briefing: [
+      { who: '카엘', text: '봉화가… 셋. 셋이면 전면 침공이잖아.' },
+      { who: '엘로윈', text: '300년 만이군. 카엘, 궁수들을 깨워라. 오늘부터 너는 경비병이 아니라 지휘관이다.' },
+      { who: '엘로윈', text: '유닛을 사면 부대에 영구 편성된다. 네 차례가 올 때마다 부대 전체가 출격하지. 오늘 임무는 정찰이다 — 적의 수호탑만 무너뜨려라.' },
+      { who: '엘로윈', text: '탑이 무너지면 그 자리에 「문지기」가 깨어난다. 그놈과는 싸우지 마라. 아직은.' },
+    ],
+    outro: [
+      { who: '카엘', text: '탑이 무너지자… 목 없는 기사가 일어났다. 저게 대체 뭐지?' },
+      { who: '엘로윈', text: '(침묵) …철수한다. 잘 싸웠다, 카엘. 이건 척후일 뿐 — 재 냄새가 바람을 타고 온다.' },
+    ],
+  },
+  {
+    id: 2, act: 1, title: '재가 내리는 길', goal: '피난 행렬 호위 — 15분간 넥서스를 지켜라',
+    allowedUnits: U2, enemies: ['pandemonium'], allies: [], botDifficulty: 'easy',
+    mission: 'survive', surviveSec: 900, seed: seedOf(2), noTowers: true, incomeCap: 3, techCap: 2,
+    spawns: [{ defId: 'c_ash_revenant', label: '재의 원귀', everySec: 150 }],
+    briefing: [
+      { who: '티아', text: '남쪽 마을이 전부 비었어요. 걷지 못하는 노목(老木)들은… 두고 왔대요.' },
+      { who: '카엘', text: '전부 데려간다. 숲은 누구도 버리지 않아.' },
+    ],
+    outro: [
+      { who: '티아', text: '고마워요. …근데 카엘, 저 재는 나무를 태운 재가 아니에요. 뼈를 간 가루예요.' },
+      { who: '티아', text: '아, 그리고 이거 — 피난민들이 세계수 수액을 나눠줬어요. 캠페인 화면의 「🌿 세계수의 축복」에서 힘을 나눠 받을 수 있어요.' },
+      { who: '티아', text: '스테이지를 깰 때마다 축복이 깊어지고, 언제든 공짜로 다시 나눌 수 있대요. 적이 강해질수록 이 힘이 필요할 거예요.' },
+    ],
+  },
+  {
+    id: 3, act: 1, title: '마멋 구릉', goal: '마멋 부족의 시험 — 15분간 버텨라',
+    allowedUnits: U3, enemies: ['pandemonium'], allies: [], botDifficulty: 'easy',
+    mission: 'survive', surviveSec: 900, seed: seedOf(3), noTowers: true, incomeCap: 3, techCap: 2,
+    spawns: [
+      { defId: 'c_ash_revenant', label: '재의 원귀', everySec: 180, count: 2 },
+      { defId: 'c_bone_colossus', label: '뼈 거상', atSec: 720 },
+    ],
+    briefing: [
+      { who: '마멋 족장', text: '엘프의 전쟁에 왜 우리가 피를 흘리나!' },
+      { who: '카엘', text: '저들이 태우는 건 엘프의 숲이 아니라 모두의 숲이다. 굴도, 겨울잠도, 새끼들도.' },
+      { who: '마멋 족장', text: '…버텨 봐라. 마멋은 강한 자의 말만 듣는다.' },
+    ],
+    outro: [
+      { who: '마멋 족장', text: '…철갑을 채워라. 마멋은 빚을 지면 갚는다. (갑옷 마멋 합류!)' },
+    ],
+  },
+  {
+    id: 4, act: 1, title: '독이 스민 숲', goal: '적 넥서스를 파괴하라 — 독은 드루이드가 씻는다',
+    allowedUnits: U4, enemies: ['pandemonium'], allies: [], botDifficulty: 'easy',
+    mission: 'destroy', seed: seedOf(4), noTowers: true,
+    spawns: [{ defId: 'c_ash_revenant', label: '재의 원귀', everySec: 150 }],
+    briefing: [
+      { who: '브리아', text: '어머, 정규군이 여기까지? 이 앞은 내 정원인데. 통행료는 비싸.' },
+      { who: '카엘', text: '…지금 숲이 불타는데 통행료?' },
+      { who: '브리아', text: '숲이 불타니까 몸값이 오르는 거야. 전쟁 경제 몰라?' },
+    ],
+    outro: [
+      { who: '티아', text: '저 마녀, 말은 저래도… 독에 당한 애들 해독초를 두고 갔어요.' },
+    ],
+  },
+  {
+    id: 5, act: 1, title: '올빼미 성채', goal: '적 넥서스를 파괴하라 — 하늘을 조심할 것',
+    allowedUnits: U5, enemies: ['pandemonium'], allies: [], botDifficulty: 'easy',
+    mission: 'destroy', seed: seedOf(5), noTowers: true,
+    enemyPreferredUnits: ['p_wraith', 'p_banshee', 'p_demilich'],
+    spawns: [{ defId: 'c_dread_gargoyle', label: '공포의 가고일', everySec: 120 }],
+    briefing: [
+      { who: '실피', text: '…하늘.' },
+      { who: '카엘', text: '하늘이 뭐? …저게 다 날아온다고?!' },
+    ],
+    outro: [
+      { who: '실피', text: '떨어지는 건 전부 맞은 거야. (실피 합류)' },
+    ],
+  },
+  {
+    id: 6, act: 1, title: '재의 함락', goal: '이길 수 없는 싸움 — 15분간 대피 시간을 벌어라',
+    allowedUnits: U5, enemies: ['pandemonium', 'pandemonium', 'pandemonium'], allies: ['sylvarin'], botDifficulty: 'hard',
+    allyNote: '🤝 엘로윈의 잔존 병력이 함께 싸운다!',
+    mission: 'survive', surviveSec: 900, seed: seedOf(6), noTowers: true,
+    spawns: [
+      { defId: 'c_kurga', label: '⚔ 보스: 리치 쿠르가', atSec: 300 },
+      { defId: 'c_ash_revenant', label: '재의 원귀', everySec: 90 },
+      { defId: 'c_bone_colossus', label: '뼈 거상', atSec: 600, everySec: 180 },
+    ],
+    briefing: [
+      { who: '쿠르가', text: '타라, 타라, 푸른 것들아! 발타르 님의 겨울에 봄은 오지 않는다!' },
+      { who: '엘로윈', text: '카엘. 이길 수 없는 싸움이다. 버티는 것이 이기는 것이다. 모두를 물려라.' },
+    ],
+    outro: [
+      { who: '카엘', text: '…국경이 무너졌어. 내가 지휘했는데.' },
+      { who: '엘로윈', text: '네가 지휘해서 모두 살아서 무너진 거다. 그 차이를 평생 기억해라.' },
+      { who: '', text: '— 1막 끝. 실바린은 국경을 잃고 숲 심부로 퇴각한다. —' },
+    ],
+  },
+  // ═══ 2막 「태엽과 가시」 ═══
+  {
+    id: 7, act: 2, title: '부서진 장난감 골목', goal: '마리오네타 방어선을 뚫어라 (넥서스 파괴)',
+    allowedUnits: U5, enemies: ['marionetta'], allies: [], botDifficulty: 'easy',
+    mission: 'destroy', seed: seedOf(7), mapId: 'toybox',
+    spawns: [{ defId: 'c_mad_ballerina', label: '미친 발레리나', everySec: 150 }],
+    briefing: [
+      { who: '티아', text: '여긴… 장난감 마을? 근데 왜 전부 이쪽을 보고 있죠?' },
+      { who: '광대 인형', text: '침・입・자. 여왕님의 골목. 통과 금지. 껴안아 주기. 터질 때까지.' },
+    ],
+    outro: [
+      { who: '카엘', text: '인형이 왜 국경을 지키지? 인형의 왕국에 대체 무슨 일이…' },
+    ],
+  },
+  {
+    id: 8, act: 2, title: '태엽 공방', goal: '괘종시계 포대 지대를 돌파하라',
+    allowedUnits: U8, enemies: ['marionetta'], allies: [], botDifficulty: 'easy',
+    mission: 'destroy', seed: seedOf(8), mapId: 'toybox',
+    spawns: [{ defId: 'c_mad_ballerina', label: '미친 발레리나', everySec: 120 }],
+    briefing: [
+      { who: '브리아', text: '통행료 받으러 왔어. 어머, 전멸 직전이네? 할인해 줄게.' },
+      { who: '카엘', text: '…왜 도와주는 건데.' },
+      { who: '브리아', text: '내 정원 태운 게 쟤네 윗선이거든. 가시엔 가시. (가시 마녀 합류!)' },
+    ],
+    outro: [
+      { who: '브리아', text: '선불이야. 숲 되찾으면 남쪽 언덕은 내 거.' },
+    ],
+  },
+  {
+    id: 9, act: 2, title: '여왕과의 알현', goal: '근위대의 시험을 통과하라 (넥서스 파괴)',
+    allowedUnits: U8, enemies: ['marionetta'], allies: [], botDifficulty: 'normal',
+    mission: 'destroy', seed: seedOf(9), mapId: 'toybox',
+    spawns: [{ defId: 'c_mad_ballerina', label: '여왕의 발레리나', everySec: 100, count: 2 }],
+    briefing: [
+      { who: '앨리스', text: '숲의 아이들이 왜 내 나라를 밟지? …아, 발타르. 그 뼈다귀가 요즘 국경을 시끄럽게 하더라.' },
+      { who: '카엘', text: '당신들도 당했잖아. 손을 잡자.' },
+      { who: '앨리스', text: '인형은 거래를 하지, 약속은 안 해. 내 근위대를 이겨 봐. 그럼 들어줄게.' },
+    ],
+    outro: [
+      { who: '앨리스', text: '…재밌네, 숲지기. 300년 만에 재밌어.' },
+      { who: '엘로윈', text: '(300년…? 이 여왕, 대체—)' },
+    ],
+  },
+  {
+    id: 10, act: 2, title: '탐욕의 계곡 — 입구', goal: '적은 자원으로 용병대를 뚫어라 (시작 자금 제한)',
+    allowedUnits: U8, enemies: ['pandemonium'], allies: [], botDifficulty: 'normal',
+    mission: 'destroy', seed: seedOf(10), startMoney: 150, mapId: 'toybox',
+    briefing: [
+      { who: '마몬', text: '전쟁은 최고의 장사지! 실바린엔 방어구를, 발타르에겐 뼈를 팔았다네. 아 물론 너희들의 뼈를.' },
+      { who: '브리아', text: '어머, 동종업계. 근데 나는 선은 안 넘어.' },
+    ],
+    outro: [
+      { who: '카엘', text: '용병 장부를 손에 넣었다. …발타르가 사들인 게 뼈만이 아니야. 「세계수 심장의 열쇠」?' },
+    ],
+  },
+  {
+    id: 11, act: 2, title: '하늘 길', goal: '데미리치 선발대를 요격하라 (넥서스 파괴)',
+    allowedUnits: U11, enemies: ['pandemonium'], allies: [], botDifficulty: 'normal',
+    mission: 'destroy', seed: seedOf(11), mapId: 'toybox',
+    enemyPreferredUnits: ['p_wraith', 'p_banshee', 'p_demilich'],
+    spawns: [{ defId: 'c_dread_gargoyle', label: '공포의 가고일', everySec: 120 }],
+    briefing: [
+      { who: '엘로윈', text: '높은 봉우리의 옛 맹약을 깨울 때다. 와이번은 긍지가 높다 — 명령하지 말고 부탁해라.' },
+      { who: '카엘', text: '(와이번에게) …함께 날아 주겠어? (와이번·유니콘·페어리 합류!)' },
+    ],
+    outro: [
+      { who: '티아', text: '유니콘이 카엘을 태워줬어요! 유니콘은 아무나 안 태우는데!' },
+      { who: '브리아', text: '어련하시겠어.' },
+    ],
+  },
+  {
+    id: 12, act: 2, title: '탐욕의 계곡 — 결전', goal: '보스: 마몬 — 적 넥서스를 파괴하라',
+    allowedUnits: U11, enemies: ['pandemonium', 'pandemonium'], allies: ['marionetta'], botDifficulty: 'normal',
+    allyNote: '🤝 앨리스의 봉제곰 군단이 참전했다!',
+    mission: 'destroy', seed: seedOf(12), mapId: 'toybox',
+    spawns: [{ defId: 'c_mammon_lord', label: '⚔ 보스: 대부호 마몬', atSec: 90 }],
+    briefing: [
+      { who: '마몬', text: '배신? 아니지, 더 좋은 조건이 왔을 뿐! 발타르 님이 너희 숲을 통째로 주신다더군!' },
+      { who: '앨리스', text: '내 국경에서 장사하면서 자릿세를 안 냈네? …전부 부숴. (앨리스의 군단이 함께 싸운다!)' },
+    ],
+    outro: [
+      { who: '앨리스', text: '동맹이야, 숲지기. 조건은 하나 — 발타르의 성에서, 잘린 머리 하나를 찾아줘.' },
+      { who: '엘로윈', text: '(굳은 얼굴) …그 머리의 이름을 물어도 되겠소, 여왕.' },
+      { who: '앨리스', text: '오웬. 내 오빠야.' },
+      { who: '', text: '— 2막 끝. 세 종족의 운명이 한 점으로 모이기 시작한다. —' },
+    ],
+  },
+  // ═══ 3막 「자정의 세계수」 ═══
+  {
+    id: 13, act: 3, title: '세계수 뿌리 탈환', goal: '첫 반격 — 적 넥서스를 파괴하라',
+    allowedUnits: U13, enemies: ['pandemonium', 'pandemonium'], allies: ['sylvarin'], botDifficulty: 'normal',
+    allyNote: '🤝 숲의 잔존 병력이 합류했다!',
+    mission: 'destroy', seed: seedOf(13),
+    spawns: [{ defId: 'c_bone_colossus', label: '뼈 거상', everySec: 150 }],
+    briefing: [
+      { who: '엘로윈', text: '300년 전, 초대 숲의 기사 오웬은 세계수 앞에서 전사했다. 시신은 끝내 찾지 못했지.' },
+      { who: '엘로윈', text: '…이제 알겠구나. 발타르가 그를 세워서 문지기로 쓰고 있다.' },
+      { who: '카엘', text: '우리가 매번 싸우던 그 목 없는 기사가… 아군이었던 사람이라고?' },
+    ],
+    outro: [
+      { who: '사도', text: '(땅에서 일어나며) 뿌리가 기억한다. 아이야, 세계수가 너를 부른다. (숲의 명궁·나무지기 합류!)' },
+    ],
+  },
+  {
+    id: 14, act: 3, title: '걸어가는 숲', goal: '협공 돌파 — 후방의 주둔지를 걷어내고 적 넥서스를 파괴하라',
+    allowedUnits: U14, enemies: ['pandemonium', 'marionetta'], allies: ['sylvarin'], botDifficulty: 'normal',
+    allyNote: '🤝 걸어가는 숲이 뒤를 따른다!',
+    mission: 'destroy', seed: seedOf(14),
+    warcamp: { everySec: 80, units: ['p_deadman', 'p_deadman', 'p_skeleton', 'p_hound'] },
+    spawns: [{ defId: 'c_ash_revenant', label: '재의 원귀', everySec: 150, count: 2 }],
+    briefing: [
+      { who: '사도', text: '숲은 도망치는 법을 잊었다. 이제 걸어가는 법을 기억해낼 것이다. (사도·고대 트렌트 합류!)' },
+    ],
+    outro: [
+      { who: '티아', text: '나무들이… 행진해요. 태어나서 이런 건 처음 봐요.' },
+    ],
+  },
+  {
+    id: 15, act: 3, title: '발타르의 성 — 망자의 만찬', goal: '방공망을 뚫고 오웬의 머리를 탈환하라 (넥서스 파괴)',
+    allowedUnits: U14, enemies: ['pandemonium', 'pandemonium'], allies: ['marionetta'], botDifficulty: 'normal',
+    allyNote: '🤝 앨리스의 군단이 성문을 함께 두드린다!',
+    mission: 'destroy', seed: seedOf(15),
+    enemyPreferredUnits: ['p_wraith', 'p_banshee', 'p_demilich'],
+    spawns: [{ defId: 'c_dread_gargoyle', label: '공포의 가고일', everySec: 120, count: 2 }],
+    briefing: [
+      { who: '발타르', text: '손님이군. 마침 만찬 시간인데. 메뉴는… 너희들이다.' },
+      { who: '실피', text: '…시끄러운 뼈다귀.' },
+    ],
+    outro: [
+      { who: '카엘', text: '(상자를 연다) …투구 속에서, 300년 동안 감지 못한 눈이 우리를 본다.' },
+    ],
+  },
+  {
+    id: 16, act: 3, title: '시간이 멈춘 평원', goal: '슬리피 할로우와 대치 — 15분간 협공을 버텨라',
+    allowedUnits: U14, enemies: ['pandemonium', 'pandemonium', 'pandemonium'], allies: ['sylvarin', 'marionetta'], botDifficulty: 'normal',
+    allyNote: '🤝 숲과 인형, 두 군세가 함께 버틴다!',
+    mission: 'survive', surviveSec: 900, seed: seedOf(16),
+    warcamp: { everySec: 90, units: ['p_skeleton', 'p_skeleton', 'p_hound', 'p_bone_thrower'] },
+    spawns: [
+      { defId: 'c_bone_colossus', label: '뼈 거상', everySec: 120 },
+      { defId: 'c_dread_gargoyle', label: '공포의 가고일', everySec: 160 },
+    ],
+    briefing: [
+      { who: '앨리스', text: '오빠. …나야. 알리시아야. 그때 그 종소리 기억해?' },
+      { who: '슬리피 할로우', text: '(멈칫— 태엽 소리가 어긋난다) ……알, 리…' },
+      { who: '발타르', text: '고장 났군. 수리해 오지.' },
+    ],
+    outro: [
+      { who: '앨리스', text: '들었지, 숲지기. 오빠가 내 이름을 불렀어. 아직 안에 있어.' },
+    ],
+  },
+  {
+    id: 17, act: 3, title: '현자의 참회', goal: '엘로윈의 의식을 지켜라 — 15분간 총공세를 버텨라',
+    allowedUnits: U17, enemies: ['pandemonium', 'pandemonium', 'marionetta'], allies: ['sylvarin', 'sylvarin'], botDifficulty: 'hard',
+    allyNote: '🤝 실바린 전군이 의식을 지킨다!',
+    mission: 'survive', surviveSec: 900, seed: seedOf(17),
+    spawns: [
+      { defId: 'c_bone_colossus', label: '뼈 거상', everySec: 90 },
+      { defId: 'c_ash_revenant', label: '재의 원귀', everySec: 120, count: 2 },
+    ],
+    briefing: [
+      { who: '엘로윈', text: '고백하마. 300년 전, 오웬을 사지로 보낸 작전을 짠 게… 나다.' },
+      { who: '엘로윈', text: '그래서 나는 300년을 살았다. 속죄가 끝나지 않아서. (세이지 합류!)' },
+      { who: '카엘', text: '그럼 오늘 끝내죠. 같이.' },
+    ],
+    outro: [
+      { who: '엘로윈', text: '…의식 준비가 끝났다. 세계수 앞으로. 자정이 오기 전에.' },
+    ],
+  },
+  {
+    id: 18, act: 3, title: '자정의 결전', goal: '최종전 — 자정이 오기 전에 (12분) 발타르의 넥서스를 파괴하라!',
+    allowedUnits: U17, enemies: ['pandemonium', 'pandemonium', 'pandemonium'], allies: ['sylvarin', 'marionetta'], botDifficulty: 'hard',
+    allyNote: '🤝 세 종족의 연합군이 자정에 맞선다!',
+    mission: 'destroy', seed: seedOf(18),
+    spawns: [
+      { defId: 'c_balthar', label: '👑 최종 보스: 데미리치 발타르', atSec: 180 },
+      { defId: 'c_bone_colossus', label: '뼈 거상', everySec: 120 },
+    ],
+    briefing: [
+      { who: '발타르', text: '11시 59분. 이 밤의 다음은 없다. 봄도, 부활도, 너희도.' },
+      { who: '카엘', text: '숲은 겨울마다 죽어. 그리고 매번 돌아와. 그게 우리와 너의 차이다.' },
+    ],
+    outro: [
+      { who: '오웬', text: '(투구를 벗으며 — 300년 만의 얼굴) …알리시아. 많이 컸구나.' },
+      { who: '앨리스', text: '(단추 눈에서, 있을 리 없는 눈물) 바보. 나 이제 너보다 나이 많아.' },
+      { who: '사도', text: '시계가 다시 돈다. 겨울이 오면 — 봄도 온다.' },
+      { who: '엘로윈', text: '카엘. 숲이 네 이름을 기억할 것이다. …나는 이제, 조금 쉬어도 되겠지.' },
+      { who: '', text: '— 새벽의 세계수. 카엘이 국경 봉화대에 새 불을 밝힌다. 처음 그 봉화대다. —' },
+      { who: '', text: '🌲 실바린 캠페인 「자정의 세계수」 完 — 플레이해 주셔서 감사합니다! 🌲' },
+    ],
+  },
+];
+
+// ── 진행 저장 ─────────────────────────────────────────────────────────────
+const SAVE_KEY = 'campaign_sylvarin_cleared';
+
+/** 클리어한 최대 스테이지 번호 (0 = 아직 없음). */
+export function campaignCleared(): number {
+  const n = Number(localStorage.getItem(SAVE_KEY) ?? '0');
+  return Number.isFinite(n) ? Math.max(0, Math.min(18, n)) : 0;
+}
+
+export function markCampaignCleared(stageId: number): void {
+  if (stageId > campaignCleared()) localStorage.setItem(SAVE_KEY, String(stageId));
+}
+
+// ── 영웅 특성 「세계수의 축복」 ────────────────────────────────────────────
+// 포인트 = 클리어한 스테이지 수. 언제든 무료 재분배. localStorage 저장.
+export interface PerkDef {
+  readonly id: string;
+  readonly name: string;
+  readonly icon: string;
+  readonly desc: string;   // 1포인트당 효과
+  readonly max: number;
+}
+
+export const PERKS: readonly PerkDef[] = [
+  { id: 'sap', name: '생명의 수액', icon: '🌿', desc: '내 유닛 최대체력 +3%', max: 5 },
+  { id: 'thorn', name: '가시 세례', icon: '⚔', desc: '내 유닛 공격력 +2%', max: 5 },
+  { id: 'fruit', name: '풍요의 열매', icon: '💰', desc: '시작 자금 +50', max: 4 },
+  { id: 'season', name: '계절의 흐름', icon: '⏱', desc: '5초마다 수입 +2', max: 4 },
+];
+
+const PERK_KEY = 'campaign_sylvarin_perks';
+
+export function perkAlloc(): Record<string, number> {
+  try {
+    const raw = JSON.parse(localStorage.getItem(PERK_KEY) ?? '{}') as Record<string, number>;
+    const out: Record<string, number> = {};
+    for (const p of PERKS) {
+      const v = Number(raw[p.id] ?? 0);
+      out[p.id] = Number.isFinite(v) ? Math.max(0, Math.min(p.max, Math.floor(v))) : 0;
+    }
+    return out;
+  } catch {
+    return Object.fromEntries(PERKS.map((p) => [p.id, 0]));
+  }
+}
+
+export function savePerkAlloc(alloc: Record<string, number>): void {
+  localStorage.setItem(PERK_KEY, JSON.stringify(alloc));
+}
+
+export function perkPointsSpent(alloc: Record<string, number>): number {
+  return Object.values(alloc).reduce((a, b) => a + b, 0);
+}
+
+/** 특성 배분 → sim 에 넘길 보정치. */
+export function perksToHero(alloc: Record<string, number>): { hpPct: number; dmgPct: number; startMoney: number; incomeAdd: number } {
+  return {
+    hpPct: (alloc.sap ?? 0) * 3,
+    dmgPct: (alloc.thorn ?? 0) * 2,
+    startMoney: (alloc.fruit ?? 0) * 50,
+    incomeAdd: (alloc.season ?? 0) * 2,
+  };
+}
+
+// ── 대화 오버레이 ─────────────────────────────────────────────────────────
+/**
+ * 대화 시퀀스 재생. 클릭/스페이스/엔터로 진행, 끝나면 resolve.
+ * #dialogue 오버레이 DOM 은 index.html 에 정의되어 있다.
+ */
+export function runDialogue(lines: readonly DialogueLine[]): Promise<void> {
+  return new Promise((resolve) => {
+    const box = document.querySelector('#dialogue') as HTMLElement;
+    const portrait = box.querySelector('.dlg-portrait') as HTMLImageElement;
+    const nameEl = box.querySelector('.dlg-name') as HTMLElement;
+    const textEl = box.querySelector('.dlg-text') as HTMLElement;
+    let i = 0;
+
+    const show = (): void => {
+      const line = lines[i]!;
+      const url = PORTRAITS[line.who];
+      portrait.style.display = url ? '' : 'none';
+      if (url) portrait.src = url;
+      box.classList.toggle('dlg-right', speakerSide(line.who) === 'right');
+      nameEl.textContent = line.who || '​';
+      nameEl.style.visibility = line.who ? 'visible' : 'hidden';
+      textEl.textContent = line.text;
+    };
+
+    const advance = (): void => {
+      i++;
+      if (i >= lines.length) {
+        cleanup();
+        resolve();
+      } else {
+        show();
+      }
+    };
+    const onClick = (e: Event): void => {
+      e.stopPropagation();
+      advance();
+    };
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key === ' ' || e.key === 'Enter') {
+        e.preventDefault();
+        advance();
+      } else if (e.key === 'Escape') {
+        cleanup();
+        resolve(); // 대화 스킵
+      }
+    };
+    const cleanup = (): void => {
+      box.classList.add('hidden');
+      box.removeEventListener('click', onClick);
+      window.removeEventListener('keydown', onKey);
+    };
+
+    box.addEventListener('click', onClick);
+    window.addEventListener('keydown', onKey);
+    box.classList.remove('hidden');
+    show();
+  });
+}

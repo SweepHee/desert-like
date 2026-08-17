@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json.schemastore.org/tsconfig",
+  "compilerOptions": {
+    "target": "ES2023",
+    "lib": ["ES2023"],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+
+    // .ts 확장자를 그대로 import 한다. Node 24의 네이티브 타입 스트리핑으로
+    // 빌드 단계 없이 `node foo.ts` 가 돌아가고, Vite 도 동일하게 해석한다.
+    "allowImportingTsExtensions": true,
+    "verbatimModuleSyntax": true,
+    "noEmit": true,
+
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noImplicitOverride": true,
+    "exactOptionalPropertyTypes": true,
+    "isolatedModules": true,
+    "skipLibCheck": true,
+
+    // 타입 스트리핑은 enum / namespace / 파라미터 프로퍼티를 지원하지 않는다.
+    // 애초에 쓰지 않는 편이 좋으므로 명시적으로 막아둔다.
+    "erasableSyntaxOnly": true
+  }
+}

@@ -31,7 +31,13 @@ export interface CampaignStage {
    * destroy = 적 넥서스 파괴 / survive = surviveSec 버티면 승리 (먼저 부숴도 승리)
    * tower   = 적 수호탑만 부수면 승리 (수호자가 깨어나는 순간 클리어 — 초반 스테이지용)
    */
-  readonly mission: 'destroy' | 'survive' | 'tower';
+  readonly mission: 'destroy' | 'survive' | 'tower' | 'boss';
+  /** boss 미션: 이 유닛을 처치하면 승리. 게임 시작 시 적 진영에 젠 된다. */
+  readonly bossDefId?: string;
+  /** 적 넥서스 제거 — 파괴 목표가 없는 보스전용 (적 봇 생산은 계속된다). */
+  readonly noEnemyNexus?: boolean;
+  /** 아군 봇 출정 위치 (타일) — 합류점 맵에서 앨리스 군단이 위 갈래에서 나온다. */
+  readonly allyDeployTile?: { readonly x: number; readonly y: number };
   readonly surviveSec?: number;
   readonly seed: number;
   readonly startMoney?: number;
@@ -42,6 +48,41 @@ export interface CampaignStage {
   readonly techCap?: number;
   /** 적 봇이 압도적으로 선호하는 유닛 (스테이지 성향 — 예: 공중 스테이지). */
   readonly enemyPreferredUnits?: readonly string[];
+  /** 적 유닛별 보유 상한 (팀 합산) — 최상급 유닛의 조기 물량화 방지. */
+  readonly enemyUnitCaps?: Readonly<Record<string, number>>;
+  /** 적 유닛별 최소 등장 웨이브 (이 턴 전엔 구매 불가). */
+  readonly enemyUnitMinWave?: Readonly<Record<string, number>>;
+  /** 이 웨이브부터 적 유닛 상한 전부 해제 (후반 총력전). */
+  readonly enemyCapsUntilWave?: number;
+  /** 적 봇 성격 강제 ('fastTech'|'rushThenGreedy'|'balanced'|'finalOnly'). */
+  readonly enemyBotStyle?: import('@desertlike/sim').BotStyle;
+  /** 아군 봇 성격 강제 — 저축형(finalOnly)에 걸리면 아군이 생산을 안 한다. */
+  readonly allyBotStyle?: import('@desertlike/sim').BotStyle;
+  /** 팀 0 전원 동시 출정 (공동 전선). */
+  readonly jointDeploy?: boolean;
+  /** 적 수호자 교체 — 2막 마리오네타 스테이지는 특제 대형 곰인형. */
+  readonly enemyGuardian?: string;
+  /**
+   * 제한 턴 — 이 턴까지 클리어하지 못하면 패배.
+   * 장기전으로 흘러 끝이 안 나는 스테이지에 마감을 준다.
+   */
+  readonly deadlineWave?: number;
+  /** 용병 목록 — 이 스테이지에서 종족 무관 구매 가능한 유닛 (마몬의 장사). */
+  readonly mercUnits?: readonly string[];
+  /** 용병 가격 배율 % (기본 100). */
+  readonly mercCostPct?: number;
+  /** 맵 중앙 「마몬의 상점」 점령제 — 점령한 팀만 용병을 산다 (적도 동일). */
+  readonly mercCaptureRequired?: boolean;
+  /** 적(팀1) 건물 스킨 ('toy' = 장난감, 'bone' = 사령). */
+  readonly enemySkin?: 'toy' | 'bone';
+  /**
+   * 전투 중 컷신: 지정 시각에 전투를 멈추고 대사를 띄운다 (네임드 등장 연출).
+   * 대사가 끝나면 자동으로 전투가 재개된다.
+   */
+  readonly cutscenes?: readonly {
+    readonly atSec: number;
+    readonly lines: readonly DialogueLine[];
+  }[];
   /**
    * 캠페인 전용 특수 유닛 스폰 스크립트.
    * atSec = 1회성 등장 시각 / everySec = 반복 주기 (첫 등장도 everySec 시점).
@@ -52,6 +93,41 @@ export interface CampaignStage {
     readonly atSec?: number;
     readonly everySec?: number;
     readonly count?: number;     // 기본 1
+    /**
+     * 이 규칙이 스폰할 총 마릿수 상한 (생략 = 무제한).
+     * 반복 스폰은 상한이 없으면 후반에 무한 누적된다 — 승산이 사라진다(실측).
+     */
+    readonly maxTotal?: number;
+    /** 스폰 x 위치 (타일). 생략 시 적 스폰 지점. */
+    readonly atXTile?: number;
+    /** 스폰 y 오프셋 (타일, 레인 중앙 기준). 방향 연출용 (12시 = 음수). */
+    readonly yOffTile?: number;
+    /** 야생 무리: 제3팀(2)으로 스폰 — 자기들끼리 한 편, 나머지 모두와 적대. */
+    readonly neutral?: boolean;
+  }[];
+  /**
+   * 둥지 수호탑 (11스테이지): 게임 시작 시 아군 진영에 고정 배치되는 무적 수호수.
+   * 제자리에서 평타만 한다 — 타워 포지션.
+   */
+  readonly nestGuards?: readonly {
+    readonly defId: string;
+    readonly xTile: number;
+    readonly yOffTile: number;
+  }[];
+  /** 팀 0 진군 상한 (타일) — 디펜스전에서 부대가 수비선을 지킨다. */
+  readonly holdLineXTile?: number;
+  /** 수비 모드: 팀 0 유닛이 둥지 주변 대기 + 침입 방향 자동 요격. */
+  readonly defendNexus?: boolean;
+  /**
+   * 확정 성장: fromWave 턴부터 매 턴 적 봇의 부대 편성(comp)에 무료 +1.
+   * 편성이므로 이후 매 웨이브 함께 출정한다. enemyUnitCaps 팀 캡에 도달하면 멈춘다.
+   */
+  readonly growth?: readonly {
+    readonly defId: string;
+    readonly label: string;
+    readonly fromWave: number;
+    /** 총 편입 상한 (생략 = 무제한). 네임드는 1 — 여왕이 둘일 수는 없다. */
+    readonly maxCount?: number;
   }[];
   /** 맵 오버라이드 (기본 잿불 숲). 'valley' = 사막 협곡. */
   readonly mapId?: string;
@@ -113,7 +189,10 @@ export const SYLVARIN_CAMPAIGN: readonly CampaignStage[] = [
     allowedUnits: U1, enemies: ['pandemonium'], allies: [], botDifficulty: 'easy',
     mission: 'tower', seed: seedOf(1), startMoney: 350, incomeCap: 3, techCap: 2,
     briefing: [
+      { who: '', text: '실바린의 숲 — 세계수의 뿌리가 대지를 지탱하는, 300년간 전쟁을 모르던 땅.' },
+      { who: '', text: '어느 밤, 국경의 봉화가 일제히 타올랐다. 데미리치 「발타르」의 망자 군단이 국경을 넘은 것이다.' },
       { who: '카엘', text: '봉화가… 셋. 셋이면 전면 침공이잖아.' },
+      { who: '엘로윈', text: '놈들이 노리는 건 마을이 아니다 — 세계수의 심장이다. 정면으로는 못 이겨. 우리는 시간을 벌며 물러나야 한다.' },
       { who: '엘로윈', text: '300년 만이군. 카엘, 궁수들을 깨워라. 오늘부터 너는 경비병이 아니라 지휘관이다.' },
       { who: '엘로윈', text: '유닛을 사면 부대에 영구 편성된다. 네 차례가 올 때마다 부대 전체가 출격하지. 오늘 임무는 정찰이다 — 적의 수호탑만 무너뜨려라.' },
       { who: '엘로윈', text: '탑이 무너지면 그 자리에 「문지기」가 깨어난다. 그놈과는 싸우지 마라. 아직은.' },
@@ -208,8 +287,12 @@ export const SYLVARIN_CAMPAIGN: readonly CampaignStage[] = [
     id: 7, act: 2, title: '부서진 장난감 골목', goal: '마리오네타 방어선을 뚫어라 (넥서스 파괴)',
     allowedUnits: U5, enemies: ['marionetta'], allies: [], botDifficulty: 'easy',
     mission: 'destroy', seed: seedOf(7), mapId: 'toybox',
+    enemyGuardian: 'teddy_guardian',
     spawns: [{ defId: 'c_mad_ballerina', label: '미친 발레리나', everySec: 150 }],
     briefing: [
+      { who: '', text: '숲은 불탔다. 재의 함락에서 대피 시간을 번 피난 행렬은 살아남은 이들을 이끌고 남쪽으로 달아났다.' },
+      { who: '', text: '발타르의 추격을 피해 지도에도 없는 국경을 넘은 순간 — 태엽 감기는 소리가 들려왔다. 인형들의 왕국, 마리오네타.' },
+      { who: '카엘', text: '남쪽 산맥을 넘어 발타르의 성을 우회한다. 이 나라를 지나가야만 해.' },
       { who: '티아', text: '여긴… 장난감 마을? 근데 왜 전부 이쪽을 보고 있죠?' },
       { who: '광대 인형', text: '침・입・자. 여왕님의 골목. 통과 금지. 껴안아 주기. 터질 때까지.' },
     ],
@@ -221,6 +304,32 @@ export const SYLVARIN_CAMPAIGN: readonly CampaignStage[] = [
     id: 8, act: 2, title: '태엽 공방', goal: '괘종시계 포대 지대를 돌파하라',
     allowedUnits: U8, enemies: ['marionetta'], allies: [], botDifficulty: 'easy',
     mission: 'destroy', seed: seedOf(8), mapId: 'toybox',
+    enemyGuardian: 'teddy_guardian',
+    // 「괘종시계 포대 지대」 — 태엽 병기들이 단계적으로 깨어난다:
+    //   처음부터: 봉제곰·단추 인형·태엽 병정·태엽 거미 (선호 생산)
+    //   5턴~: 괘종시계 (최대 5) / 6턴~: 고어 테디 (무제한 증가) / 7턴~: 톱니바퀴 (최대 5)
+    //   페니와이즈·실과 바늘·앨리스는 끝까지 등장하지 않는다 (캡 해제 없음 — 영구)
+    enemyBotStyle: 'balanced',
+    // 적이 만들 수 있는 유닛은 화이트리스트 그대로만:
+    // 곰·단추·병정·거미(자연 생산) + 괘종·테디·톱니(growth 매 턴 +1).
+    // 그 외 마리오네타 전 유닛은 캡 0 = 영구 금지.
+    enemyPreferredUnits: [],
+    enemyUnitMinWave: { m_grandfather_clock: 5, m_gore_teddy: 6, m_clocktower_gear: 7 },
+    enemyUnitCaps: {
+      m_grandfather_clock: 5, m_clocktower_gear: 5, // growth 포함 최대 5기
+      // 테디 캡 0 = 봇 구매 금지, growth 매 턴 +1 만으로 증가 — 다른 유닛이 전부
+      // 금지라 구매를 열어두면 봇 돈이 테디에 몰려 폭주한다 (실측 20분 90기)
+      m_gore_teddy: 0,
+      m_puppet_swordsman: 0, m_clown_doll: 0, m_cursed_doll: 0,
+      m_casper: 0, m_puppet_ann: 0, m_specter_teddy: 0,
+      m_pennywise: 0, m_thread_needle: 0, m_alice: 0,
+    },
+    growth: [
+      // 5턴부터 매 턴 괘종시계 +1 (9턴에 캡 5) / 6턴부터 테디 +1 무제한 / 7턴부터 톱니 +1 (11턴에 캡 5)
+      { defId: 'm_grandfather_clock', label: '괘종시계 포대', fromWave: 5 },
+      { defId: 'm_gore_teddy', label: '여왕의 근위곰', fromWave: 6 },
+      { defId: 'm_clocktower_gear', label: '자정의 톱니바퀴', fromWave: 7 },
+    ],
     spawns: [{ defId: 'c_mad_ballerina', label: '미친 발레리나', everySec: 120 }],
     briefing: [
       { who: '브리아', text: '통행료 받으러 왔어. 어머, 전멸 직전이네? 할인해 줄게.' },
@@ -235,7 +344,46 @@ export const SYLVARIN_CAMPAIGN: readonly CampaignStage[] = [
     id: 9, act: 2, title: '여왕과의 알현', goal: '근위대의 시험을 통과하라 (넥서스 파괴)',
     allowedUnits: U8, enemies: ['marionetta'], allies: [], botDifficulty: 'normal',
     mission: 'destroy', seed: seedOf(9), mapId: 'toybox',
-    spawns: [{ defId: 'c_mad_ballerina', label: '여왕의 발레리나', everySec: 100, count: 2 }],
+    enemyGuardian: 'teddy_guardian',
+    // 지상 유닛으로 뚫는 라운드 — 하늘은 페니와이즈가 봉쇄한다.
+    // 캡은 영구 (16턴 해제 없음): 실과 바늘·테디가 후반에 풀리면 라운드 정체성이 무너진다.
+    // 테디는 봇 구매 금지 + 확정 스폰 3회로 정확히 3기만 등장.
+    enemyBotStyle: 'balanced',
+    enemyPreferredUnits: ['m_pennywise'],
+    // 테디 2기 고정 / 앨리스는 growth 로만 계속 늘어난다(구매 금지 캡 0).
+    // 캡 해제 없음(영구) — 후반 총력전까지 겹치면 난이도가 감당이 안 된다.
+    // 페니와이즈는 봇 구매 상한 12 — 선호 유닛이라 열어두면 무한 증식한다 (실측 100기+)
+    enemyUnitCaps: {
+      m_pennywise: 12, m_gore_teddy: 2, m_clocktower_gear: 5,
+      m_alice: 0, m_thread_needle: 0,
+    },
+    deadlineWave: 60, // 60턴 안에 못 끝내면 패배 (제작자 클리어 44턴 — 여유를 준다)
+    // 여왕 친정 순간엔 전투를 세우고 본인이 직접 등장을 선언한다
+    cutscenes: [
+      {
+        atSec: 900,
+        lines: [
+          { who: '', text: '태엽 소리가 일제히 멎었다. 인형들이 전부 한쪽으로 고개를 돌린다.' },
+          { who: '앨리스', text: '…근위대가 셋이나 찢겼네. 시험은 여기까지.' },
+          { who: '앨리스', text: '숲지기. 네가 여기까지 온 건 인정할게. 그러니 이제 내가 나가.' },
+          { who: '카엘', text: '여왕이 직접…!' },
+          { who: '앨리스', text: '인형사는 무대에 안 올라. 올라올 땐, 막을 내릴 때뿐이야.' },
+        ],
+      },
+    ],
+    // 확정 편성: 매 턴 +1 로 계속 늘어난다 (필드 1회 출현이 아니라 매 웨이브 출정).
+    // 테디는 캡 2 에서 멈추고, 앨리스는 15턴부터 매 턴 늘어난다.
+    growth: [
+      { defId: 'm_gore_teddy', label: '여왕의 근위곰', fromWave: 8 },
+      // 여왕은 오직 1기 — 15턴에 합류해 이후 매 웨이브 함께 출정한다
+      { defId: 'm_alice', label: '👑 여왕 앨리스', fromWave: 15, maxCount: 1 },
+    ],
+    // 반복 스폰엔 반드시 총량 상한을 둔다 — 없으면 20턴에 57기까지 불어나
+    // 어떤 시드로도 이길 수 없다 (승률 0/20 실측)
+    spawns: [
+      { defId: 'm_pennywise', label: '풍선 광대 편대', everySec: 90, count: 1, maxTotal: 10 },
+      { defId: 'c_mad_ballerina', label: '여왕의 발레리나', everySec: 120, count: 1, maxTotal: 14 },
+    ],
     briefing: [
       { who: '앨리스', text: '숲의 아이들이 왜 내 나라를 밟지? …아, 발타르. 그 뼈다귀가 요즘 국경을 시끄럽게 하더라.' },
       { who: '카엘', text: '당신들도 당했잖아. 손을 잡자.' },
@@ -247,26 +395,72 @@ export const SYLVARIN_CAMPAIGN: readonly CampaignStage[] = [
     ],
   },
   {
-    id: 10, act: 2, title: '탐욕의 계곡 — 입구', goal: '적은 자원으로 용병대를 뚫어라 (시작 자금 제한)',
+    id: 10, act: 2, title: '탐욕의 계곡 — 입구', goal: '중앙 「마몬의 상점」을 점령해 용병을 사라 (🚩 점령한 팀만 구매 가능)',
     allowedUnits: U8, enemies: ['pandemonium'], allies: [], botDifficulty: 'normal',
-    mission: 'destroy', seed: seedOf(10), startMoney: 150, mapId: 'toybox',
+    mission: 'destroy', seed: seedOf(10), startMoney: 150, mapId: 'greedvalley',
+    enemySkin: 'bone',
+    // 상점 점령전: 계곡 한복판에 마몬의 상점 — 주변을 장악한 팀만 용병을 산다.
+    // 적 봇도 점령하면 같은 용병(기사·리치·타나토스)을 사들인다. 언데드라 드루이드 힐 불가.
+    mercUnits: ['merc_headless_knight', 'merc_lich', 'merc_thanatos'],
+    mercCostPct: 100, // 정가 — 지금은 환심을 사는 중 (12에서 배신하는 복선)
+    mercCaptureRequired: true,
+    enemyBotStyle: 'balanced',
+    enemyPreferredUnits: ['p_headless_knight', 'p_corpse_golem', 'merc_thanatos', 'merc_lich'],
+    // 데미리치(대공 광역) 5턴부터 매 턴 편입 — 공중 스팸 원툴 전략을 막는다 (실플레이: 올빼미만으로 15턴 클리어)
+    enemyUnitCaps: { p_demilich: 4 },
+    growth: [{ defId: 'p_demilich', label: '데미리치 요격수', fromWave: 5 }],
+    deadlineWave: 60,
     briefing: [
       { who: '마몬', text: '전쟁은 최고의 장사지! 실바린엔 방어구를, 발타르에겐 뼈를 팔았다네. 아 물론 너희들의 뼈를.' },
       { who: '브리아', text: '어머, 동종업계. 근데 나는 선은 안 넘어.' },
+      { who: '마몬', text: '계곡 한복판에 내 상점이 있네. 먼저 깃발을 꽂는 쪽에게 팔지 — 기사, 리치, 타나토스, 전부 특별가일세!' },
+      { who: '카엘', text: '중앙을 장악한 쪽이 용병을 산다… 전선 싸움이 곧 돈 싸움이군. (🚩 상점 주변을 점령하면 💰용병 구매 가능!)' },
     ],
     outro: [
       { who: '카엘', text: '용병 장부를 손에 넣었다. …발타르가 사들인 게 뼈만이 아니야. 「세계수 심장의 열쇠」?' },
     ],
   },
   {
-    id: 11, act: 2, title: '하늘 길', goal: '데미리치 선발대를 요격하라 (넥서스 파괴)',
+    id: 11, act: 2, title: '바람의 둥지', goal: '둥지를 지켜라 — 세 방향에서 몰려온다 (60턴 버티기)',
     allowedUnits: U11, enemies: ['pandemonium'], allies: [], botDifficulty: 'normal',
-    mission: 'destroy', seed: seedOf(11), mapId: 'toybox',
+    mission: 'survive', surviveSec: 3600, noTowers: true,
+    seed: seedOf(11), mapId: 'nest',
+    enemySkin: 'bone',
     enemyPreferredUnits: ['p_wraith', 'p_banshee', 'p_demilich'],
-    spawns: [{ defId: 'c_dread_gargoyle', label: '공포의 가고일', everySec: 120 }],
+    // 수비 모드: 부대가 둥지 주변에 대기하다 침입 방향으로 자동 요격한다
+    defendNexus: true,
+    // 둥지 수호탑: 세 갈래 입구에 하나씩 (평타만 — 타워)
+    nestGuards: [
+      { defId: 'c_nest_wyvern', xTile: 48, yOffTile: -7 },  // 12시 입구
+      { defId: 'c_nest_unicorn', xTile: 43, yOffTile: 1 },  // 8시 입구
+      { defId: 'c_nest_fairy', xTile: 53, yOffTile: 1 },    // 4시 입구
+    ],
+    // 세 방향 침공 — 전부 중앙 둥지로 수렴한다:
+    // ① 4시 (오른쪽): 정규 판데모니엄 봇이 턴마다 출정 (기본 enemies)
+    // ② 12시 (능선 위): 잡졸 무리가 둥지 바로 위 능선에서 쉬지 않고 내려온다
+    // ③ 8시 (왼쪽 골짜기): 야생 무리 — 반은 이쪽 반은 저쪽, 아무나 문다
+    spawns: [
+      // 12시: 수직 가지 길 꼭대기(-36타일)에서 능선을 타고 내려온다
+      { defId: 'p_minion_ghoul', label: '⬆ 능선의 망자 무리', everySec: 12, count: 2, atXTile: 47, yOffTile: -36 },
+      { defId: 'p_minion_undead', label: '⬆ 능선의 망자 무리', everySec: 17, count: 2, atXTile: 49, yOffTile: -36 },
+      { defId: 'p_minion_skeleton', label: '⬆ 능선의 망자 무리', everySec: 14, count: 2, atXTile: 48, yOffTile: -34 },
+      { defId: 'p_minion_rat', label: '⬆ 능선의 망자 무리', everySec: 9, count: 3, atXTile: 48, yOffTile: -32 },
+      // 8시: V자 왼쪽 끝 골짜기에서 올라온다 (중립: 시간이 갈수록 사나워진다)
+      { defId: 'c_wild_wolf_gray', label: '⬋ 야생 늑대 무리', everySec: 25, count: 4, atXTile: 8, yOffTile: 0, neutral: true },
+      { defId: 'c_wild_snake', label: '⬋ 독사 떼', everySec: 30, count: 3, atXTile: 5, yOffTile: 0, neutral: true },
+      { defId: 'c_wild_wolf_black', label: '⬋ 검은늑대 무리', atSec: 180, everySec: 40, count: 3, atXTile: 8, yOffTile: 0, neutral: true },
+      { defId: 'c_wild_tarantula', label: '⬋ 타란튤라', atSec: 240, everySec: 50, count: 2, atXTile: 6, yOffTile: 0, neutral: true },
+      { defId: 'c_wild_kestrel', label: '⬋ 황조롱이 떼', atSec: 300, everySec: 45, count: 3, atXTile: 10, yOffTile: -1, neutral: true },
+      { defId: 'c_wild_bear_gray', label: '⬋ 회색곰', atSec: 360, everySec: 70, count: 2, atXTile: 6, yOffTile: 0, neutral: true },
+      { defId: 'c_wild_direwolf', label: '⬋ 다이어울프 무리', atSec: 540, everySec: 60, count: 3, atXTile: 8, yOffTile: 0, neutral: true },
+      { defId: 'c_wild_grizzly', label: '⬋ 그리즐리베어', atSec: 600, everySec: 80, count: 2, atXTile: 6, yOffTile: 0, neutral: true },
+      { defId: 'c_wild_blackbird', label: '⚫ 검은새 — 하늘의 왕', atSec: 780, everySec: 600, atXTile: 5, yOffTile: -2, neutral: true },
+    ],
     briefing: [
       { who: '엘로윈', text: '높은 봉우리의 옛 맹약을 깨울 때다. 와이번은 긍지가 높다 — 명령하지 말고 부탁해라.' },
       { who: '카엘', text: '(와이번에게) …함께 날아 주겠어? (와이번·유니콘·페어리 합류!)' },
+      { who: '티아', text: '둥지 입구에 수호수들이 자리를 잡았어요! 하지만 냄새를 맡고 온 게… 망자만이 아니에요.' },
+      { who: '엘로윈', text: '세 갈래다. 능선의 망자, 골짜기의 야수, 그리고 발타르의 선발대. 알이 깨어날 때까지 — 둥지를 지켜라.' },
     ],
     outro: [
       { who: '티아', text: '유니콘이 카엘을 태워줬어요! 유니콘은 아무나 안 태우는데!' },
@@ -274,13 +468,29 @@ export const SYLVARIN_CAMPAIGN: readonly CampaignStage[] = [
     ],
   },
   {
-    id: 12, act: 2, title: '탐욕의 계곡 — 결전', goal: '보스: 마몬 — 적 넥서스를 파괴하라',
+    id: 12, act: 2, title: '탐욕의 계곡 — 결전', goal: '⚔ 보스: 사령장군 카르가스를 쓰러뜨려라 (앨리스 군단과 공동 전선!)',
     allowedUnits: U11, enemies: ['pandemonium', 'pandemonium'], allies: ['marionetta'], botDifficulty: 'normal',
-    allyNote: '🤝 앨리스의 봉제곰 군단이 참전했다!',
-    mission: 'destroy', seed: seedOf(12), mapId: 'toybox',
-    spawns: [{ defId: 'c_mammon_lord', label: '⚔ 보스: 대부호 마몬', atSec: 90 }],
+    allyNote: '🤝 앨리스의 군단이 북쪽 갈래에서 함께 진군한다!',
+    mission: 'boss', seed: seedOf(12), mapId: 'confluence',
+    allyBotStyle: 'balanced', // 앨리스 군단은 꾸준히 생산해야 한다 (저축형 금지)
+    jointDeploy: true, // 매 턴 내 부대와 앨리스 군단이 함께 출정 (공동 전선)
+    enemySkin: 'bone',
+    noTowers: true,
+    noEnemyNexus: true,
+    bossDefId: 'c_balthar_general',
+    deadlineWave: 45,
+    // 앨리스 군단(아군 봇)은 위 갈래 끝에서 출정해 합류점으로 내려온다
+    allyDeployTile: { x: 30, y: -13 },
+    // 적 물량은 봇 생산 + 확정 증원 — 보스만 잡는 게 아니라 물량전을 버티며 뚫는다
+    growth: [
+      { defId: 'p_headless_knight', label: '사령 기사단', fromWave: 4 },
+      { defId: 'p_demilich', label: '데미리치 친위대', fromWave: 8 },
+    ],
+    enemyUnitCaps: { p_headless_knight: 8, p_demilich: 4 },
     briefing: [
       { who: '마몬', text: '배신? 아니지, 더 좋은 조건이 왔을 뿐! 발타르 님이 너희 숲을 통째로 주신다더군!' },
+      { who: '', text: '계곡 끝에서 거대한 그림자가 일어선다. 발타르가 아끼는 선봉장 — 사령장군 카르가스.' },
+      { who: '카엘', text: '마몬이 저걸 데려온 건가… 넥서스가 문제가 아니야. 저 장군을 쓰러뜨려야 길이 열린다.' },
       { who: '앨리스', text: '내 국경에서 장사하면서 자릿세를 안 냈네? …전부 부숴. (앨리스의 군단이 함께 싸운다!)' },
     ],
     outro: [
@@ -451,6 +661,64 @@ export function perkPointsSpent(alloc: Record<string, number>): number {
 }
 
 /** 특성 배분 → sim 에 넘길 보정치. */
+// ── 캠페인 유닛 강화 (BOONS) — 스테이지 클리어 보상 ──────────────────────
+/**
+ * 스테이지 클리어 → 강화가 개방되는 유닛.
+ * 개방 시점에 이미 해금돼 있고, 바로 다음 난관에 도움이 되는 유닛으로 배정.
+ * (1-8 숲올빼미 = 9라운드 대공전 대비, 1-12 가시 마녀 = 3막 진입 보상)
+ */
+export const BOON_UNLOCKS: Record<number, string> = {
+  3: 's_gouto',
+  5: 's_elf_archer',
+  6: 's_marmot',
+  7: 's_vine_hunter',
+  8: 's_mushroom_bomber',
+  // 숲올빼미 강화는 9 클리어 보상 — 9라운드는 "지상으로 뚫는" 라운드라
+  // 올빼미(무리 사냥)를 미리 주면 공중 스팸으로 의도가 무너진다 (실플레이 확인)
+  9: 's_owl',
+  10: 's_druid',
+  11: 's_butterfly',
+  12: 's_thorn_witch',
+};
+
+const BOON_KEY = 'camp_boons';
+
+/** 유닛별 선택된 강화 (unit defId → boon id). 언제든 다시 고를 수 있다. */
+export function boonChoices(): Record<string, string> {
+  try {
+    return JSON.parse(localStorage.getItem(BOON_KEY) ?? '{}') as Record<string, string>;
+  } catch {
+    return {};
+  }
+}
+
+export function saveBoonChoice(unit: string, boonId: string | null): void {
+  const all = boonChoices();
+  if (boonId === null) delete all[unit];
+  else all[unit] = boonId;
+  localStorage.setItem(BOON_KEY, JSON.stringify(all));
+}
+
+/** 현재 클리어 수 기준으로 개방된 강화 유닛 목록 (개방 순서대로). */
+export function unlockedBoonUnits(): string[] {
+  const cleared = campaignCleared();
+  return Object.entries(BOON_UNLOCKS)
+    .filter(([stage]) => Number(stage) <= cleared)
+    .sort((a, b) => Number(a[0]) - Number(b[0]))
+    .map(([, unit]) => unit);
+}
+
+/** 게임에 넘길 유효 강화 id 배열 — 개방된 유닛의 선택만 인정한다. */
+export function selectedBoonIds(): string[] {
+  const unlocked = new Set(unlockedBoonUnits());
+  const all = boonChoices();
+  const out: string[] = [];
+  for (const [unit, boonId] of Object.entries(all)) {
+    if (unlocked.has(unit)) out.push(boonId);
+  }
+  return out;
+}
+
 export function perksToHero(alloc: Record<string, number>): { hpPct: number; dmgPct: number; startMoney: number; incomeAdd: number } {
   return {
     hpPct: (alloc.sap ?? 0) * 3,

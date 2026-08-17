@@ -6,7 +6,8 @@
  * 모든 클라이언트가 같은 시뮬을 로컬에서 돌린다 (전투 렌더링 지연 0).
  */
 import {
-  DEFS, FP, MAP, MAPS, DEFAULT_MAP, RACE_NAMES, TICK_HZ,
+  DEFS, FP, MAP, MAPS, DEFAULT_MAP, RACE_NAMES, TICK_HZ, BOONS_BY_UNIT,
+  effectiveDef, applyBoons,
   createGame, stepGame, buyUnit, buyIncomeUpgrade, buyTechUp, buyUpgrade,
   findStructure, nextWaveInfo, hashGame, incomeUpgradeCost, techOfUnit, techUpCost,
   unitsOfRace, upgradesOfUnit,
@@ -17,9 +18,11 @@ import { assetIconUrl, createRenderer, worldToPxX, type Renderer } from './rende
 import {
   SYLVARIN_CAMPAIGN, PERKS, campaignCleared, markCampaignCleared, runDialogue,
   perkAlloc, savePerkAlloc, perkPointsSpent, perksToHero,
+  BOON_UNLOCKS, boonChoices, saveBoonChoice, unlockedBoonUnits, selectedBoonIds,
   type CampaignStage,
 } from './campaign.ts';
 import { createAudio } from './audio.ts';
+import { initTitle, showTitle, titleSubtitle, type TitleAction } from './title.ts';
 import { createMinimap, type Minimap } from './minimap.ts';
 import { iconUrl } from './sprites.ts';
 import { connect, serverUrl, type Net, type NetMsg } from './net.ts';
@@ -42,7 +45,21 @@ const audio = createAudio();
 let renderer: Renderer | null = null;
 let minimap: Minimap | null = null;
 let myIdx = 0;
-let speed = 1;
+/** 배속은 판이 끝나도 유지된다 — 매번 ×1 로 되돌리면 다시 눌러야 해서. */
+const LS_SPEED = 'dl_speed';
+const SPEEDS = [1, 2, 4];
+function loadSpeed(): number {
+  const v = Number(localStorage.getItem(LS_SPEED));
+  return SPEEDS.includes(v) ? v : 1;
+}
+let speed = loadSpeed();
+/**
+ * 일시정지 (솔로 전용 — 멀티는 서버 틱 시계라 멈출 수 없다).
+ * 캠페인 컷신 연출도 이걸 재사용해 전투를 세운 채 대화를 띄운다.
+ */
+let paused = false;
+/** 컷신 등으로 강제 정지된 상태 — 사용자가 P 로 풀 수 없다. */
+let cutscenePause = false;
 const STEP_MS = 1000 / TICK_HZ;
 let acc = 0;
 
@@ -83,6 +100,13 @@ document.addEventListener('contextmenu', (e) => {
 const heldKeys = new Set<string>();
 window.addEventListener('keydown', (e) => {
   if ((e.target as HTMLElement)?.tagName === 'INPUT') return;
+  // P / Space = 일시정지 토글. 대화 오버레이가 떠 있으면 그쪽이 스페이스를 쓴다.
+  const dialogueOpen = !$('#dialogue').classList.contains('hidden');
+  if (!dialogueOpen && game && !game.over && !isMp && (e.key === 'p' || e.key === 'P' || e.key === ' ')) {
+    e.preventDefault();
+    setPaused(!paused);
+    return;
+  }
   heldKeys.add(e.key.toLowerCase());
 });
 window.addEventListener('keyup', (e) => heldKeys.delete(e.key.toLowerCase()));
@@ -200,7 +224,9 @@ function refreshUnitInfo(): void {
     selectUnit(null);
     return;
   }
-  const d = e.defOv ?? DEFS[e.defId]!;
+  let d = e.defOv ?? DEFS[e.defId]!;
+  // 둥지 방어전: 아군 넥서스는 이 판에서만 「둥지」다
+  if (game.defendNexus && e.defId === 'nexus' && e.team === 0) d = { ...d, name: '둥지' };
   const ownerLabel = e.owner >= 0
     ? `${e.team + 1}팀 · ${game.players[e.owner]?.isBot ? 'AI' : '플레이어'} ${(e.owner % 3) + 1}번${e.owner === myIdx ? ' (나)' : ''}`
     : `${e.team + 1}팀`;
@@ -221,7 +247,7 @@ function refreshUnitInfo(): void {
   if (game.tick < e.armorBuffUntil) status.push(`가호 (방어력 +${e.armorBuffAdd})`);
   if (game.tick < e.atkBuffUntil) status.push('군세강화');
   if (game.tick < e.forestUntil) status.push('숲의 가호');
-  if (e.defId === 'nexus' && !game.guardianDown[e.team]) status.push('보호막 (수호자 생존)');
+  if (e.defId === 'nexus' && !game.guardianDown[e.team as 0 | 1]) status.push('보호막 (수호자 생존)');
   const tickNow = game.tick;
   (d.actives ?? []).forEach((a, i) => {
     if (a.kind === 'selfbuff' && tickNow < e.buffUntil) status.push(`「${a.name}」 지속 중`);
@@ -234,15 +260,20 @@ function refreshUnitInfo(): void {
 }
 
 // ── 화면 전환 ─────────────────────────────────────────────────────────────
-function showScreen(id: 'menu-screen' | 'race-screen' | 'room-screen' | null): void {
+/** 'title' 은 오버레이가 아니라 전체 화면 타이틀 아트를 띄운다. */
+function showScreen(id: 'title' | 'menu-screen' | 'race-screen' | 'room-screen' | null): void {
   const overlay = $('#overlay');
   for (const s of ['menu-screen', 'race-screen', 'room-screen']) {
     $(`#${s}`).classList.toggle('hidden', s !== id);
   }
-  overlay.classList.toggle('hidden', id === null);
+  if (id === 'title') showTitle();
+  else $('#title').classList.add('hidden');
+  $('#farewell').classList.add('hidden');
+  overlay.classList.toggle('hidden', id === null || id === 'title');
   // 나가기·상점 접기는 게임 중(오버레이가 없을 때)에만 의미가 있다
   const inGame = id === null;
   ($('#btn-quit') as HTMLElement).style.display = inGame ? '' : 'none';
+  ($('#btn-pause') as HTMLElement).style.display = inGame && !isMp ? '' : 'none';
   ($('#btn-shop') as HTMLElement).style.display = inGame ? '' : 'none';
   // 채팅은 사람이 함께 있는 멀티에서만 (연습 게임은 상대가 AI 뿐)
   ($('#btn-chat') as HTMLElement).style.display = inGame && isMp ? '' : 'none';
@@ -255,15 +286,35 @@ function showScreen(id: 'menu-screen' | 'race-screen' | 'room-screen' | null): v
 
 // ── 메뉴 ─────────────────────────────────────────────────────────────────
 function initMenu(): void {
-  $('#btn-solo').onclick = () => showSoloRaceSelect();
-  $('#btn-campaign').onclick = () => showCampaignSelect();
-  campaignAutoResume();
   $('#btn-create').onclick = () => {
     if (!net) return;
     sendName();
     net.send({ t: 'createRoom', name: `${nickname()}의 방` });
   };
-  showScreen('menu-screen');
+  $('#btn-menu-title').onclick = () => showScreen('title');
+  $('#btn-fw-back').onclick = () => showScreen('title');
+
+  initTitle(audio, onTitlePick);
+  // 타이틀 아트의 종족명을 이어지는 화면 부제로 물려준다
+  $('#overlay-sub').textContent = titleSubtitle();
+  // 캠페인 자동 진입(스테이지 재시작 등)이 걸려 있으면 타이틀을 건너뛴다
+  if (!campaignAutoResume()) showScreen('title');
+}
+
+/** 타이틀 메뉴 → 이어질 화면. */
+function onTitlePick(action: TitleAction): void {
+  if (action === 'campaign') showCampaignSelect();
+  else if (action === 'solo') showSoloRaceSelect();
+  else if (action === 'versus') {
+    showScreen('menu-screen');
+    net?.send({ t: 'listRooms' }); // 들어가자마자 방 목록이 비어 보이지 않게
+  } else {
+    // 종료: 스크립트로 연 창이 아니면 브라우저가 close 를 막는다 — 작별 화면으로 대신한다
+    $('#title').classList.add('hidden');
+    $('#overlay').classList.add('hidden');
+    $('#farewell').classList.remove('hidden');
+    setTimeout(() => window.close(), 200);
+  }
 }
 
 function nickname(): string {
@@ -309,7 +360,7 @@ function renderRoom(state: NetMsg): void {
   const mapName = MAPS[s.mapId]?.name ?? s.mapId;
   $('#room-title').textContent = `${s.name} — 🗺 ${mapName}`;
   $('#room-hint').textContent = isHost
-    ? '방장: 팀 인원(1~3)을 정하고 시작하세요. 빈 자리는 그대로 빠집니다 — 팀당 1명씩이면 1:1 이 됩니다. AI 를 넣고 싶으면 「AI 추가」로 직접 채우세요.'
+    ? '방장: 자리를 채우고 시작하세요. 빈 자리는 빠진 채 시작됩니다 (1:1~3:3). 「AI 추가」로 봇을 넣을 수 있어요.'
     : '방장이 시작하기를 기다리는 중… 내 종족 버튼으로 종족을 바꿀 수 있습니다.';
   ($('#btn-start') as HTMLButtonElement).style.display = isHost ? '' : 'none';
   // 방장 전용 맵 변경 버튼
@@ -317,8 +368,7 @@ function renderRoom(state: NetMsg): void {
   mapBtn.style.display = isHost ? '' : 'none';
   mapBtn.textContent = `맵 변경 (${mapName})`;
   mapBtn.onclick = () => {
-    const ids = Object.keys(MAPS);
-    const next = ids[(ids.indexOf(s.mapId) + 1) % ids.length]!;
+    const next = PVP_MAPS[(PVP_MAPS.indexOf(s.mapId) + 1) % PVP_MAPS.length]!;
     net?.send({ t: 'setMap', mapId: next });
   };
 
@@ -440,6 +490,14 @@ let campaign: CampaignStage | null = null;
 let campaignCaps: { incomeCap?: number; techCap?: number } | null = null;
 /** 특수 유닛 스폰 규칙별 다음 발동 시각(초). Infinity = 소진. */
 let campaignSpawnNext: number[] = [];
+let campaignSpawnedTotal: number[] = [];
+/** 마몬의 상점 채널링 시작 틱 (-1 = 채널링 없음). */
+let campaignCaptureStartTick = -1;
+/** boss 미션: 처치 대상 보스 엔티티 id (-1 = 없음). */
+let campaignBossId = -1;
+let campaignCutsceneDone: boolean[] = [];
+let campaignGrowthWave: number[] = []; // 규칙별 마지막으로 편입한 웨이브 번호
+let campaignGrowthAnnounced: boolean[] = [];
 /** 특수 유닛 경고 배너 만료 시각 (performance.now 기준). */
 let campaignAlertUntil = 0;
 let campaignAlertText = '';
@@ -453,51 +511,75 @@ let campaignDone = false; // 이 스테이지의 승패가 이미 처리됐는�
 function showCampaignSelect(): void {
   const wrap = $('#races');
   wrap.innerHTML = '';
+  $('#race-note').classList.add('hidden');
   const cleared = campaignCleared();
+
+  // 제목 + 진행도
   const title = document.createElement('h2');
   title.textContent = '🌲 실바린 캠페인 — 자정의 세계수';
   wrap.appendChild(title);
-  const list = document.createElement('div');
-  list.id = 'campaign-list';
+  const prog = document.createElement('div');
+  prog.className = 'camp-progress';
+  prog.textContent = `진행 ${Math.min(cleared, SYLVARIN_CAMPAIGN.length)} / ${SYLVARIN_CAMPAIGN.length} 스테이지 클리어`;
+  wrap.appendChild(prog);
+
+  // 막(Act)별 컬럼 — 전체 여정이 한 화면에 들어온다 (스토리가 주인공)
   const ACT_TITLE: Record<number, string> = {
     1: '1막 — 재의 새벽', 2: '2막 — 태엽과 가시', 3: '3막 — 자정의 세계수',
   };
-  let lastAct = 0;
+  const acts = document.createElement('div');
+  acts.id = 'camp-acts';
+  const cols = new Map<number, HTMLElement>();
+  for (const act of [1, 2, 3]) {
+    const col = document.createElement('div');
+    col.className = 'camp-act-col';
+    const done = SYLVARIN_CAMPAIGN.filter((st) => st.act === act && st.id <= cleared).length;
+    const total = SYLVARIN_CAMPAIGN.filter((st) => st.act === act).length;
+    col.innerHTML = `<h3>${ACT_TITLE[act]} <small style="color:var(--dim);float:right">${done}/${total}</small></h3>`;
+    cols.set(act, col);
+    acts.appendChild(col);
+  }
   for (const st of SYLVARIN_CAMPAIGN) {
-    if (st.act !== lastAct) {
-      lastAct = st.act;
-      const h = document.createElement('div');
-      h.className = 'camp-act';
-      h.textContent = ACT_TITLE[st.act]!;
-      list.appendChild(h);
-    }
     const btn = document.createElement('button');
     btn.className = 'camp-stage';
-    const locked = st.id > cleared + 1;
+    const unreleased = st.act === 3; // 3막은 아직 미공개
+    const locked = unreleased || st.id > cleared + 1;
     const done = st.id <= cleared;
+    const isNext = !unreleased && st.id === cleared + 1;
     btn.disabled = locked;
+    if (isNext) btn.style.borderColor = 'var(--gold)';
     btn.innerHTML =
       `<span class="num">${st.id}</span>` +
-      `<span style="flex:1">${locked ? '???' : st.title}</span>` +
-      (done ? '<span class="done">✔</span>' : locked ? '<span>🔒</span>' : '');
+      `<span style="flex:1">${unreleased ? '??? (준비 중)' : locked ? '???' : st.title}</span>` +
+      (done ? '<span class="done">✔</span>' : isNext ? '<span style="color:var(--gold)">▶</span>' : unreleased ? '<span>🚧</span>' : '<span>🔒</span>');
     if (!locked) btn.onclick = () => void startCampaignStage(st);
-    list.appendChild(btn);
+    cols.get(st.act)!.appendChild(btn);
   }
-  wrap.appendChild(list);
-  const row = document.createElement('div');
-  row.className = 'menurow';
+  wrap.appendChild(acts);
+
+  // 성장·이동 도구는 목록 아래 보조 바로 — 스토리보다 낮은 톤
+  const tools = document.createElement('div');
+  tools.className = 'camp-tools';
   const perkBtn = document.createElement('button');
-  perkBtn.className = 'menubtn';
+  perkBtn.className = 'menubtn alt';
   const alloc0 = perkAlloc();
-  perkBtn.textContent = `🌿 세계수의 축복 (${cleared - perkPointsSpent(alloc0)}P 남음)`;
+  perkBtn.textContent = `🌿 세계수의 축복 — ${cleared - perkPointsSpent(alloc0)}P 남음`;
   perkBtn.onclick = () => showPerkScreen();
-  row.appendChild(perkBtn);
+  tools.appendChild(perkBtn);
+  if (unlockedBoonUnits().length > 0) {
+    const boonBtn = document.createElement('button');
+    boonBtn.className = 'menubtn alt';
+    const chosen = Object.keys(boonChoices()).filter((u) => unlockedBoonUnits().includes(u)).length;
+    boonBtn.textContent = `⚔ 유닛 강화 — ${chosen}/${unlockedBoonUnits().length} 선택`;
+    boonBtn.onclick = () => showBoonScreen();
+    tools.appendChild(boonBtn);
+  }
   const back = document.createElement('button');
   back.className = 'menubtn alt';
-  back.textContent = '← 메뉴로';
-  back.onclick = () => showScreen('menu-screen');
-  row.appendChild(back);
-  wrap.appendChild(row);
+  back.textContent = '← 타이틀로';
+  back.onclick = () => showScreen('title');
+  tools.appendChild(back);
+  wrap.appendChild(tools);
   showScreen('race-screen');
 }
 
@@ -505,6 +587,7 @@ function showCampaignSelect(): void {
 function showPerkScreen(): void {
   const wrap = $('#races');
   wrap.innerHTML = '';
+  $('#race-note').classList.add('hidden');
   const total = campaignCleared();
   const alloc = perkAlloc();
 
@@ -567,7 +650,67 @@ function showPerkScreen(): void {
   showScreen('race-screen');
 }
 
+/** 유닛 강화 화면 — 스테이지 클리어로 개방, 유닛당 3택 1. 언제든 무료 재선택. */
+function showBoonScreen(): void {
+  const wrap = $('#races');
+  wrap.innerHTML = '';
+  $('#race-note').classList.add('hidden');
+  const title = document.createElement('h2');
+  title.textContent = '⚔ 유닛 강화';
+  wrap.appendChild(title);
+  const info = document.createElement('p');
+  info.style.cssText = 'color:var(--dim);font-size:13px;max-width:520px;text-align:center';
+  info.textContent = '스테이지를 클리어하면 유닛의 강화가 열린다. 유닛마다 하나만 — 언제든 무료로 바꿀 수 있다.';
+  wrap.appendChild(info);
+
+  const list = document.createElement('div');
+  list.id = 'campaign-list';
+  list.style.maxWidth = '640px';
+  const KIND_BADGE: Record<string, string> = { stat: '📊 능력치', passive: '✨ 패시브', active: '⚡ 액티브' };
+  const rerender = (): void => {
+    list.innerHTML = '';
+    const chosen = boonChoices();
+    for (const unit of unlockedBoonUnits()) {
+      const d = DEFS[unit]!;
+      const head = document.createElement('div');
+      head.className = 'camp-act';
+      const cur = chosen[unit];
+      head.innerHTML = `${d.name} <small style="color:var(--dim)">${cur ? '' : '— 미선택'}</small>`;
+      list.appendChild(head);
+      for (const b of BOONS_BY_UNIT.get(unit) ?? []) {
+        const on = cur === b.id;
+        const btn = document.createElement('button');
+        btn.className = 'camp-stage';
+        btn.style.cssText = on ? 'border-color:var(--gold)' : '';
+        btn.innerHTML =
+          `<span class="num">${on ? '✔' : ''}</span>` +
+          `<span style="flex:1"><b${on ? ' style="color:var(--gold)"' : ''}>${b.name}</b>` +
+          ` <small style="color:var(--dim)">${KIND_BADGE[b.kind]}</small><br/>` +
+          `<small style="color:var(--dim)">${b.desc}</small></span>`;
+        btn.onclick = () => {
+          saveBoonChoice(unit, on ? null : b.id); // 다시 누르면 해제
+          audio.play('ui_buy', { volume: 0.6 });
+          rerender();
+        };
+        list.appendChild(btn);
+      }
+    }
+  };
+  rerender();
+  wrap.appendChild(list);
+  const row = document.createElement('div');
+  row.className = 'menurow';
+  const back = document.createElement('button');
+  back.className = 'menubtn';
+  back.textContent = '← 캠페인으로';
+  back.onclick = () => showCampaignSelect();
+  row.appendChild(back);
+  wrap.appendChild(row);
+  showScreen('race-screen');
+}
+
 async function startCampaignStage(st: CampaignStage): Promise<void> {
+  if (st.act === 3) { showCampaignSelect(); return; } // 3막 미공개 — 어떤 경로로도 진입 불가
   showScreen(null);
   await runDialogue(st.briefing);
   campaign = st;
@@ -582,15 +725,63 @@ async function startCampaignStage(st: CampaignStage): Promise<void> {
     ...(st.incomeCap !== undefined ? { incomeCap: st.incomeCap } : {}),
     ...(st.techCap !== undefined ? { techCap: st.techCap } : {}),
     ...(st.enemyPreferredUnits ? { enemyPreferredUnits: st.enemyPreferredUnits } : {}),
+    ...(st.enemyUnitCaps ? { enemyUnitCaps: st.enemyUnitCaps } : {}),
+    ...(st.enemyUnitMinWave ? { enemyUnitMinWave: st.enemyUnitMinWave } : {}),
+    ...(st.enemyCapsUntilWave !== undefined ? { enemyCapsUntilWave: st.enemyCapsUntilWave } : {}),
+    ...(st.enemyBotStyle ? { enemyBotStyle: st.enemyBotStyle } : {}),
+    ...(st.allyBotStyle ? { allyBotStyle: st.allyBotStyle } : {}),
+    ...(st.jointDeploy ? { jointDeploy: true } : {}),
+    ...(st.enemyGuardian ? { enemyGuardian: st.enemyGuardian } : {}),
+    ...(st.allowedUnits ? { allowedUnits: st.allowedUnits } : {}),
+    ...(selectedBoonIds().length > 0 ? { unitBoons: selectedBoonIds() } : {}),
+    ...(st.mercUnits ? { mercUnits: st.mercUnits } : {}),
+    ...(st.mercCostPct !== undefined ? { mercCostPct: st.mercCostPct } : {}),
+    ...(st.mercCaptureRequired ? { mercCaptureRequired: true } : {}),
+    ...(st.holdLineXTile !== undefined ? { holdLineX: Math.floor(st.holdLineXTile * FP) } : {}),
+    ...(st.defendNexus ? { defendNexus: true } : {}),
+    ...(st.allyDeployTile
+      ? { allyDeploy: { x: Math.floor(st.allyDeployTile.x * FP), y: Math.floor(st.allyDeployTile.y * FP) } }
+      : {}),
   } as { incomeCap?: number; techCap?: number };
   campaignSpawnNext = (st.spawns ?? []).map((r) => r.atSec ?? r.everySec ?? Infinity);
+  campaignSpawnedTotal = (st.spawns ?? []).map(() => 0);
+  campaignCaptureStartTick = -1;
+  campaignBossId = -1;
+  campaignCutsceneDone = (st.cutscenes ?? []).map(() => false);
+  campaignGrowthWave = (st.growth ?? []).map(() => 0);
+  campaignGrowthAnnounced = (st.growth ?? []).map(() => false);
   campaignAlertUntil = 0;
   campaignWarcampId = -1;
   campaignWarcampNext = st.warcamp ? st.warcamp.everySec : Infinity;
   campaignHeroPerks = perksToHero(perkAlloc());
-  await startGame(st.seed, players, 0, false, st.mapId ?? DEFAULT_MAP, undefined, st.botDifficulty);
+  const rosterNames = players.map((pl, i) => {
+    if (i === 0) return '카엘 (나)';
+    return pl.team === 0 ? `아군 ${RACE_NAMES[pl.race]} 부대` : `${RACE_NAMES[pl.race]} 군세`;
+  });
+  await startGame(st.seed, players, 0, false, st.mapId ?? DEFAULT_MAP, rosterNames, st.botDifficulty);
   campaignCaps = null;
   if (st.startMoney !== undefined && game) game.players[0]!.money = st.startMoney;
+  if (st.noEnemyNexus && game) {
+    // 보스전: 적 넥서스가 없다 — 파괴 목표는 보스뿐 (적 봇 생산은 계속된다)
+    game.entities = game.entities.filter((e) => !(e.defId === 'nexus' && e.team === 1));
+  }
+  if (st.bossDefId && game) {
+    // 보스 젠: 적 진영 앞 — leashed 라 요새를 지키다 접근하면 교전한다
+    const bx = game.map.spawnX[1];
+    const boss = spawnUnit(game, st.bossDefId, 1, bx, laneCenterY(game.map, bx));
+    campaignBossId = boss.id;
+    campaignAlertText = '⚔ 사령장군 카르가스가 요새 앞을 지키고 있다!';
+    campaignAlertUntil = performance.now() + 5000;
+  }
+  if (st.nestGuards && game) {
+    // 둥지 수호탑: 아군 고정 수호수 — 무적 + 제자리 (speed 0)
+    for (const ng of st.nestGuards) {
+      const gx = Math.floor(ng.xTile * FP);
+      const gy = laneCenterY(game.map, gx) + Math.floor(ng.yOffTile * FP);
+      const e = spawnUnit(game, ng.defId, 0, gx, gy);
+      e.invulnUntil = Number.MAX_SAFE_INTEGER;
+    }
+  }
   if (st.noTowers && game) {
     // 수호탑·수호자 없이 넥서스전만: 탑을 걷어내고 보호막(수호자 생존 시 넥서스 무적)도 해제
     game.entities = game.entities.filter((e) => e.defId !== 'tower');
@@ -615,7 +806,7 @@ async function startCampaignStage(st: CampaignStage): Promise<void> {
 }
 
 /** 캠페인 스테이지 종료 처리 — 승리 시 outro 대화 후 저장. */
-function campaignFinish(win: boolean): void {
+function campaignFinish(win: boolean, reason?: string): void {
   if (!campaign || campaignDone) return;
   campaignDone = true;
   const st = campaign;
@@ -623,10 +814,15 @@ function campaignFinish(win: boolean): void {
   const showEnd = (): void => {
     const overlay = $('#overlay');
     const isLast = st.id === SYLVARIN_CAMPAIGN.length;
+    const newBoonUnit = win ? BOON_UNLOCKS[st.id] : undefined;
+    const nextSt = SYLVARIN_CAMPAIGN.find((x) => x.id === st.id + 1);
+    const nextUnreleased = nextSt?.act === 3; // 3막 미공개 — 다음으로 못 간다
     overlay.innerHTML =
       `<h1>${win ? '스테이지 클리어!' : '패배…'}</h1>` +
-      `<p>${st.id}. ${st.title}</p>` +
-      (win && !isLast ? `<button id="camp-next">다음 스테이지 ▶</button>` : '') +
+      `<p>${st.id}. ${st.title}${reason ? ` — ${reason}` : ''}</p>` +
+      (newBoonUnit ? `<p style="color:var(--gold)">⚔ 새 유닛 강화 개방 — ${DEFS[newBoonUnit]!.name}! 캠페인 화면에서 골라 보자.</p>` : '') +
+      (win && nextUnreleased ? `<p style="color:var(--dim)">🚧 3막은 준비 중입니다 — 곧 공개!</p>` : '') +
+      (win && !isLast && !nextUnreleased ? `<button id="camp-next">다음 스테이지 ▶</button>` : '') +
       (!win ? `<button id="camp-retry">다시 도전</button>` : '') +
       `<button id="camp-menu">캠페인 목록으로</button>`;
     overlay.classList.remove('hidden');
@@ -650,19 +846,23 @@ function campaignFinish(win: boolean): void {
   else showEnd();
 }
 
-/** 새로고침 직후 캠페인 자동 진입 (다음 스테이지 / 재도전 / 목록). */
-function campaignAutoResume(): void {
+/**
+ * 새로고침 직후 캠페인 자동 진입 (다음 스테이지 / 재도전 / 목록).
+ * 진입했으면 true — 이때는 타이틀을 띄우지 않는다.
+ */
+function campaignAutoResume(): boolean {
   const auto = sessionStorage.getItem('camp_auto');
-  if (!auto) return;
+  if (!auto) return false;
   sessionStorage.removeItem('camp_auto');
   if (auto === 'list') {
     showCampaignSelect();
-    return;
+    return true;
   }
   const id = Number(auto);
   const st = SYLVARIN_CAMPAIGN.find((x) => x.id === id);
   if (st && id <= campaignCleared() + 1) void startCampaignStage(st);
   else showCampaignSelect();
+  return true;
 }
 
 // ── 연습 게임 (오프라인) ──────────────────────────────────────────────────
@@ -675,10 +875,18 @@ const DIFFICULTY_LABEL: Record<BotDifficulty, string> = {
 function showSoloRaceSelect(): void {
   const wrap = $('#races');
   wrap.innerHTML = '';
+  // 안내문은 제목 아래에 와야 자연스러워서 정적 노트 대신 여기서 만든다
+  $('#race-note').classList.add('hidden');
+  const head = document.createElement('h2');
+  head.textContent = '🎮 연습 모드';
+  wrap.appendChild(head);
+  const note = document.createElement('p');
+  note.textContent = '3:3 오프라인 대전 — 종족을 고르면 바로 시작합니다. 나머지 자리는 AI 가 맡아요.';
+  wrap.appendChild(note);
   // 맵 선택 토글
   const mapRow = document.createElement('div');
   mapRow.className = 'menurow';
-  for (const m of Object.values(MAPS)) {
+  for (const m of Object.values(MAPS).filter((mm) => PVP_MAPS.includes(mm.id))) {
     const b = document.createElement('button');
     b.className = 'menubtn' + (m.id === soloMapId ? '' : ' alt');
     b.textContent = `맵: ${m.name}`;
@@ -715,8 +923,18 @@ function showSoloRaceSelect(): void {
       isBot: i !== idx,
       team: (i < 3 ? 0 : 1) as TeamId,
     }));
-    void startGame(seed, players, idx, false, soloMapId, undefined, soloDifficulty);
+    const names = players.map((pl, i) =>
+      i === idx ? '나' : `${RACE_NAMES[pl.race]} AI`);
+    void startGame(seed, players, idx, false, soloMapId, names, soloDifficulty);
   }));
+  const backRow = document.createElement('div');
+  backRow.className = 'menurow';
+  const back = document.createElement('button');
+  back.className = 'menubtn alt';
+  back.textContent = '← 타이틀로';
+  back.onclick = () => showScreen('title');
+  backRow.appendChild(back);
+  wrap.appendChild(backRow);
   showScreen('race-screen');
 }
 
@@ -746,14 +964,22 @@ async function startGame(
   botDifficulty: BotDifficulty = 'easy',
 ): Promise<void> {
   showScreen(null);
+  // 로딩 표시 — 첫 판은 렌더러·타일셋·스프라이트 로드가 수 초 걸릴 수 있다
+  $('#loading').classList.remove('hidden');
+  try {
   isMp = mp;
   myIdx = myIdxV;
   mpQueue = [];
   lastHashTick = 0;
   gameOverReported = false;
   resultShown = false;
-  speed = 1;
+  speed = loadSpeed();
   mpSpeed = 1;
+  paused = false;
+  cutscenePause = false;
+  $('#paused').classList.add('hidden');
+  $('#btn-pause').classList.remove('on');
+  $('#btn-pause').textContent = '⏸ 일시정지';
   updateSpeedButtons();
   game = createGame({
     seed, players, mapId, botDifficulty,
@@ -774,10 +1000,14 @@ async function startGame(
     minimap = createMinimap($<HTMLCanvasElement>('#minimap'), renderer);
     renderer.app.ticker.add((t) => tick(t.deltaMS));
   }
+  renderer.setEnemySkin(campaign?.enemySkin ?? null);
   renderer.setMap(game.map);
   minimap?.setMap(game.map);
   renderer.draw(game, 1);
   renderer.centerOn(worldToPxX(game.map.spawnX[game.players[myIdx]!.team]));
+  } finally {
+    $('#loading').classList.add('hidden');
+  }
 }
 
 // ── 상점 ─────────────────────────────────────────────────────────────────
@@ -792,6 +1022,12 @@ const SHOP_KEYS = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '0', 'q', 'e', '
 /** 단축키 → 유닛 id (현재 종족 기준). buildShop 에서 다시 채운다. */
 const shopKeyMap = new Map<string, string>();
 
+/**
+ * 대전(연습·멀티)에서 고를 수 있는 맵. 나머지(탐욕의 계곡·바람의 둥지·합류점)는
+ * 캠페인 전용 — 상점 점령·둥지·보스 같은 캠페인 장치를 전제로 설계된 맵이다.
+ */
+const PVP_MAPS = ['plains', 'toybox', 'valley'];
+
 function buildShop(race: RaceId): void {
   const shop = $('#shop');
   shop.innerHTML = '';
@@ -804,7 +1040,7 @@ function buildShop(race: RaceId): void {
     const btn = document.createElement('button');
     btn.className = 'unitbtn';
     const fallbackIcon = iconUrl(d.id, 0);
-    const nUps = upgradesOfUnit(d.id).length;
+    const nUps = visibleUpgradesOf(d.id).length;
     const key = SHOP_KEYS[keyIdx++];
     if (key) shopKeyMap.set(key, d.id);
     btn.innerHTML =
@@ -820,7 +1056,10 @@ function buildShop(race: RaceId): void {
     const showTip = (): void => {
       if (openUpgradeUnit !== null) return;
       const tip = $('#tooltip');
-      tip.innerHTML = unitInfoHtml(d);
+      const eff = myEffectiveDef(d.id);
+      tip.innerHTML =
+        (eff.boosted ? '<div class="ui-dim"><span class="ui-bonus">업그레이드·강화 반영된 수치</span></div>' : '') +
+        unitInfoHtml(eff.d);
       tip.classList.remove('hidden');
       const r = btn.getBoundingClientRect();
       tip.style.left = `${Math.min(r.left, window.innerWidth - 260)}px`;
@@ -876,6 +1115,40 @@ function buildShop(race: RaceId): void {
     shop.appendChild(btn);
     shopButtons.push({ defId: d.id, btn, cnt: btn.querySelector('.cnt')!, upg: btn.querySelector('.upg')! });
   }
+
+  // ── 용병 (캠페인): 종족 무관 구매 — 마몬의 장사 ──
+  for (const mercId of campaign?.mercUnits ?? []) {
+    const d = DEFS[mercId];
+    if (!d) continue;
+    const cost = Math.floor((d.cost * (campaign?.mercCostPct ?? 100)) / 100);
+    const btn = document.createElement('button');
+    btn.className = 'unitbtn merc';
+    const fallbackIcon = iconUrl(d.id, 0);
+    btn.innerHTML =
+      `<img src="${assetIconUrl(d.id) ?? fallbackIcon}" onerror="this.onerror=null;this.src='${fallbackIcon}'" alt=""/>` +
+      `<span class="nm">${d.name}</span>` +
+      `<span class="tier">💰 용병</span>` +
+      `<span class="cost">${cost}</span>` +
+      `<span class="cnt"></span>` +
+      `<span class="upg"></span>`;
+    btn.onclick = () => doAction({ kind: 'unit', defId: d.id });
+    const showTip = (): void => {
+      if (openUpgradeUnit !== null) return;
+      const tip = $('#tooltip');
+      tip.innerHTML =
+        '<div class="ui-dim"><span class="ui-bonus">💰 마몬의 용병 — 언데드는 드루이드 치유를 받지 못한다</span></div>' +
+        unitInfoHtml(d);
+      tip.classList.remove('hidden');
+      const r = btn.getBoundingClientRect();
+      tip.style.left = `${Math.min(r.left, window.innerWidth - 260)}px`;
+      tip.style.bottom = `${window.innerHeight - r.top + 6}px`;
+      tip.style.top = 'auto';
+    };
+    btn.addEventListener('mouseenter', showTip);
+    btn.addEventListener('mouseleave', () => $('#tooltip').classList.add('hidden'));
+    shop.appendChild(btn);
+    shopButtons.push({ defId: d.id, btn, cnt: btn.querySelector('.cnt')!, upg: btn.querySelector('.upg')! });
+  }
 }
 
 // ── 유닛 정보 HTML (상점 툴팁 + 전장 정보창 공용) ─────────────────────────
@@ -884,13 +1157,51 @@ const TAG_KO: Record<string, string> = {
   bio: '생체', undead: '망자', construct: '기물',
   massive: '거대', structure: '구조물', flying: '비행',
 };
+/** 화면에 띄우지 않는 태그 — 성별은 연출용 메타데이터일 뿐이다. */
+const HIDDEN_TAGS = new Set(['male', 'female']);
 
 const ZONE_KO: Record<string, string> = {
   thorns: '가시밭', spores: '포자 구름', forest: '숲의 영역', grave: '사후의 경계', blaze: '블레이즈',
 };
 
+/**
+ * 상점·툴팁용 "내 유닛의 실제 스펙": 구매한 업그레이드 → 캠페인 유닛 강화 →
+ * 영웅 특성(세계수의 축복) 순으로 반영한다 — 출정하는 유닛과 같은 수치.
+ */
+function myEffectiveDef(defId: string): { d: EntityDef; boosted: boolean } {
+  const base = DEFS[defId]!;
+  if (!game) return { d: base, boosted: false };
+  const p = game.players[myIdx];
+  let d = (p ? effectiveDef(defId, p.upgrades) : undefined) ?? base;
+  if (game.unitBoons.length > 0) d = applyBoons(d, game.unitBoons);
+  if (game.heroPerks) {
+    const hk = game.heroPerks;
+    const maxHp = hk.hpPct ? Math.floor((d.maxHp * (100 + hk.hpPct)) / 100) : d.maxHp;
+    const weapon = d.weapon && hk.dmgPct
+      ? { ...d.weapon, damage: Math.floor((d.weapon.damage * (100 + hk.dmgPct)) / 100) }
+      : d.weapon;
+    d = { ...d, maxHp, ...(weapon ? { weapon } : {}) };
+  }
+  return { d, boosted: d !== base };
+}
+
+/**
+ * 이 판에서 상점에 보여줄 업그레이드 목록.
+ * campaignOnly(강화 연계 해금)는 캠페인에서 그 강화를 실제로 골랐을 때만 노출 —
+ * 대전이나 강화 미선택 상태에선 사도 의미 없는 버튼이라 숨긴다.
+ */
+function visibleUpgradesOf(defId: string): ReturnType<typeof upgradesOfUnit> {
+  const all = upgradesOfUnit(defId);
+  return all.filter((u) => {
+    if (!u.campaignOnly) return true;
+    if (!campaign || !game) return false;
+    // 연계된 캠페인 강화를 실제로 골랐을 때만 노출
+    return u.boonId !== undefined && game.unitBoons.includes(u.boonId);
+  });
+}
+
 function unitInfoHtml(d: EntityDef, hp?: number): string {
-  const tags = [...d.tags.map((t) => TAG_KO[t] ?? t)];
+  const tags = d.tags.filter((t) => !HIDDEN_TAGS.has(t)).map((t) => TAG_KO[t] ?? t);
   if (d.flying) tags.push('비행');
   const rows: string[] = [];
   rows.push(`<div class="ui-name">${d.name}</div>`);
@@ -907,7 +1218,11 @@ function unitInfoHtml(d: EntityDef, hp?: number): string {
     const tgt = w.targets === 'both' ? '지상+공중' : w.targets === 'ground' ? '지상' : '공중';
     rows.push(`<div class="ui-row">공속 <b>${cdSec}초</b> · 사거리 <b>${rangeT}</b> · 대상 <b>${tgt}</b></div>`);
     const specials: string[] = [];
-    if (w.splash) specials.push(`광역 ${(w.splash / FP).toFixed(1)}타일`);
+    if (w.splash) {
+      specials.push(w.splashAirOnly
+        ? `대공 광역 ${(w.splash / FP).toFixed(1)}타일 (지상은 단일)`
+        : `광역 ${(w.splash / FP).toFixed(1)}타일`);
+    }
     if (w.slowTicks) specials.push(`둔화 ${(w.slowTicks / TICK_HZ).toFixed(1)}초${w.slowChance ? ` (${w.slowChance}%)` : ''}`);
     if (w.dotDps && w.dotTicks) specials.push(`독 초당 ${w.dotDps} × ${(w.dotTicks / TICK_HZ).toFixed(1)}초${w.dotChance ? ` (${w.dotChance}%)` : ''}`);
     if (w.rootTicks) specials.push(`속박 ${(w.rootTicks / TICK_HZ).toFixed(1)}초${w.rootChance ? ` (${w.rootChance}%)` : ''}`);
@@ -938,7 +1253,7 @@ function weaponHint(defId: string): string {
   const t = d.weapon.targets;
   const tgt = t === 'both' ? '지+공' : t === 'ground' ? '지상' : '공중';
   const kind = d.weapon.range < 2000 ? '근접' : '원거리';
-  const extra = (d.weapon.splash ? '·광역' : '') + (d.heal ? '·힐' : '');
+  const extra = (d.weapon.splash ? (d.weapon.splashAirOnly ? '·대공광역' : '·광역') : '') + (d.heal ? '·힐' : '');
   return ` · ${kind}/${tgt}${extra}`;
 }
 
@@ -999,7 +1314,7 @@ function renderUpgradePanel(): void {
   if (!game || !openUpgradeUnit) return;
   const panel = $('#upg-panel');
   const me = game.players[myIdx]!;
-  const ups = upgradesOfUnit(openUpgradeUnit);
+  const ups = visibleUpgradesOf(openUpgradeUnit);
   const d = DEFS[openUpgradeUnit]!;
   panel.innerHTML = `<h3>${d.name} 업그레이드</h3>`;
   for (const u of ups) {
@@ -1029,6 +1344,9 @@ document.addEventListener('pointerdown', (e) => {
 $('#btn-income').onclick = () => doAction({ kind: 'income' });
 $('#btn-tech').onclick = () => doAction({ kind: 'tech' });
 
+$('#btn-pause').onclick = () => setPaused(!paused);
+$('#paused').onclick = () => setPaused(false);
+
 for (const b of document.querySelectorAll<HTMLButtonElement>('#speed button')) {
   b.onclick = () => {
     const sp = Number(b.dataset.speed);
@@ -1038,8 +1356,24 @@ for (const b of document.querySelectorAll<HTMLButtonElement>('#speed button')) {
       return;
     }
     speed = sp;
+    localStorage.setItem(LS_SPEED, String(sp));
     updateSpeedButtons();
   };
+}
+
+function setPaused(v: boolean): void {
+  if (isMp) return; // 멀티는 서버 권위 시계라 개인이 멈출 수 없다
+  paused = v;
+  $('#paused').classList.toggle('hidden', !paused && !cutscenePause);
+  $('#btn-pause').classList.toggle('on', paused);
+  $('#btn-pause').textContent = paused ? '▶ 계속하기' : '⏸ 일시정지';
+}
+
+/** 컷신용 정지 — 사용자 조작과 무관하게 전투만 세운다. */
+function setCutscenePause(v: boolean): void {
+  cutscenePause = v;
+  // 컷신 중엔 대화창이 화면을 덮으므로 "일시정지" 안내는 띄우지 않는다
+  $('#paused').classList.toggle('hidden', cutscenePause || !paused);
 }
 
 function updateSpeedButtons(): void {
@@ -1101,7 +1435,7 @@ function applyDueCmds(): void {
 function tick(deltaMS: number): void {
   if (!game || !renderer) return;
   cameraPanFromKeys(deltaMS);
-  if (!game.over) {
+  if (!game.over && !paused && !cutscenePause) {
     if (isMp) {
       const target = mpTargetTick();
       acc += Math.min(deltaMS, 250);
@@ -1135,21 +1469,136 @@ function tick(deltaMS: number): void {
   minimap?.draw(game);
   updateHud(game);
   if (selectedUnitId !== null) refreshUnitInfo();
+  // 캠페인: 마몬의 상점 점령 판정.
+  // 규칙: 한쪽 팀 유닛만 반경 안에 있으면 10초(200틱) 채널링 → 완료 시 그 팀 소유.
+  //  - 양쪽이 섞이거나 아무도 없으면 채널링은 리셋된다.
+  //  - 소유 팀이 자리를 비운 사이 상대가 단독 점유를 시작하면 소유가 즉시 풀린다(중립)
+  //    — 풀린 순간부터 용병 구매 불가. 재점령도 다시 10초.
+  if (campaign && !campaignDone && !game.over && game.mercCaptureRequired) {
+    const cx = Math.floor(game.map.length / 2);
+    const r = Math.floor(3.5 * FP); // 3.5타일 (FP 정수)
+    let mine = 0;
+    let theirs = 0;
+    for (const e of game.entities) {
+      if (!e.alive || e.owner < 0) continue; // 구조물·수호자 제외
+      const dx = e.x - cx;
+      if (dx * dx > r * r) continue;
+      if (e.team === 0) mine++;
+      else theirs++;
+    }
+    const sole = mine > 0 && theirs === 0 ? 0 : theirs > 0 && mine === 0 ? 1 : -1;
+    if (sole === -1 || sole === game.mercOwner) {
+      // 경합·비움·이미 내 소유 — 채널링 없음
+      game.mercCapturingTeam = -1;
+      game.mercCaptureTicks = 0;
+      campaignCaptureStartTick = -1;
+    } else {
+      // 상대(또는 중립 도전자)의 단독 점유 — 기존 소유는 즉시 풀린다
+      if (game.mercOwner !== -1) {
+        const lostMine = game.mercOwner === 0;
+        game.mercOwner = -1;
+        campaignAlertText = lostMine
+          ? '⚠ 마몬의 상점 점령이 풀렸다! 용병 구매 불가'
+          : '🚩 적의 상점 점령을 끊었다!';
+        campaignAlertUntil = performance.now() + 3500;
+        audio.play('cast_skill', { volume: 0.8 });
+      }
+      if (campaignCaptureStartTick < 0 || game.mercCapturingTeam !== sole) {
+        game.mercCapturingTeam = sole;
+        campaignCaptureStartTick = game.tick;
+      }
+      game.mercCaptureTicks = game.tick - campaignCaptureStartTick;
+      if (game.mercCaptureTicks >= 200) { // 10초
+        game.mercOwner = sole;
+        game.mercCapturingTeam = -1;
+        game.mercCaptureTicks = 0;
+        campaignCaptureStartTick = -1;
+        campaignAlertText = sole === 0
+          ? '🚩 마몬의 상점 점령 완료! 이제 용병을 살 수 있다 (💰 상점)'
+          : '⚠ 적이 마몬의 상점을 점령했다 — 적이 용병을 사들인다!';
+        campaignAlertUntil = performance.now() + 4000;
+        audio.play(sole === 0 ? 'ui_buy' : 'cast_skill', { volume: 0.9 });
+      }
+    }
+  }
+  // 캠페인: 전투 중 컷신 — 전투를 세우고 대사를 띄운다 (네임드 등장 연출)
+  if (campaign && !campaignDone && !game.over && campaign.cutscenes && !cutscenePause) {
+    const nowSec = game.tick / TICK_HZ;
+    for (let i = 0; i < campaign.cutscenes.length; i++) {
+      const cs = campaign.cutscenes[i]!;
+      if (campaignCutsceneDone[i] || nowSec < cs.atSec) continue;
+      campaignCutsceneDone[i] = true;
+      setCutscenePause(true);
+      void runDialogue(cs.lines).then(() => setCutscenePause(false));
+      break;
+    }
+  }
   // 캠페인: 특수 유닛 스폰 스크립트 (적 스폰 지점에 등장 + 경고 배너)
   if (campaign && !campaignDone && !game.over && campaign.spawns) {
     const nowSec = game.tick / TICK_HZ;
     for (let i = 0; i < campaign.spawns.length; i++) {
       const rule = campaign.spawns[i]!;
       if (nowSec < campaignSpawnNext[i]!) continue;
+      // 총량 상한 도달 시 이 규칙은 종료 (무한 누적 방지)
+      if (rule.maxTotal !== undefined && campaignSpawnedTotal[i]! >= rule.maxTotal) {
+        campaignSpawnNext[i] = Infinity;
+        continue;
+      }
       const n = rule.count ?? 1;
-      const sx0 = game.map.spawnX[1];
+      campaignSpawnedTotal[i] = campaignSpawnedTotal[i]! + n;
+      const sx0 = rule.atXTile !== undefined ? Math.floor(rule.atXTile * FP) : game.map.spawnX[1];
+      const yBase = laneCenterY(game.map, sx0) + Math.floor((rule.yOffTile ?? 0) * FP);
       for (let k = 0; k < n; k++) {
-        spawnUnit(game, rule.defId, 1, sx0, laneCenterY(game.map, sx0) + (k - (n - 1) / 2) * 600);
+        // 야생 무리(neutral)는 제3팀(2) — 자기들끼리는 한 편, 플레이어·적 모두와 적대
+        spawnUnit(game, rule.defId, rule.neutral ? 2 : 1, sx0, yBase + (k - (n - 1) / 2) * 600);
       }
       campaignSpawnNext[i] = rule.everySec !== undefined ? campaignSpawnNext[i]! + rule.everySec : Infinity;
       campaignAlertText = `⚠ ${rule.label} 출현!`;
       campaignAlertUntil = performance.now() + 4000;
       audio.play('cast_skill', { volume: 0.9 });
+    }
+  }
+  // 캠페인: 확정 성장 — fromWave 턴부터 매 턴 적 봇 comp 에 +1 (캡 도달 시 멈춤).
+  // 출정 직전 턴에 미리 편입해 fromWave 웨이브부터 실제로 필드에 나오게 한다.
+  if (campaign && !campaignDone && !game.over && campaign.growth) {
+    for (let i = 0; i < campaign.growth.length; i++) {
+      const rule = campaign.growth[i]!;
+      const nextWave = game.waveIndex + 1; // 지금 편입하면 이 웨이브 출정분
+      if (nextWave < rule.fromWave || nextWave <= campaignGrowthWave[i]!) continue;
+      campaignGrowthWave[i] = nextWave;
+      // 총 편입 상한 (네임드는 1기) — 팀 합산 보유량으로 판정
+      if (rule.maxCount !== undefined) {
+        let have = 0;
+        for (const q of game.players) if (q.team === 1) have += q.comp[rule.defId] ?? 0;
+        if (have >= rule.maxCount) continue;
+      }
+      // 팀 합산 캡 — 가득이면 더 늘리지 않는다.
+      // 캡 0 은 "봇 구매만 금지" 의미라 growth 확정 증가는 통과한다.
+      // enemyCapsUntilWave 이후엔 봇 구매와 마찬가지로 상한이 사라진다.
+      const capsActive = game.waveIndex < game.enemyCapsUntilWave;
+      const cap = capsActive ? game.enemyUnitCaps[rule.defId] : undefined;
+      if (cap !== undefined && cap > 0) {
+        let owned = 0;
+        for (const q of game.players) if (q.team === 1) owned += q.comp[rule.defId] ?? 0;
+        if (owned >= cap) continue;
+      }
+      // 팀1 봇 중 편성이 가장 얇은 봇에게 — 진형이 한 봇에 몰리지 않게
+      const bots = game.players.filter((q) => q.team === 1);
+      let best = bots[0];
+      for (const q of bots) {
+        const size = (id: typeof q) =>
+          Object.values(id.comp).reduce((a, b) => a + (b ?? 0), 0);
+        if (best && size(q) < size(best)) best = q;
+      }
+      if (best) {
+        best.comp[rule.defId] = (best.comp[rule.defId] ?? 0) + 1;
+        if (!campaignGrowthAnnounced[i]) {
+          campaignGrowthAnnounced[i] = true;
+          campaignAlertText = `⚠ 적군에 ${rule.label} 합류!`;
+          campaignAlertUntil = performance.now() + 4000;
+          audio.play('cast_skill', { volume: 0.9 });
+        }
+      }
     }
   }
   // 캠페인: 협공 주둔지 — 살아 있는 동안 후방에서 적 부대가 쏟아진다
@@ -1171,10 +1620,27 @@ function tick(deltaMS: number): void {
   // 캠페인: survive 미션은 제한시간을 버티면 승리 (넥서스를 먼저 부숴도 승리)
   if (campaign && !campaignDone) {
     // tower 미션: 적 수호탑이 무너지는 순간 클리어
+    if (campaign.mission === 'boss' && !game.over && campaignBossId >= 0
+      && !game.entities.some((e) => e.alive && e.id === campaignBossId)) {
+      campaignFinish(true);
+      return;
+    }
     if (campaign.mission === 'tower' && !game.over
       && !game.entities.some((e) => e.alive && e.defId === 'tower' && e.team === 1)) {
       campaignFinish(true);
       return;
+    }
+    // 제한 턴 초과 = 패배. 남은 턴은 목표줄에 계속 보여 준다.
+    if (campaign.deadlineWave !== undefined && !game.over) {
+      const leftWaves = campaign.deadlineWave - game.waveIndex;
+      if (leftWaves <= 0) {
+        campaignFinish(false, `제한 ${campaign.deadlineWave}턴 초과`);
+        return;
+      }
+      if (performance.now() >= campaignAlertUntil) {
+        $('#campaign-goal').textContent =
+          `[${campaign.id}. ${campaign.title}] ${campaign.goal} — 남은 턴 ${leftWaves}`;
+      }
     }
     if (campaign.mission === 'survive' && campaign.surviveSec !== undefined) {
       const left = campaign.surviveSec - Math.floor(game.tick / TICK_HZ);
@@ -1248,12 +1714,16 @@ function updateHud(g: Game): void {
 
   for (const s of shopButtons) {
     const d = DEFS[s.defId]!;
-    const locked = techOfUnit(d) > me.techLevel;
-    s.btn.disabled = locked || me.money < d.cost;
+    const isMerc = g.mercUnits.includes(s.defId);
+    const price = isMerc ? Math.floor((d.cost * g.mercCostPct) / 100) : d.cost;
+    const locked = !isMerc && techOfUnit(d) > me.techLevel; // 용병은 테크 무관 — 돈이 곧 자격
+    const mercLocked = isMerc && g.mercCaptureRequired && g.mercOwner !== 0;
+    s.btn.disabled = locked || mercLocked || me.money < price;
     const n = me.comp[s.defId] ?? 0;
     // techOfUnit: 유닛별 techReq 오버라이드 반영 (와이번·유니콘·페어리 = 테크 3)
-    s.cnt.textContent = locked ? `🔒 테크 ${techOfUnit(d)}` : n > 0 ? `보유 ${n}` : '';
-    const upsAll = upgradesOfUnit(s.defId);
+    s.cnt.textContent = mercLocked ? '🚩 점령 필요'
+      : locked ? `🔒 테크 ${techOfUnit(d)}` : n > 0 ? `보유 ${n}` : '';
+    const upsAll = visibleUpgradesOf(s.defId);
     if (upsAll.length > 0) {
       const ownedN = upsAll.filter((u) => me.upgrades[u.id]).length;
       s.upg.textContent = `⚙ ${ownedN}/${upsAll.length}`;
@@ -1262,7 +1732,7 @@ function updateHud(g: Game): void {
   }
 
   if (openUpgradeUnit) {
-    const sig = upgradesOfUnit(openUpgradeUnit)
+    const sig = visibleUpgradesOf(openUpgradeUnit)
       .map((u) => (me.upgrades[u.id] ? 'o' : me.techLevel < u.tech ? 'l' : me.money >= u.cost ? 'a' : 'x'))
       .join('') + me.techLevel;
     if (sig !== lastUpgSig) {
@@ -1285,9 +1755,11 @@ function updateHud(g: Game): void {
   // 팀마다 인원이 다르면 출정 순번도 다르므로 내 팀 기준으로 본다
   const nextSlot = wave.slots[me.team];
   const mySlot = nextSlot === me.slot;
+  const elapsed = Math.floor(g.tick / TICK_HZ);
+  const clock = `${Math.floor(elapsed / 60)}:${String(elapsed % 60).padStart(2, '0')}`;
   $('#wave-label').textContent = isPrep
-    ? '첫 출정까지 (전원)'
-    : `다음 출정: ${nextSlot + 1}번 유저${mySlot ? ' (나!)' : ''}`;
+    ? `첫 출정까지 (전원) · ⏱${clock}`
+    : `${g.waveIndex}턴 · ⏱${clock} · 다음 출정: ${nextSlot + 1}번${mySlot ? ' (나!)' : ''}`;
   $('#wave-timer').textContent = `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, '0')}`;
   renderRoster(g); // 열려 있을 때만 그린다 (출정 차례 표시가 웨이브마다 바뀐다)
 }
@@ -1475,7 +1947,12 @@ function initSoundUi(): void {
  */
 $('#btn-quit').onclick = () => {
   const inGame = !!game && !game.over;
-  if (inGame && !confirm('게임에서 나가시겠습니까? 내 자리는 AI 가 이어받습니다.')) return;
+  const msg = isMp
+    ? '게임에서 나가시겠습니까? 내 자리는 AI 가 이어받습니다.'
+    : campaign
+      ? '스테이지를 포기하고 나가시겠습니까? 진행 상황은 저장되지 않습니다.'
+      : '게임을 끝내고 메뉴로 나가시겠습니까?';
+  if (inGame && !confirm(msg)) return;
   if (isMp) {
     net?.send({ t: 'leaveRoom' });
     sessionStorage.removeItem('dl_token');

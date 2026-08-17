@@ -5,8 +5,8 @@
  * - 유닛: 팀 컬러 점 / 구조물: 큰 사각형 / 수호자: 다이아몬드
  * - 흰 사각형 = 현재 카메라 뷰포트. 클릭·드래그로 카메라 이동.
  */
-import { DEFS, FP, MAPS, DEFAULT_MAP, laneCenterY, mapHalfH, type Game, type MapDef } from '@desertlike/sim';
-import { worldW, type Renderer } from './render.ts';
+import { DEFS, FP, MAPS, DEFAULT_MAP, laneCenterY, laneHalfWAt, mapHalfH, type Game, type MapDef } from '@desertlike/sim';
+import { worldW, worldYOf, type Renderer } from './render.ts';
 
 const MINI_W = 280;
 const TEAM_COLOR = ['#57a0ff', '#ff6a57'] as const;
@@ -38,7 +38,10 @@ export function createMinimap(canvas: HTMLCanvasElement, renderer: Renderer): Mi
   const jump = (ev: PointerEvent) => {
     const rect = canvas.getBoundingClientRect();
     const fx = (ev.clientX - rect.left) / rect.width;
-    renderer.centerOn(fx * worldW());
+    // 세로도 반영 — Y자 맵(둥지 방어)에서 12시 가지로 점프할 수 있어야 한다
+    const fy = (ev.clientY - rect.top) / rect.height;
+    const yFP = ((fy * MINI_H - 4) / scale) * FP - mapHalfH(m);
+    renderer.centerOn(fx * worldW(), worldYOf(yFP));
   };
   canvas.addEventListener('pointerdown', (ev) => {
     dragging = true;
@@ -58,11 +61,11 @@ export function createMinimap(canvas: HTMLCanvasElement, renderer: Renderer): Mi
     const forest = m.id === 'plains';
     ctx.fillStyle = forest ? '#24351f' : '#5a4630';
     ctx.fillRect(0, 0, MINI_W, MINI_H);
-    const laneHalfPx = (m.halfW / FP) * scale;
     const mid = m.length / 2;
     for (let px = 0; px < MINI_W; px++) {
       const x = Math.floor((px / scale) * FP);
       const cy = ty(laneCenterY(m, x));
+      const laneHalfPx = (laneHalfWAt(m, x) / FP) * scale; // 초크 구간은 좁게
       if (forest) {
         // 오른쪽 절반은 불탄 숲 (잿빛)
         ctx.fillStyle = x >= mid ? '#4a4038' : '#3f6b34';
@@ -73,13 +76,22 @@ export function createMinimap(canvas: HTMLCanvasElement, renderer: Renderer): Mi
       }
       ctx.fillRect(px, cy - laneHalfPx, 1, laneHalfPx * 2);
     }
+    // 가지 길 (12시 능선 등) — 코리도어와 같은 색의 세로 막대
+    for (const b of m.branches ?? []) {
+      const bw = ((b.halfW ?? m.halfW) / FP) * scale;
+      const bx = tx(b.x);
+      const y0 = ty(b.y0);
+      const y1 = ty(b.y1);
+      ctx.fillStyle = '#c7a566';
+      ctx.fillRect(bx - bw, y0, bw * 2, y1 - y0);
+    }
 
     for (const e of g.entities) {
       if (!e.alive) continue;
       const d = DEFS[e.defId]!;
       const x = tx(e.x);
       const y = ty(e.y);
-      ctx.fillStyle = TEAM_COLOR[e.team];
+      ctx.fillStyle = e.team === 2 ? '#b0a068' : TEAM_COLOR[e.team]; // 야생 = 회갈색
       if (d.tier === 'structure') {
         const s = e.defId === 'nexus' ? 7 : 5;
         ctx.fillRect(x - s / 2, y - s / 2, s, s);

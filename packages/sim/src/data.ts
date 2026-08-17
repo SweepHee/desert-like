@@ -1,5 +1,5 @@
 import { idiv, seconds, tiles, tilesPerSecond } from './math.ts';
-import type { BonusKey, EntityDef, RaceId, TeamId, Weapon } from './types.ts';
+import type { ActiveSkill, BonusKey, EntityDef, RaceId, TeamId, Weapon } from './types.ts';
 
 // ── 맵 상수 ────────────────────────────────────────────────────────────────
 export const MAP = {
@@ -64,6 +64,16 @@ export interface MapDef {
   readonly halfW: number; // FP, 코리도어 반폭
   /** 중앙선 폴리라인 [x, y][] (x 오름차순, FP). 구간은 선형 보간. */
   readonly center: readonly (readonly [number, number])[];
+  /**
+   * 수직 가지 길 (Y자형 맵): x 고정, y0~y1 구간의 코리도어 (폭 = halfW).
+   * 12시 방향처럼 메인 레인에 수직으로 붙는 길. 유닛 통행·타일 렌더 모두 인식한다.
+   */
+  readonly branches?: readonly { readonly x: number; readonly y0: number; readonly y1: number; readonly halfW?: number }[];
+  /**
+   * 좁은 입구(초크 포인트): x 구간의 레인 반폭 오버라이드.
+   * 수비하기 좋은 병목 — 적이 좁은 길을 비집고 들어온다.
+   */
+  readonly chokes?: readonly { readonly x0: number; readonly x1: number; readonly halfW: number }[];
   readonly nexusX: readonly [number, number];
   readonly towerX: readonly [number, number];
   readonly spawnX: readonly [number, number];
@@ -106,6 +116,61 @@ export const MAPS: Record<string, MapDef> = {
     towerX: [tiles(24), tiles(72)],
     spawnX: [tiles(13), tiles(83)],
   },
+  greedvalley: {
+    id: 'greedvalley',
+    // 캠페인 「탐욕의 계곡」: 중앙에 마몬의 상점이 있는 긴 협곡.
+    // 진영에서 중앙까지 멀어 점령전이 치열해진다 (길이 128 — 표준의 1.33배).
+    name: '탐욕의 계곡',
+    length: tiles(128),
+    halfW: tiles(6),
+    center: [
+      [0, 0], [tiles(40), 0],
+      [tiles(52), tiles(9)], [tiles(76), tiles(9)],
+      [tiles(88), 0], [tiles(128), 0],
+    ],
+    nexusX: [tiles(4), tiles(124)],
+    towerX: [tiles(30), tiles(98)],
+    spawnX: [tiles(17), tiles(111)],
+  },
+  nest: {
+    id: 'nest',
+    // 캠페인 「둥지 방어」: Y자형 맵 — 정중앙 둥지(= 내 넥서스)로 세 갈래 길이 모인다.
+    // 8시(왼쪽 아래)·4시(오른쪽 아래)는 V자 메인 레인, 12시는 위로 뻗은 수직 가지.
+    // 12시 가지 길이(40타일)는 중앙~4시 끝 거리와 맞먹는다.
+    name: '바람의 둥지',
+    length: tiles(96),
+    halfW: tiles(5),
+    center: [
+      [0, tiles(14)], [tiles(40), tiles(3)],
+      [tiles(48), 0],
+      [tiles(56), tiles(3)], [tiles(96), tiles(14)],
+    ],
+    branches: [{ x: tiles(48), y0: tiles(-40), y1: 0, halfW: tiles(3) }],
+    // 언덕 입구: 좌우 진입로가 2.2타일 폭으로 좁아진다 — 수비 병목
+    chokes: [
+      { x0: tiles(39), x1: tiles(44), halfW: tiles(2.2) },
+      { x0: tiles(52), x1: tiles(57), halfW: tiles(2.2) },
+    ],
+    nexusX: [tiles(48), tiles(95)],
+    towerX: [tiles(60), tiles(86)],
+    spawnX: [tiles(43), tiles(91)],
+  },
+  confluence: {
+    id: 'confluence',
+    // 캠페인 12 「탐욕의 계곡 — 결전」: 두 갈래 길이 하나로 합쳐져
+    // 발타르군 요새로 이어진다. 위 갈래 = 앨리스 군단, 아래 = 플레이어.
+    name: '합류점',
+    length: tiles(96),
+    halfW: tiles(5),
+    center: [
+      [0, tiles(7)], [tiles(24), tiles(7)],
+      [tiles(34), 0], [tiles(96), 0],
+    ],
+    branches: [{ x: tiles(30), y0: tiles(-16), y1: 0, halfW: tiles(4) }],
+    nexusX: [tiles(5), tiles(93)],
+    towerX: [tiles(40), tiles(74)],
+    spawnX: [tiles(12), tiles(86)],
+  },
 };
 
 export const DEFAULT_MAP = 'plains';
@@ -132,15 +197,40 @@ export function mapHalfH(m: MapDef): number {
     const a = y < 0 ? -y : y;
     if (a > maxAbs) maxAbs = a;
   }
+  for (const b of m.branches ?? []) {
+    const a0 = b.y0 < 0 ? -b.y0 : b.y0;
+    const a1 = b.y1 < 0 ? -b.y1 : b.y1;
+    if (a0 > maxAbs) maxAbs = a0;
+    if (a1 > maxAbs) maxAbs = a1;
+  }
   return maxAbs + m.halfW;
 }
 
 /** 코리도어 안으로 y 클램프. */
+/** x 지점의 메인 레인 반폭 — 초크 구간이면 좁아진다. */
+export function laneHalfWAt(m: MapDef, x: number): number {
+  for (const ck of m.chokes ?? []) {
+    if (x >= ck.x0 && x <= ck.x1) return ck.halfW;
+  }
+  return m.halfW;
+}
+
 export function clampLaneY(m: MapDef, x: number, y: number): number {
   const c = laneCenterY(m, x);
-  const lo = c - m.halfW;
-  const hi = c + m.halfW;
-  return y < lo ? lo : y > hi ? hi : y;
+  const hw = laneHalfWAt(m, x);
+  const lo = c - hw;
+  const hi = c + hw;
+  const mainY = y < lo ? lo : y > hi ? hi : y;
+  // 가지 길: x가 가지 폭 안이고, 가지 클램프 결과가 원래 y에 더 가깝다면 가지에 남는다
+  for (const b of m.branches ?? []) {
+    const bw = b.halfW ?? m.halfW;
+    if (x < b.x - bw || x > b.x + bw) continue;
+    const by = y < b.y0 ? b.y0 : y > b.y1 ? b.y1 : y;
+    const dMain = mainY > y ? mainY - y : y - mainY;
+    const dBr = by > y ? by - y : y - by;
+    if (dBr < dMain) return by;
+  }
+  return mainY;
 }
 
 /** 티어별 요구 테크 레벨. 1 = 시작부터, 2 = 중급 테크, 3 = 고급 테크. */
@@ -182,6 +272,7 @@ export const ZONE_DEFS: Record<string, {
 }> = {
   thorns: { dps: 8 },                // 가시밭 — 지속피해 전담 (둔화는 포자 구름의 몫)
   spores: { slow: true },            // 포자 구름
+  balm: { slow: true, healBioPerSec: 8 }, // 치유 포자 — 적은 둔화, 아군 생체는 회복
   forest: {},                        // 숲의 영역 — 효과는 FOREST_BUFFS (유닛별)
   grave: { dps: 14, pull: 90 },      // 사후의 경계 — 중앙으로 끌려오며 갉인다
   blaze: { dps: 34 },                // 블레이즈 — 불구덩이, 세이지 전용 고화력 장판
@@ -271,6 +362,8 @@ reg(D({
   weapon: { damage: 10, bonus: { cloth: 5 }, cooldown: seconds(0.8), range: tiles(0.4), targets: 'ground' },
 }));
 reg(D({
+  // 성별 태그 없음: 스프라이트 변형이 여/남 둘 다라 개체마다 갈린다
+  // (사망 음성은 render.ts 가 변형 인덱스로 판정)
   id: 's_elf_archer', race: 'sylvarin', name: '엘프 궁수', tier: 'basic',
   cost: 60, supply: 1, maxHp: 90, armor: 0, tags: ['cloth', 'bio'], ...GROUND,
   speed: tilesPerSecond(1.9), radius: tiles(0.3), acquireRange: tiles(6),
@@ -287,7 +380,7 @@ reg(D({
 }));
 reg(D({
   id: 's_vine_hunter', race: 'sylvarin', name: '덩굴 사냥꾼', tier: 'mid',
-  cost: 150, supply: 2, maxHp: 180, armor: 1, tags: ['leather', 'bio'], ...GROUND,
+  cost: 150, supply: 2, maxHp: 180, armor: 1, tags: ['leather', 'bio', 'female'], ...GROUND,
   speed: tilesPerSecond(3.4), radius: tiles(0.34), acquireRange: tiles(6),
   // 참격 (쌍단검): 천 카운터 — 후방 암살 정체성
   weapon: { damage: 24, bonus: { cloth: 12 }, cooldown: seconds(0.7), range: tiles(0.5), targets: 'ground' },
@@ -301,7 +394,7 @@ reg(D({
 }));
 reg(D({
   id: 's_druid', race: 'sylvarin', name: '드루이드', tier: 'mid',
-  cost: 160, supply: 2, maxHp: 100, armor: 0, tags: ['cloth', 'bio'], ...GROUND,
+  cost: 160, supply: 2, maxHp: 100, armor: 0, tags: ['cloth', 'bio', 'female'], ...GROUND,
   speed: tilesPerSecond(1.7), radius: tiles(0.3), acquireRange: tiles(6),
   // 마법: 판금 카운터. 「정화의 빛」(신성, 대망자)은 업그레이드
   // 생명 회복은 생체 전용 — 망자·기물은 회복 불가 (기물은 수리로만)
@@ -321,7 +414,7 @@ reg(D({
 }));
 reg(D({
   id: 's_thorn_witch', race: 'sylvarin', name: '가시 마녀', tier: 'high',
-  cost: 300, supply: 3, maxHp: 140, armor: 0, tags: ['cloth', 'bio'], ...GROUND,
+  cost: 300, supply: 3, maxHp: 140, armor: 0, tags: ['cloth', 'bio', 'female'], ...GROUND,
   speed: tilesPerSecond(1.7), radius: tiles(0.3), acquireRange: tiles(6),
   // 저주 (가시): 생체 카운터. 착탄 지점에 가시밭 장판 (지속피해 + 둔화)
   // 사거리 5→ 마리오네타 원거리(4.5)가 접근 교전 가능하도록 아웃레인지 축소
@@ -367,7 +460,7 @@ reg(D({
 }));
 reg(D({
   id: 's_marksman', race: 'sylvarin', name: '숲의 명궁', tier: 'supreme',
-  cost: 440, supply: 5, maxHp: 240, armor: 1, tags: ['cloth', 'bio'], ...GROUND,
+  cost: 440, supply: 5, maxHp: 240, armor: 1, tags: ['cloth', 'bio', 'female'], ...GROUND,
   speed: tilesPerSecond(1.8), radius: tiles(0.34), acquireRange: tiles(9),
   // 사거리 9 = 기본 원거리 표준(4.5)의 2배. 유리몸 대공 특화 —
   // 공중 목표에는 화살이 갈라져 사거리 안 공중 적을 무조건 3기 동시 타격.
@@ -376,7 +469,7 @@ reg(D({
 }));
 reg(D({
   id: 's_sage', race: 'sylvarin', name: '세이지', tier: 'final',
-  cost: 1500, supply: 7, maxHp: 620, armor: 1, tags: ['cloth', 'bio'], ...GROUND,
+  cost: 1500, supply: 7, maxHp: 620, armor: 1, tags: ['cloth', 'bio', 'male'], ...GROUND,
   speed: tilesPerSecond(1.3), radius: tiles(0.42), acquireRange: tiles(12),
   // 사거리 12 ≈ 일반 원거리(4.5)의 약 3배 — 최후방 마법 포대.
   // 평타(비전 화살)는 견제 수준이고 본체는 마법 4종.
@@ -439,7 +532,7 @@ reg(D({
 }));
 reg(D({
   id: 's_fairy', race: 'sylvarin', name: '페어리', tier: 'air', techReq: 3,
-  cost: 300, supply: 3, maxHp: 200, armor: 0, tags: ['cloth', 'bio'], flying: true,
+  cost: 300, supply: 3, maxHp: 200, armor: 0, tags: ['cloth', 'bio', 'female'], flying: true,
   speed: tilesPerSecond(2.2), radius: tiles(0.3), acquireRange: tiles(7),
   // 후방 공성: 사거리가 길고 구조물에 특히 강하다
   weapon: { damage: 38, bonus: { structure: 30, plate: 12 }, cooldown: seconds(2.0), range: tiles(6.5), targets: 'both' },
@@ -453,7 +546,7 @@ reg(D({
 
 reg(D({
   id: 'p_deadman', race: 'pandemonium', name: '망자병', tier: 'basic',
-  cost: 45, supply: 1, maxHp: 170, armor: 1, tags: ['leather', 'undead'], ...GROUND,
+  cost: 45, supply: 1, maxHp: 170, armor: 1, tags: ['leather', 'undead', 'male'], ...GROUND,
   speed: tilesPerSecond(1.7), radius: tiles(0.32), acquireRange: tiles(5),
   // 참격 (녹슨 검): 천 카운터
   weapon: { damage: 13, bonus: { cloth: 6 }, cooldown: seconds(1.0), range: tiles(0.4), targets: 'ground', lifestealPct: 10 },
@@ -501,7 +594,7 @@ reg(D({
 }));
 reg(D({
   id: 'p_banshee', race: 'pandemonium', name: '밴시', tier: 'air', techReq: 3,
-  cost: 300, supply: 3, maxHp: 220, armor: 0, tags: ['cloth', 'undead'], flying: true,
+  cost: 300, supply: 3, maxHp: 220, armor: 0, tags: ['cloth', 'undead', 'female'], flying: true,
   speed: tilesPerSecond(2.6), radius: tiles(0.36), acquireRange: tiles(5.5),
   // 저주 (절규): 생체 카운터 + 단일 대상 둔화 (테크 3 공중)
   // 광역이던 시절엔 같은 값 물량을 일방적으로 쓸어버려서 단일 대상으로 되돌렸다.
@@ -509,7 +602,7 @@ reg(D({
 }));
 reg(D({
   id: 'p_thanatos', race: 'pandemonium', name: '타나토스', tier: 'high',
-  cost: 380, supply: 5, maxHp: 460, armor: 2, tags: ['plate', 'undead'], ...GROUND,
+  cost: 380, supply: 5, maxHp: 460, armor: 2, tags: ['plate', 'undead', 'male'], ...GROUND,
   speed: tilesPerSecond(2.0), radius: tiles(0.5), acquireRange: tiles(6),
   // 참격 (불타는 낫): 천 카운터 + 거대 처형자
   weapon: { damage: 64, bonus: { cloth: 32, massive: 48 }, cooldown: seconds(1.4), range: tiles(1.2), targets: 'ground', splash: tiles(1.0) },
@@ -581,7 +674,7 @@ reg(D({
 
 reg(D({
   id: 'p_lich', race: 'pandemonium', name: '리치', tier: 'mid',
-  cost: 260, supply: 3, maxHp: 210, armor: 0, tags: ['cloth', 'undead'], ...GROUND,
+  cost: 260, supply: 3, maxHp: 210, armor: 0, tags: ['cloth', 'undead', 'male'], ...GROUND,
   speed: tilesPerSecond(1.6), radius: tiles(0.34), acquireRange: tiles(6),
   // 평타는 약하고 마법으로 싸운다
   weapon: { damage: 8, cooldown: seconds(1.5), range: tiles(4.5), targets: 'both' },
@@ -602,8 +695,12 @@ reg(D({
   id: 'p_demilich', race: 'pandemonium', name: '데미리치', tier: 'supreme',
   cost: 520, supply: 5, maxHp: 540, armor: 2, tags: ['cloth', 'undead'], flying: true,
   speed: tilesPerSecond(2.2), radius: tiles(0.46), acquireRange: tiles(6),
-  // 공중 마법 딜러 — 평타도 제법 아프다
-  weapon: { damage: 38, bonus: { bio: 19 }, cooldown: seconds(1.2), range: tiles(4.5), targets: 'both' },
+  // 대공 광역 마법 딜러: 공중 타겟을 때리면 주변 공중까지 함께 태운다.
+  // 지상엔 단일 타격 — 공중 물량(올빼미·페니와이즈류)의 명확한 카운터.
+  weapon: {
+    damage: 38, bonus: { bio: 19 }, cooldown: seconds(1.2), range: tiles(4.5), targets: 'both',
+    splash: tiles(1.4), splashAirOnly: true,
+  },
   actives: [
     {
       name: '망자의 만찬', desc: '아주 넓은 범위 마법 (딜은 낮음)', kind: 'nuke',
@@ -618,7 +715,7 @@ reg(D({
 
 reg(D({
   id: 'p_mammon', race: 'pandemonium', name: '마몬', tier: 'final',
-  cost: 570, supply: 7, maxHp: 1150, armor: 3, tags: ['plate', 'massive', 'undead'], ...GROUND,
+  cost: 570, supply: 7, maxHp: 1150, armor: 3, tags: ['plate', 'massive', 'undead', 'male'], ...GROUND,
   speed: tilesPerSecond(1.4), radius: tiles(0.7), acquireRange: tiles(6),
   // 충격 (대검 강타): 판금 카운터 + 흡혈 광역
   weapon: { damage: 72, bonus: { plate: 36 }, cooldown: seconds(1.3), range: tiles(0.9), targets: 'ground', splash: tiles(0.9), lifestealPct: 30 },
@@ -646,7 +743,7 @@ reg(D({
 }));
 reg(D({
   id: 'm_clockwork_soldier', race: 'marionetta', name: '태엽 병정', tier: 'basic',
-  cost: 60, supply: 1, maxHp: 90, armor: 1, tags: ['plate', 'construct'], ...GROUND,
+  cost: 60, supply: 1, maxHp: 90, armor: 1, tags: ['plate', 'construct', 'male'], ...GROUND,
   speed: tilesPerSecond(1.8), radius: tiles(0.3), acquireRange: tiles(6),
   // 관통 (탄환): 가죽 카운터 + 사냥탄 (대생체) — 양철 = 판금
   weapon: { damage: 10, bonus: { leather: 5, bio: 4 }, cooldown: seconds(0.9), range: tiles(4.5), targets: 'both' },
@@ -659,7 +756,7 @@ reg(D({
 }));
 reg(D({
   id: 'm_button_doll', race: 'marionetta', name: '단추 인형', tier: 'basic',
-  cost: 80, supply: 1, maxHp: 90, armor: 0, tags: ['cloth', 'construct'], ...GROUND,
+  cost: 80, supply: 1, maxHp: 90, armor: 0, tags: ['cloth', 'construct', 'female'], ...GROUND,
   speed: tilesPerSecond(1.8), radius: tiles(0.3), acquireRange: tiles(6),
   // 「긴급 봉합」 (수리 — 망자는 수리 불가)
   heal: { amount: 8, cooldown: seconds(1.2), range: tiles(3.5), excludeTags: ['undead'] },
@@ -680,7 +777,7 @@ reg(D({
 }));
 reg(D({
   id: 'm_clown_doll', race: 'marionetta', name: '광대 인형', tier: 'mid',
-  cost: 190, supply: 2, maxHp: 300, armor: 1, tags: ['cloth', 'construct'], ...GROUND,
+  cost: 190, supply: 2, maxHp: 300, armor: 1, tags: ['cloth', 'construct', 'male'], ...GROUND,
   speed: tilesPerSecond(2.0), radius: tiles(0.4), acquireRange: tiles(5),
   // 충격 (대형 망치): 판금·거대 카운터 겸직 + 광역
   weapon: { damage: 32, bonus: { plate: 24, massive: 24 }, cooldown: seconds(1.4), range: tiles(0.7), targets: 'ground', splash: tiles(1.1) },
@@ -692,7 +789,7 @@ reg(D({
 }));
 reg(D({
   id: 'm_cursed_doll', race: 'marionetta', name: '저주받은 인형', tier: 'high',
-  cost: 290, supply: 3, maxHp: 260, armor: 1, tags: ['leather', 'construct'], ...GROUND,
+  cost: 290, supply: 3, maxHp: 260, armor: 1, tags: ['leather', 'construct', 'male'], ...GROUND,
   speed: tilesPerSecond(3.3), radius: tiles(0.34), acquireRange: tiles(6),
   // 참격 (식칼): 천 카운터 — 유리몸 후방 학살
   weapon: { damage: 34, bonus: { cloth: 17, bio: 18 }, cooldown: seconds(0.8), range: tiles(0.5), targets: 'ground' },
@@ -708,7 +805,7 @@ reg(D({
 }));
 reg(D({
   id: 'm_puppet_ann', race: 'marionetta', name: '꼭두각시 앤', tier: 'air',
-  cost: 300, supply: 3, maxHp: 220, armor: 0, tags: ['cloth', 'construct'], flying: true,
+  cost: 300, supply: 3, maxHp: 220, armor: 0, tags: ['cloth', 'construct', 'female'], flying: true,
   speed: tilesPerSecond(2.8), radius: tiles(0.42), acquireRange: tiles(6),
   // 마법 (실): 판금 카운터 + 둔화
   weapon: { damage: 26, bonus: { plate: 20 }, cooldown: seconds(1.2), range: tiles(4.5), targets: 'both', slowTicks: seconds(2) },
@@ -733,7 +830,12 @@ reg(D({
   id: 'm_pennywise', race: 'marionetta', name: '페니와이즈', tier: 'air', techReq: 3,
   cost: 300, supply: 3, maxHp: 310, armor: 1, tags: ['cloth', 'construct'], flying: true,
   speed: tilesPerSecond(2.5), radius: tiles(0.45), acquireRange: tiles(5.5),
-  weapon: { damage: 16, cooldown: seconds(1.1), range: tiles(3.5), targets: 'both', splash: tiles(1.1) },
+  // 터지는 풍선: 공중을 때리면 주변 공중까지 함께 터진다(대공 광역).
+  // 지상에는 단일 타격 — 대공 요격기 포지션이 분명해진다.
+  weapon: {
+    damage: 16, cooldown: seconds(1.1), range: tiles(3.5), targets: 'both',
+    splash: tiles(1.1), splashAirOnly: true,
+  },
 }));
 reg(D({
   // 떠다니는 실뭉치 — 초장거리 바늘 공성 (공중은 못 찌른다)
@@ -752,7 +854,8 @@ reg(D({
   // 톱니 파편 소범위 광역 — 유틸(공포)만으로는 최상급 몸값이 안 나온다
   weapon: { damage: 58, bonus: { plate: 26 }, cooldown: seconds(1.3), range: tiles(5.5), targets: 'both', splash: tiles(0.9) },
   actives: [{
-    name: '자정의 종소리', desc: '적 원거리 유닛 최우선으로 넓은 지역에 공포 — 6초간 달아남 (쿨 25초)', kind: 'fear',
+    name: '자정의 종소리', desc: '적 원거리 유닛 최우선으로 넓은 지역에 공포 — 6초간 달아남, 최대 6기 (쿨 25초)', kind: 'fear',
+    maxTargets: 6,
     cooldown: seconds(25), durTicks: seconds(6), castRange: tiles(5.5), splash: tiles(2.5),
   }],
 }));
@@ -776,7 +879,7 @@ reg(D({
 }));
 reg(D({
   id: 'm_alice', race: 'marionetta', name: '인형사 앨리스', tier: 'final',
-  cost: 1350, supply: 7, maxHp: 950, armor: 2, tags: ['cloth', 'bio'], ...GROUND,
+  cost: 1350, supply: 7, maxHp: 950, armor: 2, tags: ['cloth', 'bio', 'female'], ...GROUND,
   speed: tilesPerSecond(1.6), radius: tiles(0.42), acquireRange: tiles(6),
   // 마법 (조종 실): 판금 카운터 + 둔화 + 수리. 유일한 인간 (생체!)
   weapon: { damage: 52, bonus: { plate: 26 }, cooldown: seconds(1.2), range: tiles(5.5), targets: 'both', slowTicks: seconds(1.5) },
@@ -793,6 +896,145 @@ reg(D({
     {
       name: '인형의 실', desc: '적 중급 이상 유닛 하나를 영구히 아군으로 — 티어 높은 순 우선 (업그레이드 필요)', kind: 'charm',
       cooldown: seconds(45), castRange: tiles(6), requiresUpgrade: 'mu_alice_charm',
+    },
+  ],
+}));
+
+// ── 마몬의 용병 (캠페인 「탐욕의 계곡」 상점 판매 품목) ──────────────────
+// 원본 판데모니엄 유닛의 복제 — 독립 유닛이라 스펙을 따로 조정할 수 있다.
+// summonOnly: 대전 상점·봇 자연 생산에는 절대 노출되지 않는다.
+reg(D({
+  id: 'merc_headless_knight', race: 'pandemonium', name: '마몬의 목없는 기사', tier: 'mid', summonOnly: true,
+  // 원본(190)보다 10% 저렴 — 점령한 쪽의 확실한 이득 (적도 원본 대신 이걸 사면 이득)
+  cost: 171, supply: 2, maxHp: 420, armor: 2, tags: ['plate', 'undead'], ...GROUND,
+  speed: tilesPerSecond(2.5), radius: tiles(0.44), acquireRange: tiles(6),
+  weapon: { damage: 36, bonus: { cloth: 18 }, cooldown: seconds(1.0), range: tiles(0.6), targets: 'ground', lifestealPct: 15 },
+  actives: [{
+    name: '참수', desc: '체력 40% 이하의 적에게 강력한 일격', kind: 'strike',
+    cooldown: seconds(12), damage: 50, executeBelowPct: 40, executeBonus: 70,
+  }],
+}));
+reg(D({
+  id: 'merc_lich', race: 'pandemonium', name: '마몬의 리치', tier: 'mid', summonOnly: true,
+  // 원본(260) -10%
+  cost: 234, supply: 3, maxHp: 210, armor: 0, tags: ['cloth', 'undead', 'male'], ...GROUND,
+  speed: tilesPerSecond(1.6), radius: tiles(0.34), acquireRange: tiles(6),
+  weapon: { damage: 8, cooldown: seconds(1.5), range: tiles(4.5), targets: 'both' },
+  actives: [
+    {
+      name: '지옥불', desc: '범위 마법 — 주변 적을 한꺼번에 태운다', kind: 'nuke',
+      cooldown: seconds(11), damage: 30, splash: tiles(1.5), castRange: tiles(5), fxZone: 'hellfire',
+    },
+    {
+      name: '화염구', desc: '단일 마법 — 체력이 가장 많은 적을 노린다', kind: 'nuke',
+      cooldown: seconds(9), damage: 50, castRange: tiles(5), targetMode: 'highestHp', fxZone: 'fireburst',
+    },
+  ],
+}));
+reg(D({
+  id: 'merc_thanatos', race: 'pandemonium', name: '마몬의 타나토스', tier: 'high', summonOnly: true,
+  // 원본(380) -10%
+  cost: 342, supply: 5, maxHp: 460, armor: 2, tags: ['plate', 'undead', 'male'], ...GROUND,
+  speed: tilesPerSecond(2.0), radius: tiles(0.5), acquireRange: tiles(6),
+  weapon: { damage: 64, bonus: { cloth: 32, massive: 48 }, cooldown: seconds(1.4), range: tiles(1.2), targets: 'ground', splash: tiles(1.0) },
+  actives: [{
+    name: '사신의 낫', desc: '체력 35% 이하의 적 주변을 낫으로 쓸어 광역 처형', kind: 'strike',
+    cooldown: seconds(14), damage: 55, splash: tiles(1.4), executeBelowPct: 35, executeBonus: 55,
+  }],
+}));
+
+// ── 11스테이지 「둥지 방어」 전용 ──────────────────────────────────────────
+// 둥지 수호탑: 제자리에 고정된 공중 수호수 — 평타만 하는 타워.
+// 무적은 캠페인 레이어가 스폰 직후 부여한다 (invulnUntil).
+reg(D({
+  id: 'c_nest_wyvern', race: null, name: '둥지의 와이번', tier: 'air', summonOnly: true,
+  cost: 0, supply: 0, maxHp: 430, armor: 2, tags: ['leather', 'bio'], flying: true,
+  speed: 0, radius: tiles(0.5), acquireRange: tiles(6),
+  weapon: { damage: 42, bonus: { leather: 21 }, cooldown: seconds(1.1), range: tiles(4.5), targets: 'both' },
+}));
+reg(D({
+  id: 'c_nest_unicorn', race: null, name: '둥지의 유니콘', tier: 'air', summonOnly: true,
+  cost: 0, supply: 0, maxHp: 380, armor: 2, tags: ['leather', 'bio'], flying: true,
+  speed: 0, radius: tiles(0.46), acquireRange: tiles(6),
+  weapon: { damage: 22, cooldown: seconds(1.0), range: tiles(4.5), targets: 'both' },
+}));
+reg(D({
+  id: 'c_nest_fairy', race: null, name: '둥지의 페어리', tier: 'air', summonOnly: true,
+  cost: 0, supply: 0, maxHp: 200, armor: 0, tags: ['cloth', 'bio', 'female'], flying: true,
+  speed: 0, radius: tiles(0.3), acquireRange: tiles(7),
+  weapon: { damage: 38, bonus: { plate: 12 }, cooldown: seconds(2.0), range: tiles(6.5), targets: 'both' },
+}));
+
+// 야생 무리 (중립 연출 — 절반은 아군 팀, 절반은 적 팀으로 스폰돼 서로도 싸운다)
+reg(D({
+  id: 'c_wild_wolf_gray', race: null, name: '회색늑대', tier: 'basic', summonOnly: true,
+  cost: 0, supply: 0, maxHp: 140, armor: 0, tags: ['leather', 'bio'], ...GROUND,
+  speed: tilesPerSecond(3.0), radius: tiles(0.34), acquireRange: tiles(6),
+  weapon: { damage: 14, cooldown: seconds(0.8), range: tiles(0.4), targets: 'ground' },
+}));
+reg(D({
+  id: 'c_wild_snake', race: null, name: '뱀', tier: 'basic', summonOnly: true,
+  cost: 0, supply: 0, maxHp: 100, armor: 0, tags: ['cloth', 'bio'], ...GROUND,
+  speed: tilesPerSecond(2.2), radius: tiles(0.3), acquireRange: tiles(5),
+  // 독니: 3초간 초당 6 중독
+  weapon: { damage: 8, cooldown: seconds(1.0), range: tiles(0.4), targets: 'ground', dotDps: 6, dotTicks: seconds(3) },
+}));
+reg(D({
+  id: 'c_wild_wolf_black', race: null, name: '검은늑대', tier: 'mid', summonOnly: true,
+  cost: 0, supply: 0, maxHp: 240, armor: 1, tags: ['leather', 'bio'], ...GROUND,
+  speed: tilesPerSecond(3.2), radius: tiles(0.36), acquireRange: tiles(6),
+  weapon: { damage: 24, cooldown: seconds(0.8), range: tiles(0.45), targets: 'ground' },
+}));
+reg(D({
+  id: 'c_wild_tarantula', race: null, name: '타란튤라', tier: 'mid', summonOnly: true,
+  cost: 0, supply: 0, maxHp: 220, armor: 1, tags: ['leather', 'bio'], ...GROUND,
+  speed: tilesPerSecond(2.4), radius: tiles(0.4), acquireRange: tiles(5.5),
+  // 독+거미줄: 중독에 30% 확률 1초 속박
+  weapon: { damage: 16, cooldown: seconds(1.1), range: tiles(0.5), targets: 'ground', dotDps: 8, dotTicks: seconds(3), rootTicks: seconds(1), rootChance: 30 },
+}));
+reg(D({
+  id: 'c_wild_kestrel', race: null, name: '황조롱이', tier: 'mid', summonOnly: true,
+  cost: 0, supply: 0, maxHp: 160, armor: 0, tags: ['cloth', 'bio'], flying: true,
+  speed: tilesPerSecond(3.6), radius: tiles(0.36), acquireRange: tiles(6.5),
+  weapon: { damage: 18, cooldown: seconds(0.9), range: tiles(0.6), targets: 'both' },
+}));
+reg(D({
+  id: 'c_wild_bear_gray', race: null, name: '회색곰', tier: 'mid', summonOnly: true,
+  cost: 0, supply: 0, maxHp: 520, armor: 2, tags: ['leather', 'massive', 'bio'], ...GROUND,
+  speed: tilesPerSecond(1.8), radius: tiles(0.52), acquireRange: tiles(5),
+  weapon: { damage: 26, cooldown: seconds(1.2), range: tiles(0.6), targets: 'ground' },
+}));
+reg(D({
+  id: 'c_wild_direwolf', race: null, name: '다이어울프', tier: 'high', summonOnly: true,
+  cost: 0, supply: 0, maxHp: 420, armor: 1, tags: ['leather', 'bio'], ...GROUND,
+  speed: tilesPerSecond(3.4), radius: tiles(0.42), acquireRange: tiles(6.5),
+  weapon: { damage: 40, cooldown: seconds(0.9), range: tiles(0.5), targets: 'ground' },
+}));
+reg(D({
+  id: 'c_wild_grizzly', race: null, name: '그리즐리베어', tier: 'high', summonOnly: true,
+  cost: 0, supply: 0, maxHp: 900, armor: 3, tags: ['leather', 'massive', 'bio'], ...GROUND,
+  speed: tilesPerSecond(1.7), radius: tiles(0.6), acquireRange: tiles(5),
+  weapon: { damage: 55, cooldown: seconds(1.5), range: tiles(0.7), targets: 'ground', splash: tiles(0.8) },
+}));
+reg(D({
+  // 하늘의 왕 — 둥지 방어전의 준보스. 한 번은 반드시 되살아난다.
+  id: 'c_wild_blackbird', race: null, name: '검은새', tier: 'supreme', summonOnly: true,
+  cost: 0, supply: 0, maxHp: 3200, armor: 4, tags: ['leather', 'massive', 'bio'], flying: true,
+  speed: tilesPerSecond(2.6), radius: tiles(0.8), acquireRange: tiles(7.5),
+  weapon: { damage: 85, cooldown: seconds(1.2), range: tiles(1.2), targets: 'both', splash: tiles(1.2) },
+  rebirth: { delayTicks: seconds(3), hpPct: 60 },
+  actives: [
+    {
+      name: '강철 깃털', desc: '깃털을 곤두세워 8초간 방어력이 50이 된다', kind: 'selfbuff',
+      cooldown: seconds(22), durTicks: seconds(8), armorAdd: 46,
+    },
+    {
+      name: '깃털 폭풍', desc: '주변에 깃털을 흩뿌려 광역 피해', kind: 'nuke',
+      cooldown: seconds(9), damage: 45, splash: tiles(2.2), castRange: tiles(5),
+    },
+    {
+      name: '암흑 구체', desc: '검은 거대 구체 — 가장 체력이 높은 적을 노린다', kind: 'nuke',
+      cooldown: seconds(14), damage: 110, splash: tiles(1.2), castRange: tiles(6), targetMode: 'highestHp', fxZone: 'feast',
     },
   ],
 }));
@@ -823,11 +1065,39 @@ reg(D({
   weapon: { damage: 80, bonus: { construct: 40 }, cooldown: seconds(0.9), range: tiles(3), targets: 'both', splash: tiles(1.7) },
 }));
 reg(D({
+  // 2막 마리오네타 수호자: 여왕이 특별히 지어 올린 근위 곰인형.
+  // 지상 근접이지만 낮게 나는 것도 낚아챈다(대공) — 광역 포옹으로 웨이브를 으깬다.
+  id: 'teddy_guardian', race: null, name: '특제 대형 곰인형', tier: 'guardian',
+  cost: 0, supply: 0, maxHp: 5200, armor: 4, tags: ['leather', 'massive', 'construct'], ...GROUND,
+  speed: tilesPerSecond(2.0), radius: tiles(0.9), acquireRange: tiles(8), leashed: true,
+  weapon: { damage: 85, bonus: { bio: 40 }, cooldown: seconds(0.9), range: tiles(1.3), targets: 'both', splash: tiles(1.7) },
+}));
+reg(D({
   id: 'hollow', race: null, name: '슬리피 할로우', tier: 'guardian',
   cost: 0, supply: 0, maxHp: 4500, armor: 3, tags: ['plate', 'massive', 'undead'], flying: true,
   // 저주 참격: 생체 카운터 (실바린에게 위협적인 수호자) — 광역
   speed: tilesPerSecond(2.0), radius: tiles(0.8), acquireRange: tiles(8), leashed: true,
   weapon: { damage: 70, bonus: { bio: 35 }, cooldown: seconds(0.9), range: tiles(3), targets: 'both', splash: tiles(1.7) },
+}));
+
+reg(D({
+  // 캠페인 12 보스 — 발타르가 아끼는 선봉장. 슬리피 할로우급 거구에 그 이상의 힘.
+  // 요새 앞을 지키며(leashed) 접근하는 모든 것을 소울파이어 대검으로 갈라 버린다.
+  id: 'c_balthar_general', race: null, name: '사령장군 카르가스', tier: 'guardian', summonOnly: true,
+  cost: 0, supply: 0, maxHp: 14000, armor: 6, tags: ['plate', 'massive', 'undead'], ...GROUND,
+  speed: tilesPerSecond(1.6), radius: tiles(1.0), acquireRange: tiles(8), leashed: true,
+  weapon: { damage: 120, bonus: { bio: 40 }, cooldown: seconds(1.1), range: tiles(1.6), targets: 'both', splash: tiles(1.9) },
+  actives: [
+    {
+      name: '사령 참격', desc: '대검을 내리쳐 전방을 소울파이어로 가른다', kind: 'nuke',
+      cooldown: seconds(10), damage: 70, splash: tiles(2.4), castRange: tiles(5), fxZone: 'hellfire',
+    },
+    {
+      name: '망자 소집', desc: '쓰러진 자들을 일으켜 세운다 (구울·스켈레톤 3기)',
+      kind: 'summon', cooldown: seconds(18), summonCount: 3,
+      summonIds: ['p_minion_ghoul', 'p_minion_skeleton', 'p_minion_undead'],
+    },
+  ],
 }));
 
 // ── 캠페인 전용 특수 유닛 ──────────────────────────────────────────────────
@@ -843,7 +1113,7 @@ reg(D({
 reg(D({
   // 2막 엘리트: 실이 끊긴 발레리나 — 고속 난도질 + 둔화
   id: 'c_mad_ballerina', race: null, name: '미친 발레리나', tier: 'high', summonOnly: true,
-  cost: 0, supply: 0, maxHp: 640, armor: 2, tags: ['leather', 'construct'], ...GROUND,
+  cost: 0, supply: 0, maxHp: 640, armor: 2, tags: ['leather', 'construct', 'female'], ...GROUND,
   speed: tilesPerSecond(3.6), radius: tiles(0.44), acquireRange: tiles(6),
   weapon: { damage: 40, bonus: { cloth: 20 }, cooldown: seconds(0.6), range: tiles(0.6), targets: 'ground', slowTicks: seconds(1) },
 }));
@@ -953,6 +1223,23 @@ export interface UpgradeMods {
   readonly skillSplashAdd?: number;   // FP
   readonly skillDurTicksAdd?: number; // 틱
   readonly skillCastRangeAdd?: number; // FP (마법 시전 사거리)
+  // ── 캠페인 강화(BOONS) 전용 수단 ──
+  /** 평타 흡혈 % 가산 (기존 흡혈에 더한다). */
+  readonly lifestealAdd?: number;
+  /** 초당 체력 재생 부여. */
+  readonly regenPerSec?: number;
+  /** 공중 동시 사격 대상 수 설정 (숲의 명궁류). */
+  readonly airMultiTargetsSet?: number;
+  /** 액티브 스킬 부여 — 원래 없던 스킬을 통째로 붙인다. */
+  readonly addActive?: ActiveSkill;
+  /** 무기 타겟 범위 변경 (지상 전용 → 지상·공중 등). */
+  readonly targetsSet?: Weapon['targets'];
+  /** 최대 체력 고정 가산. */
+  readonly maxHpAdd?: number;
+  /** 평타 회피 확률 % 설정. */
+  readonly dodgePct?: number;
+  /** 평타 장판 종류 교체 (포자 구름 → 치유 포자 등). */
+  readonly zoneKindSet?: import('./types.ts').ZoneKind;
 }
 
 export interface UnitUpgrade {
@@ -964,6 +1251,10 @@ export interface UnitUpgrade {
   readonly tech: number;
   /** 같은 그룹에서 하나만 선택 가능 (택1). */
   readonly choiceGroup?: string;
+  /** 캠페인 전용 — 대전 상점에는 진열되지 않고 봇도 사지 않는다 (강화 연계 해금). */
+  readonly campaignOnly?: boolean;
+  /** 이 강화를 골랐을 때만 상점에 노출된다 (campaignOnly 와 함께 사용). */
+  readonly boonId?: string;
   readonly mods: UpgradeMods;
 }
 
@@ -993,6 +1284,14 @@ export const UPGRADES: UnitUpgrade[] = [
   { id: 'su_sage_gravity', unit: 's_sage', name: '리버스그라비티 해금', desc: '마법 해금: 공중 유닛을 지상으로 떨어뜨린다', cost: 1000, tech: 3, mods: {} },
   { id: 'su_sage_quake', unit: 's_sage', name: '어스퀘이크 해금', desc: '마법 해금: 넓은 지역 둔화', cost: 1000, tech: 3, mods: {} },
   { id: 'su_sage_blizzard', unit: 's_sage', name: '블리자드 해금', desc: '마법 해금: 광역 빙결', cost: 1000, tech: 3, mods: {} },
+  // ── 캠페인 강화 연계 해금 (해당 강화를 골랐을 때만 상점에 노출) ──
+  // 액티브형: 구매 시 스킬 발동이 열린다 (requiresUpgrade)
+  { id: 'su_elf_rain', unit: 's_elf_archer', name: '화살비 연구', desc: '캠페인 강화 「화살비」 사용 해금', cost: 350, tech: 3, campaignOnly: true, boonId: 'b_elf_rain', mods: {} },
+  // 스탯형: 구매 시 능력치가 실제로 적용된다 (강화 선택은 노출 조건일 뿐)
+  { id: 'su_gouto_pack', unit: 's_gouto', name: '무리의 결속', desc: '체력 +40%, 방어력 +1', cost: 300, tech: 3, campaignOnly: true, boonId: 'b_gouto_pack', mods: { maxHpPct: 40, armorAdd: 1 } },
+  { id: 'su_gouto_feral', unit: 's_gouto', name: '야성의 굶주림', desc: '공격력 +25%, 흡혈 20%', cost: 250, tech: 2, campaignOnly: true, boonId: 'b_gouto_feral', mods: { damagePct: 25, lifestealAdd: 20 } },
+  { id: 'su_marmot_fortress', unit: 's_marmot', name: '요새의 갑주', desc: '체력 +35%, 방어력 +3', cost: 350, tech: 3, campaignOnly: true, boonId: 'b_marmot_fortress', mods: { maxHpPct: 35, armorAdd: 3 } },
+  { id: 'su_marmot_siege', unit: 's_marmot', name: '공성 철퇴', desc: '공격력 +35%, 구조물 특효 +25', cost: 350, tech: 3, campaignOnly: true, boonId: 'b_marmot_siege', mods: { damagePct: 35, bonusAdd: { structure: 25 } } },
   { id: 'su_sage_focus', unit: 's_sage', name: '비전 집중', desc: '마법 쿨타임 -20%', cost: 400, tech: 3, choiceGroup: 'sage1', mods: { skillCooldownPct: -20 } },
   { id: 'su_sage_robe', unit: 's_sage', name: '세계수의 예복', desc: '체력 +30%, 방어력 +2', cost: 400, tech: 3, choiceGroup: 'sage1', mods: { maxHpPct: 30, armorAdd: 2 } },
   { id: 'su_fairy_siege', unit: 's_fairy', name: '별빛 포격', desc: '공격력 +25%, 사거리 +0.5', cost: 280, tech: 3, choiceGroup: 'fairy1', mods: { damagePct: 25, rangeAdd: tiles(0.5) } },
@@ -1026,6 +1325,123 @@ export const UPGRADES: UnitUpgrade[] = [
   { id: 'mu_gear_bell', unit: 'm_clocktower_gear', name: '거대한 종', desc: '자정의 종소리 시전 사거리 +2', cost: 300, tech: 3, mods: { skillCastRangeAdd: tiles(2) } },
 ];
 
+// ── 캠페인 유닛 강화 (BOONS) ──────────────────────────────────────────────
+// 스테이지 클리어 보상으로 유닛 하나가 개방되고, 그 유닛의 강화 3개 중 하나를 고른다.
+// 언제든 다시 고를 수 있다 (localStorage 저장). 대전에는 전혀 영향이 없다.
+export interface UnitBoon {
+  readonly id: string;
+  readonly unit: string;   // defId
+  readonly name: string;
+  readonly desc: string;
+  /** 분류 — UI 뱃지용. */
+  readonly kind: 'stat' | 'passive' | 'active';
+  readonly mods: UpgradeMods;
+}
+
+export const BOONS: readonly UnitBoon[] = [
+  // 고우토 (45원 기본 근접, 공격 10 / 공속 0.8 / 지상만)
+  { id: 'b_gouto_pack', unit: 's_gouto', kind: 'stat', name: '무리의 결속',
+    desc: '체력 +40%, 방어력 +1 — 테크 3 「무리의 결속」(300원) 구매 시 적용', mods: {} },
+  { id: 'b_gouto_feral', unit: 's_gouto', kind: 'passive', name: '야성의 굶주림',
+    desc: '공격력 +25%, 흡혈 20% — 테크 2 「야성의 굶주림」(250원) 구매 시 적용', mods: {} },
+  { id: 'b_gouto_leap', unit: 's_gouto', kind: 'active', name: '도약 강습',
+    desc: '전투 중 8초마다 뛰어들어 착지 지점에 광역 30',
+    mods: { addActive: { name: '도약 강습', desc: '착지 지점 광역 30', kind: 'strike',
+      cooldown: seconds(8), damage: 30, splash: tiles(1.1) } } },
+
+  // 엘프 궁수 (60원 기본 원거리, 공격 10 / 사거리 5)
+  { id: 'b_elf_volley', unit: 's_elf_archer', kind: 'stat', name: '속사 훈련',
+    desc: '공격 속도 +10%, 사거리 +1 (시작부터 적용)', mods: { cooldownPct: -10, rangeAdd: tiles(1) } },
+  { id: 'b_elf_hunter', unit: 's_elf_archer', kind: 'passive', name: '사냥꾼의 눈',
+    desc: '체력 +20, 공중 유닛에게 추가 +12', mods: { maxHpAdd: 20, bonusAdd: { flying: 12 } } },
+  { id: 'b_elf_rain', unit: 's_elf_archer', kind: 'active', name: '화살비',
+    desc: '12초마다 지상에 화살비 (광역 6, 공중 제외) — 테크 3 「화살비 연구」(350원) 구매 시 발동',
+    mods: { addActive: { name: '화살비', desc: '지상 광역 6 (테크 3 연구 필요)', kind: 'nuke',
+      cooldown: seconds(12), damage: 6, splash: tiles(1.8), castRange: tiles(5),
+      targets: 'ground', requiresUpgrade: 'su_elf_rain' } } },
+
+  // 갑옷 마멋 (130원 탱커·공성, 공격 30+판금22 / 체력 360)
+  { id: 'b_marmot_fortress', unit: 's_marmot', kind: 'stat', name: '요새의 갑주',
+    desc: '체력 +35%, 방어력 +3 — 테크 3 「요새의 갑주」(350원) 구매 시 적용', mods: {} },
+  { id: 'b_marmot_siege', unit: 's_marmot', kind: 'passive', name: '공성 철퇴',
+    desc: '공격력 +35%, 구조물 특효 +25 — 테크 3 「공성 철퇴」(350원) 구매 시 적용', mods: {} },
+  { id: 'b_marmot_quake', unit: 's_marmot', kind: 'active', name: '대지 진동',
+    desc: '전투 중 10초마다 주변 적을 3초간 둔화',
+    mods: { addActive: { name: '대지 진동', desc: '주변 둔화 3초', kind: 'slowfield',
+      cooldown: seconds(10), durTicks: seconds(3), splash: tiles(2.2) } } },
+
+  // 덩굴 사냥꾼 (150원 고속 암살, 공격 24 / 공속 0.7 / 지상만)
+  { id: 'b_vine_swift', unit: 's_vine_hunter', kind: 'passive', name: '바람의 발놀림',
+    desc: '평타를 30% 확률로 회피 (마법·장판은 못 피한다)', mods: { dodgePct: 30 } },
+  { id: 'b_vine_venom', unit: 's_vine_hunter', kind: 'passive', name: '맹독 도포',
+    desc: '명중 시 4초간 초당 12 독, 흡혈 15%',
+    mods: { dotSet: { dps: 12, ticks: seconds(4) }, lifestealAdd: 15 } },
+  { id: 'b_vine_grasp', unit: 's_vine_hunter', kind: 'active', name: '덩굴 옭아매기',
+    desc: '전투 중 9초마다 주변 적을 2초간 속박',
+    mods: { addActive: { name: '덩굴 옭아매기', desc: '주변 속박 2초', kind: 'root',
+      cooldown: seconds(9), durTicks: seconds(2), splash: tiles(1.8) } } },
+
+  // 드루이드 (160원 힐러, 힐 14 / 쿨 1초)
+  { id: 'b_druid_spring', unit: 's_druid', kind: 'stat', name: '생명의 원천',
+    desc: '회복량 +50%, 회복 사거리 +1', mods: { healAmountPct: 50, rangeAdd: tiles(1) } },
+  { id: 'b_druid_bark', unit: 's_druid', kind: 'passive', name: '나무껍질 축복',
+    desc: '체력 +60%, 초당 6 재생', mods: { maxHpPct: 60, regenPerSec: 6 } },
+  { id: 'b_druid_bloom', unit: 's_druid', kind: 'active', name: '개화',
+    desc: '전투 중 14초마다 주변 아군 방어력 +2 (10초)',
+    mods: { addActive: { name: '개화', desc: '아군 방어 +2 (10초)', kind: 'allyarmor',
+      cooldown: seconds(14), durTicks: seconds(10), auraRadius: tiles(4), armorAdd: 2 } } },
+
+  // 버섯 폭탄병 (170원 공성 포격, 공격 26+판금20 / 지상만)
+  { id: 'b_mush_range', unit: 's_mushroom_bomber', kind: 'stat', name: '장거리 포자탄',
+    desc: '사거리 +1.5', mods: { rangeAdd: tiles(1.5) } },
+  { id: 'b_mush_frenzy', unit: 's_mushroom_bomber', kind: 'active', name: '포자 과다분비',
+    desc: '전투 중 10초마다 4초간 공격 속도 +50%',
+    mods: { addActive: { name: '포자 과다분비', desc: '4초간 공속 +50%', kind: 'selfbuff',
+      cooldown: seconds(10), durTicks: seconds(4), atkSpeedPct: 50 } } },
+  { id: 'b_mush_balm', unit: 's_mushroom_bomber', kind: 'passive', name: '치유 포자',
+    desc: '포자 구름이 아군 생체를 회복시킨다 (초당 8) + 구름 지속 +2초',
+    mods: { zoneKindSet: 'balm', zoneTicksAdd: seconds(2) } },
+
+  // 숲올빼미 (240원 대공, 공격 26+가죽13 / 사거리 4.5)
+  { id: 'b_owl_talon', unit: 's_owl', kind: 'stat', name: '강철 발톱',
+    desc: '공격력 +30%, 공격 속도 +15%', mods: { damagePct: 30, cooldownPct: -15 } },
+  { id: 'b_owl_swarm', unit: 's_owl', kind: 'passive', name: '무리 사냥',
+    desc: '공중 적 2기를 동시 사격, 공중에게 추가 +10',
+    mods: { airMultiTargetsSet: 2, bonusAdd: { flying: 10 } } },
+  { id: 'b_owl_dive', unit: 's_owl', kind: 'active', name: '급강하',
+    desc: '전투 중 9초마다 내리꽂아 착지 지점에 광역 40',
+    mods: { addActive: { name: '급강하', desc: '착지 광역 40', kind: 'strike',
+      cooldown: seconds(9), damage: 40, splash: tiles(1.2) } } },
+
+  // 거대 나비 (200원 지원, 공격 8 / 둔화 2초)
+  { id: 'b_butterfly_dust', unit: 's_butterfly', kind: 'stat', name: '짙은 인분',
+    desc: '공격력 +80%, 둔화 지속 +1.5초', mods: { damagePct: 80, slowTicksAdd: seconds(1.5) } },
+  { id: 'b_butterfly_heal', unit: 's_butterfly', kind: 'passive', name: '치유의 인분',
+    desc: '체력 +50%, 초당 5 재생', mods: { maxHpPct: 50, regenPerSec: 5 } },
+  { id: 'b_butterfly_gale', unit: 's_butterfly', kind: 'active', name: '돌풍',
+    desc: '전투 중 13초마다 주변 적을 6초간 약화',
+    mods: { addActive: { name: '돌풍', desc: '주변 약화 6초', kind: 'weaken',
+      cooldown: seconds(13), durTicks: seconds(6), auraRadius: tiles(3.5) } } },
+
+  // 가시 마녀 (300원 광역 저격, 공격 30 / 가시밭 장판)
+  { id: 'b_witch_thorn', unit: 's_thorn_witch', kind: 'stat', name: '가시 폭풍',
+    desc: '공격력 +30%, 폭발 범위 +0.5타일', mods: { damagePct: 30, splashAdd: tiles(0.5) } },
+  { id: 'b_witch_doll', unit: 's_thorn_witch', kind: 'passive', name: '인형 사냥꾼',
+    desc: '기물(인형)에게 추가 +25, 사거리 +1.5',
+    mods: { bonusAdd: { construct: 25 }, rangeAdd: tiles(1.5) } },
+  { id: 'b_witch_frost', unit: 's_thorn_witch', kind: 'active', name: '서리 가시',
+    desc: '전투 중 15초마다 대상 지역 적을 4초간 빙결 (판금·거대 면역)',
+    mods: { addActive: { name: '서리 가시', desc: '광역 빙결 4초', kind: 'freeze',
+      cooldown: seconds(15), durTicks: seconds(4), castRange: tiles(5), splash: tiles(1.6), fxZone: 'frost' } } },
+];
+
+export const BOONS_BY_UNIT = new Map<string, UnitBoon[]>();
+for (const b of BOONS) {
+  const list = BOONS_BY_UNIT.get(b.unit) ?? [];
+  list.push(b);
+  BOONS_BY_UNIT.set(b.unit, list);
+}
+
 const UPGRADES_BY_ID = new Map(UPGRADES.map((u) => [u.id, u]));
 const UPGRADES_BY_UNIT = new Map<string, UnitUpgrade[]>();
 for (const u of UPGRADES) {
@@ -1049,15 +1465,34 @@ export function upgradesOfUnit(defId: string): UnitUpgrade[] {
 export function effectiveDef(defId: string, owned: Record<string, true>): EntityDef | undefined {
   const ups = (UPGRADES_BY_UNIT.get(defId) ?? []).filter((u) => owned[u.id]);
   if (ups.length === 0) return undefined;
-  const base = DEFS[defId]!;
+  return applyMods(DEFS[defId]!, ups.map((u) => u.mods));
+}
+
+/**
+ * 캠페인 유닛 강화(BOONS) 를 정의에 반영한 사본.
+ * 업그레이드와 같은 수단(UpgradeMods)을 쓰지만 적용 경로는 따로다 —
+ * 강화는 상점에서 사는 게 아니라 스테이지 보상으로 고르는 것이기 때문.
+ */
+export function applyBoons(base: EntityDef, boonIds: readonly string[]): EntityDef {
+  if (boonIds.length === 0) return base;
+  const mods = BOONS.filter((b) => b.unit === base.id && boonIds.includes(b.id))
+    .map((b) => b.mods)
+    // 해금형 강화는 mods 가 비어 있다 (효과는 연계 업그레이드가 담당) — 사본을 만들지 않는다
+    .filter((m) => Object.keys(m).length > 0);
+  return mods.length === 0 ? base : applyMods(base, mods);
+}
+
+/** 수정자 목록을 순서대로 적용한 정의 사본. 순서가 결과를 바꾸므로 배열 순서 그대로 돈다. */
+function applyMods(base: EntityDef, modList: readonly UpgradeMods[]): EntityDef {
   let maxHp = base.maxHp;
   let armor = base.armor;
   let speed = base.speed;
   let heal = base.heal;
   let weapon: Weapon | undefined = base.weapon;
   let actives = base.actives;
-  for (const u of ups) {
-    const m = u.mods;
+  let regenPerSec = base.regenPerSec;
+  let dodgePct = base.dodgePct;
+  for (const m of modList) {
     if (actives && (m.skillDamagePct || m.skillCooldownPct || m.skillSplashAdd || m.skillDurTicksAdd || m.skillCastRangeAdd)) {
       actives = actives.map((a) => {
         const next = { ...a };
@@ -1070,6 +1505,10 @@ export function effectiveDef(defId: string, owned: Record<string, true>): Entity
       });
     }
     if (m.maxHpPct) maxHp = idiv(maxHp * (100 + m.maxHpPct), 100);
+    if (m.maxHpAdd) maxHp += m.maxHpAdd;
+    if (m.dodgePct) dodgePct = m.dodgePct;
+    if (m.regenPerSec) regenPerSec = (regenPerSec ?? 0) + m.regenPerSec;
+    if (m.addActive) actives = [...(actives ?? []), m.addActive];
     if (m.armorAdd) armor += m.armorAdd;
     if (m.speedPct) speed = idiv(speed * (100 + m.speedPct), 100);
     if (m.healAmountPct && heal) heal = { ...heal, amount: idiv(heal.amount * (100 + m.healAmountPct), 100) };
@@ -1106,6 +1545,10 @@ export function effectiveDef(defId: string, owned: Record<string, true>): Entity
         w.rootChance = Math.min(100, w.rootChance + m.rootChanceAdd);
       }
       if (m.zoneTicksAdd && w.zone) w.zone = { ...w.zone, ticks: w.zone.ticks + m.zoneTicksAdd };
+      if (m.lifestealAdd) w.lifestealPct = (w.lifestealPct ?? 0) + m.lifestealAdd;
+      if (m.airMultiTargetsSet) w.airMultiTargets = m.airMultiTargetsSet;
+      if (m.targetsSet) w.targets = m.targetsSet;
+      if (m.zoneKindSet && w.zone) w.zone = { ...w.zone, kind: m.zoneKindSet };
       if (m.bonusAdd) {
         const merged: Partial<Record<BonusKey, number>> = { ...(w.bonus ?? {}) };
         for (const [k, v] of Object.entries(m.bonusAdd)) {
@@ -1121,6 +1564,9 @@ export function effectiveDef(defId: string, owned: Record<string, true>): Entity
     ...(weapon ? { weapon } : {}),
     ...(heal ? { heal } : {}),
     ...(actives ? { actives } : {}),
+    ...(regenPerSec ? { regenPerSec } : {}),
+    ...(dodgePct ? { dodgePct } : {}),
   };
   return eff;
 }
+

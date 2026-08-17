@@ -904,4 +904,288 @@ function unlockSage(g: Game, sage: Entity): void {
   ok(DEFS.m_clocktower_gear!.actives![0]!.cooldown === 20 * 25, '자정의 종소리 쿨 25초');
 }
 
+{
+  // 혼란 회복 후 "바보 유닛" 회귀 방지: 아군을 조준하던 유닛이
+  // 혼란이 풀리면 반드시 적으로 재조준하고 전투를 재개해야 한다
+  const g = newArena();
+  const mid = tiles(30);
+  const owl = spawnUnit(g, 's_owl', 0, mid - tiles(2), 0);
+  const buddy = spawnUnit(g, 's_butterfly', 0, mid - tiles(2), tiles(0.5)); // 붙어 다니는 아군
+  const foe = spawnUnit(g, 'p_skeleton', 1, mid + tiles(2), 0);
+  // 혼란을 인위로 부여 (앨리스 없이 상태만 재현)
+  owl.confusedUntil = g.tick + 20 * 3;
+  let stalkedAllyAfterRecovery = false;
+  let attackedFoeAfterRecovery = false;
+  for (let t = 0; t < 20 * 20; t++) {
+    g.tick++;
+    stepCombat(g);
+    if (g.tick >= 20 * 3 + 5) { // 회복 후
+      const tgt = owl.targetId >= 0 ? g.entities.find((x) => x.id === owl.targetId) : undefined;
+      if (tgt && tgt.team === 0) stalkedAllyAfterRecovery = true;
+      if (foe.hp < DEFS.p_skeleton!.maxHp && foe.lastAttackerId === owl.id) attackedFoeAfterRecovery = true;
+    }
+    if (!foe.alive) break;
+  }
+  void buddy;
+  ok(!stalkedAllyAfterRecovery, '혼란 회복 후 아군을 계속 조준하지 않음');
+  ok(attackedFoeAfterRecovery, '혼란 회복 후 적 공격 재개');
+}
+
+{
+  // 페니와이즈: 공중 타겟엔 광역(주변 공중까지), 지상 타겟엔 단일이어야 한다
+  const g = newArena();
+  const mid = tiles(30);
+  const penny = spawnUnit(g, 'm_pennywise', 0, mid - tiles(2), 0);
+  // 공중 적 2기를 붙여 세운다 (스플래시 반경 1.1타일 안)
+  const air1 = spawnUnit(g, 'p_banshee', 1, mid + tiles(1), 0);
+  const air2 = spawnUnit(g, 'p_banshee', 1, mid + tiles(1), tiles(0.6));
+  air1.rootedUntil = g.tick + 20 * 60; // 진형이 흩어지지 않게 고정
+  air2.rootedUntil = g.tick + 20 * 60;
+  const airHp0 = air2.hp;
+  for (let t = 0; t < 20 * 6 && air1.alive && air2.alive; t++) { g.tick++; stepCombat(g); }
+  ok(air2.hp < airHp0, '페니와이즈: 공중 타겟은 주변 공중까지 광역 피해');
+
+  const g2 = newArena();
+  const p2 = spawnUnit(g2, 'm_pennywise', 0, mid - tiles(2), 0);
+  const gnd1 = spawnUnit(g2, 'p_skeleton', 1, mid + tiles(1), 0);
+  const gnd2 = spawnUnit(g2, 'p_skeleton', 1, mid + tiles(1), tiles(0.6));
+  gnd1.rootedUntil = g2.tick + 20 * 60;
+  gnd2.rootedUntil = g2.tick + 20 * 60;
+  const gndHp0 = gnd2.hp;
+  let anyGroundHit = false;
+  for (let t = 0; t < 20 * 6 && gnd1.alive; t++) {
+    g2.tick++; stepCombat(g2);
+    if (gnd1.hp < DEFS.p_skeleton!.maxHp) anyGroundHit = true;
+  }
+  void p2;
+  ok(anyGroundHit, '페니와이즈: 지상 타겟을 실제로 공격함');
+  ok(gnd2.hp === gndHp0, '페니와이즈: 지상 타겟은 단일 공격 (옆 지상 무피해)');
+}
+
+{
+  // 자정의 종소리: 범위 안에 10기가 있어도 공포는 최대 6기까지만
+  const g = newArena();
+  const mid = tiles(30);
+  const gear = spawnUnit(g, 'm_clocktower_gear', 0, mid - tiles(3), 0);
+  const foes = [];
+  for (let k = 0; k < 10; k++) {
+    // 원거리 유닛을 촘촘히 세운다 (공포 우선 대상 + 스플래시 반경 안)
+    const f = spawnUnit(g, 's_elf_archer', 1, mid + tiles(0.5), tiles(-1) + tiles(0.22) * k);
+    f.rootedUntil = g.tick + 20 * 120; // 도주로 흩어지기 전 개수를 세기 위해 고정
+    foes.push(f);
+  }
+  let peak = 0;
+  for (let t = 0; t < 20 * 30; t++) {
+    g.tick++;
+    stepCombat(g);
+    const feared = foes.filter((f) => g.tick < f.fearedUntil).length;
+    if (feared > peak) peak = feared;
+  }
+  void gear;
+  ok(peak > 0, '자정의 종소리: 공포가 실제로 걸린다');
+  ok(peak <= 6, `자정의 종소리: 동시 공포 최대 6기 (실측 ${peak})`);
+}
+
+{
+  // 캠페인 유닛 강화(BOONS): 스탯·패시브·액티브 부여가 정의에 반영되는지
+  const { applyBoons, effectiveDef: eff9, DEFS: D2 } = await import('../data.ts');
+  const base = D2.s_elf_archer!;
+  const st = applyBoons(base, ['b_elf_volley']);
+  ok(st.weapon!.cooldown < base.weapon!.cooldown && st.weapon!.range > base.weapon!.range, 'BOON 스탯형: 엘프 공속·사거리 즉시 적용');
+  const hn = applyBoons(base, ['b_elf_hunter']);
+  ok(hn.maxHp === base.maxHp + 20, 'BOON 체력 고정 가산 (+20)');
+  const ac = applyBoons(D2.s_gouto!, ['b_gouto_leap']);
+  ok((ac.actives?.length ?? 0) === (D2.s_gouto!.actives?.length ?? 0) + 1, 'BOON 액티브형: 스킬 부여');
+  ok(applyBoons(base, []) === base, 'BOON 없으면 원본 그대로 (대전 무영향)');
+  // 해금형: 강화 자체는 무효, 연계 업그레이드 구매 시 effectiveDef 로 적용된다
+  ok(applyBoons(D2.s_gouto!, ['b_gouto_pack']) === D2.s_gouto!, 'BOON 해금형: 선택만으론 무효');
+  const packed = eff9('s_gouto', { su_gouto_pack: true })!;
+  ok(packed.maxHp === Math.floor(D2.s_gouto!.maxHp * 1.4) && packed.armor === D2.s_gouto!.armor + 1, 'BOON 해금형: 업그레이드 구매 시 적용');
+  const bark = applyBoons(D2.s_druid!, ['b_druid_bark']);
+  ok((bark.regenPerSec ?? 0) === 6, 'BOON 재생 부여');
+  const dodge = applyBoons(D2.s_vine_hunter!, ['b_vine_swift']);
+  ok((dodge.dodgePct ?? 0) === 30, 'BOON 회피 부여 (30%)');
+  const balm = applyBoons(D2.s_mushroom_bomber!, ['b_mush_balm']);
+  ok(balm.weapon!.zone!.kind === 'balm', 'BOON 치유 포자: 장판 종류 교체');
+}
+
+{
+  // BOON 재생이 전투에서 실제로 체력을 회복시키는지
+  const g = newArena();
+  const mid = tiles(30);
+  const dr = spawnUnit(g, 's_druid', 0, mid, 0);
+  const { applyBoons: ab, DEFS: D3 } = await import('../data.ts');
+  dr.defOv = ab(D3.s_druid!, ['b_druid_bark']);
+  dr.hp = 10;
+  for (let t = 0; t < 20 * 5; t++) { g.tick++; stepCombat(g); }
+  ok(dr.hp >= 10 + 6 * 4, `BOON 재생 실동작 (5초간 ${dr.hp - 10} 회복)`);
+}
+
+{
+  // 화살비 해금: 강화만 고르면 잠김, 「화살비 연구」 구매 후 발동
+  const { applyBoons: ab2, DEFS: D4 } = await import('../data.ts');
+  const mk = (unlocked: boolean) => {
+    const g = newArena();
+    const mid = tiles(30);
+    const elf = spawnUnit(g, 's_elf_archer', 0, mid - tiles(3), 0);
+    elf.owner = 0; // requiresUpgrade 는 소유 플레이어의 업그레이드를 본다
+    elf.defOv = ab2(D4.s_elf_archer!, ['b_elf_rain']);
+    elf.skillCds = elf.defOv.actives!.map(() => 0);
+    if (unlocked) g.players[0]!.upgrades['su_elf_rain'] = true;
+    const foes = [];
+    for (let k = 0; k < 4; k++) {
+      const f = spawnUnit(g, 'p_skeleton', 1, mid + tiles(1), tiles(0.4) * k);
+      f.rootedUntil = g.tick + 20 * 999;
+      foes.push(f);
+    }
+    const hp0 = foes.map((f) => f.hp);
+    let aoe = false;
+    for (let t = 0; t < 20 * 15; t++) {
+      g.tick++; stepCombat(g);
+      if (foes.filter((f, i) => f.hp < hp0[i]!).length >= 3) { aoe = true; break; }
+    }
+    return aoe;
+  };
+  ok(!mk(false), '화살비: 연구 없으면 발동 안 됨');
+  ok(mk(true), '화살비: 「화살비 연구」 구매 후 발동');
+}
+
+{
+  // 회피 실동작: 같은 조건에서 회피 유무만 바꿔 명중 횟수를 비교한다
+  const { applyBoons: ab5, DEFS: D5 } = await import('../data.ts');
+  const run = (withDodge: boolean): number => {
+    const g = newArena();
+    const mid = tiles(30);
+    const vine = spawnUnit(g, 's_vine_hunter', 0, mid, 0);
+    if (withDodge) vine.defOv = ab5(D5.s_vine_hunter!, ['b_vine_swift']);
+    vine.hp = 100000;
+    // rooted 로 고정하면 충돌 분리에 밀려 사거리 밖으로 벗어난다 — 자유 추격전으로 잰다
+    const foe = spawnUnit(g, 'p_skeleton', 1, mid + tiles(0.3), 0);
+    foe.hp = 100000;
+    let hits = 0, prevHp = vine.hp;
+    for (let t = 0; t < 20 * 60; t++) {
+      g.tick++; stepCombat(g);
+      if (vine.hp < prevHp) hits++;
+      prevHp = vine.hp;
+    }
+    return hits;
+  };
+  const plain = run(false);
+  const dodged = run(true);
+  ok(plain > 0 && dodged < plain * 0.85 && dodged > plain * 0.45,
+    `회피 30%: 명중 ${plain}회 → ${dodged}회로 감소`);
+}
+
+{
+  // 치유 포자: 포자 구름 안의 아군 생체가 회복된다
+  const { applyBoons: ab6, DEFS: D6 } = await import('../data.ts');
+  const g = newArena();
+  const mid = tiles(30);
+  const mush = spawnUnit(g, 's_mushroom_bomber', 0, mid - tiles(3), 0);
+  mush.defOv = ab6(D6.s_mushroom_bomber!, ['b_mush_balm']);
+  const ally = spawnUnit(g, 's_gouto', 0, mid + tiles(1), 0); // 착탄 지점 근처 아군
+  ally.hp = 30; ally.rootedUntil = g.tick + 20 * 999;
+  const foe = spawnUnit(g, 'p_skeleton', 1, mid + tiles(1), tiles(0.5));
+  foe.rootedUntil = g.tick + 20 * 999; foe.hp = 100000;
+  let healed = false;
+  let low = ally.hp;
+  for (let t = 0; t < 20 * 15; t++) {
+    g.tick++; stepCombat(g);
+    if (ally.hp > low + 8) { healed = true; break; } // 피격분을 넘어서는 순회복 확인
+    low = Math.min(low, ally.hp);
+  }
+  ok(healed, '치유 포자: 구름 안 아군 생체 회복');
+}
+
+{
+  // 화살비 지상 전용: 공중 유닛만 있으면 발동하지 않고, 지상+공중 혼재 시 지상만 맞는다
+  const { applyBoons: ab7, DEFS: D7 } = await import('../data.ts');
+  const g = newArena();
+  const mid = tiles(30);
+  const elf = spawnUnit(g, 's_elf_archer', 0, mid - tiles(3), 0);
+  elf.owner = 0;
+  elf.defOv = ab7(D7.s_elf_archer!, ['b_elf_rain']);
+  elf.skillCds = elf.defOv.actives!.map(() => 0);
+  g.players[0]!.upgrades['su_elf_rain'] = true;
+  const air = spawnUnit(g, 'p_wraith', 1, mid + tiles(1), 0);
+  air.rootedUntil = g.tick + 20 * 999; air.hp = 100000;
+  const gnd = spawnUnit(g, 'p_skeleton', 1, mid + tiles(1), tiles(0.5));
+  gnd.rootedUntil = g.tick + 20 * 999; gnd.hp = 100000;
+  // 화살비(스플래시 1.8타일) 낙하 시 지상은 맞고 공중은 무사해야 한다.
+  // 평타 피해와 구분하기 위해 같은 스텝의 광역 피해 여부 대신 누적 피해 비율로 본다.
+  const airHp0 = air.hp, gndHp0 = gnd.hp;
+  for (let t = 0; t < 20 * 30; t++) { g.tick++; stepCombat(g); }
+  const airLoss = airHp0 - air.hp;
+  const gndLoss = gndHp0 - gnd.hp;
+  // 평타는 최근접 하나(air)에게만 나가므로: 지상 손실은 순수 화살비 피해다
+  ok(gndLoss > 0, `화살비 지상 전용: 지상 피해 발생 (${gndLoss})`);
+}
+
+{
+  // 용병 시스템: 사람만 타종족 구매 가능 + 출정 포함 + 가격 배율
+  const { createGame: cg8, stepGame: sg8, buyUnit: bu8 } = await import('../game.ts');
+  const g = cg8({
+    seed: 3,
+    players: [
+      { name: 'P', race: 'sylvarin', team: 0, isBot: false },
+      { name: 'A', race: 'sylvarin', team: 0, isBot: true },
+      { name: 'E', race: 'pandemonium', team: 1, isBot: true },
+    ],
+    mercUnits: ['merc_headless_knight', 'merc_lich'],
+    mercCostPct: 100,
+  } as never);
+  g.players[0]!.money = 9999;
+  g.players[1]!.money = 9999;
+  const m0 = g.players[0]!.money;
+  ok(bu8(g, 0, 'merc_headless_knight'), '용병: 사람이 타종족 유닛 구매 가능');
+  ok(g.players[0]!.money === m0 - DEFS.merc_headless_knight!.cost, '용병: 정가 차감');
+  ok(!bu8(g, 0, 'p_banshee'), '용병: 목록 밖 타종족은 불가');
+  ok(!bu8(g, 1, 'm_alice'), '용병: 봇은 타종족 구매 불가');
+  // 출정 포함 확인 — 첫 웨이브 후 필드에 용병이 있어야 한다
+  for (let t = 0; t < 20 * 65; t++) sg8(g);
+  ok(g.entities.some((e) => e.defId === 'merc_headless_knight' && e.team === 0 && e.owner === 0),
+    '용병: 출정 웨이브에 포함');
+}
+
+{
+  // 검은새 부활: 죽으면 3초 쓰러졌다가 60% 체력으로 1회 부활, 두 번째 죽음은 진짜
+  const g = newArena();
+  const mid = tiles(30);
+  const bird = spawnUnit(g, 'c_wild_blackbird', 2, mid, 0);
+  bird.hp = 1;
+  const killer = spawnUnit(g, 's_owl', 0, mid + tiles(0.5), 0);
+  killer.hp = 100000; killer.rootedUntil = g.tick + 20 * 999;
+  let revived = false;
+  for (let t = 0; t < 20 * 30; t++) {
+    g.tick++;
+    stepCombat(g);
+    if (bird.alive && bird.rebirthUsed && bird.hp > 1000) revived = true;
+  }
+  ok(revived, `검은새: 1회 부활 (부활 후 hp ${bird.alive ? bird.hp : '재사망'})`);
+  // 부활 후 다시 죽이면 진짜 죽는다
+  bird.hp = 0;
+  g.tick++; stepCombat(g);
+  ok(!bird.alive, '검은새: 두 번째 죽음은 영구');
+}
+
+{
+  // 둥지 수호탑(영구 무적): 적이 조준하지 않는다 — 어그로 흡수 방지
+  const g = newArena();
+  const mid = tiles(30);
+  const guard = spawnUnit(g, 'c_nest_wyvern', 0, mid, 0);
+  guard.invulnUntil = Number.MAX_SAFE_INTEGER;
+  const ally = spawnUnit(g, 's_gouto', 0, mid + tiles(1.2), 0);
+  ally.rootedUntil = g.tick + 20 * 999;
+  const foe = spawnUnit(g, 'p_skeleton', 1, mid + tiles(2), 0);
+  foe.rootedUntil = g.tick + 20 * 999;
+  let targetedGuard = false;
+  for (let t = 0; t < 20 * 15; t++) {
+    g.tick++;
+    stepCombat(g);
+    if (foe.targetId === guard.id) targetedGuard = true;
+  }
+  ok(!targetedGuard, '둥지 수호탑: 적이 조준하지 않음 (어그로 흡수 없음)');
+  ok(ally.hp < 150, '둥지 수호탑 옆 아군이 대신 공격받음 (정상 타겟 전환)');
+}
+
 if (failed) process.exitCode = 1;

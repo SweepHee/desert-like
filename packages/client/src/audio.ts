@@ -20,6 +20,8 @@ const SFX: Record<string, readonly string[]> = {
   atk_melee: ['/assets/sfx/atk_melee1.mp3', '/assets/sfx/atk_melee2.mp3'],
   atk_ranged: ['/assets/sfx/atk_ranged1.mp3', '/assets/sfx/atk_ranged2.mp3'],
   atk_magic: ['/assets/sfx/atk_magic1.mp3', '/assets/sfx/atk_magic2.mp3'],
+  atk_thorn: ['/assets/sfx/atk_thorn1.mp3'],
+  atk_poison: ['/assets/sfx/atk_poison1.mp3'],
   // 피격 — 대상의 장갑·존재 태그에 따라 갈린다 (특성 시스템 재활용)
   hit_cloth: ['/assets/sfx/hit_cloth1.mp3', '/assets/sfx/hit_cloth2.mp3'],
   hit_leather: ['/assets/sfx/hit_leather1.mp3', '/assets/sfx/hit_leather2.mp3'],
@@ -27,11 +29,28 @@ const SFX: Record<string, readonly string[]> = {
   hit_construct: ['/assets/sfx/hit_construct1.mp3', '/assets/sfx/hit_construct2.mp3'],
   // 사망
   death_bio: ['/assets/sfx/death_bio1.mp3', '/assets/sfx/death_bio2.mp3'],
+  // 인간형은 성별로 갈린다 (동물·식물·정령은 death_bio 유지)
+  death_male: ['/assets/sfx/death_male1.mp3', '/assets/sfx/death_male2.mp3'],
+  death_female: ['/assets/sfx/death_female1.mp3', '/assets/sfx/death_female2.mp3'],
+  // 네임드 전용 사망음
+  death_alice: ['/assets/sfx/death_alice1.mp3', '/assets/sfx/death_alice2.mp3'],
+  // 인형은 어린 목소리 — 인간형 사망음과 확실히 구분된다
+  death_doll_female: ['/assets/sfx/death_doll_female1.mp3'],
+  death_doll_male: ['/assets/sfx/death_doll_male1.mp3'],
   death_undead: ['/assets/sfx/death_undead1.mp3'],
   death_construct: ['/assets/sfx/death_construct1.mp3'],
   // 시전·폭발
   cast_heal: ['/assets/sfx/cast_heal1.mp3'],
   cast_skill: ['/assets/sfx/cast_skill1.mp3'],
+  // 마법 속성별 시전음 — render 가 스킬의 fxZone/kind 로 고른다
+  cast_fire: ['/assets/sfx/cast_fire1.mp3'],
+  cast_ice: ['/assets/sfx/cast_ice1.mp3'],
+  cast_quake: ['/assets/sfx/cast_quake1.mp3'],
+  cast_gravity: ['/assets/sfx/cast_gravity1.mp3'],
+  cast_dark: ['/assets/sfx/cast_dark1.mp3'],
+  cast_bell: ['/assets/sfx/cast_bell1.mp3'],
+  cast_puppet: ['/assets/sfx/cast_puppet1.mp3'],
+  cast_sleep: ['/assets/sfx/cast_sleep1.mp3'],
   explosion: ['/assets/sfx/explosion1.mp3', '/assets/sfx/explosion2.mp3'],
   // 게임 흐름
   wave: ['/assets/sfx/wave.mp3'],

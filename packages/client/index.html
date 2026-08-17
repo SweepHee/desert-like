@@ -16,6 +16,9 @@
       --gold: #e8c559;
       --t0: #4f8fe8;
       --t1: #e85f4f;
+      /* 이번 접속에 걸린 타이틀 아트의 강조색. title.ts 가 덮어쓴다. */
+      --tt-rgb: 232 197 89;
+      --tt: rgb(var(--tt-rgb));
     }
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body {
@@ -23,8 +26,14 @@
       color: var(--text);
       font-family: 'Malgun Gothic', system-ui, sans-serif;
       font-size: 13px;
+      /* 모바일: 더블탭 확대를 전역 차단 (버튼 연타 시 화면이 튀는 것 방지).
+         캔버스는 아래에서 touch-action: none 으로 더 강하게 잡는다. */
+      touch-action: manipulation;
       overflow: hidden;
+      /* dvh = 모바일 브라우저 UI(주소창)를 뺀 실제 보이는 높이.
+         100vh 는 크롬 모바일에서 주소창을 포함해 하단이 잘린다. */
       height: 100vh;
+      height: 100dvh;
       display: flex;
       flex-direction: column;
       user-select: none;
@@ -32,6 +41,10 @@
     #topbar {
       display: flex; align-items: center; gap: 16px;
       padding: 8px 14px; background: var(--panel); border-bottom: 2px solid var(--line);
+      /* 가로모드 폰: 노치·둥근 모서리·브라우저 UI 에 가려지지 않게 */
+      padding-top: max(8px, env(safe-area-inset-top));
+      padding-left: max(14px, env(safe-area-inset-left));
+      padding-right: max(14px, env(safe-area-inset-right));
     }
     .basebars { flex: 1; display: flex; flex-direction: column; gap: 3px; }
     .bar { height: 12px; background: #120d08; border: 1px solid var(--line); position: relative; }
@@ -44,6 +57,20 @@
     #wave b { font-size: 18px; color: var(--gold); display: block; }
     #speed button { background: var(--panel2); color: var(--dim); border: 1px solid var(--line); padding: 3px 10px; cursor: pointer; }
     #speed button.on { color: var(--gold); border-color: var(--gold); }
+    #btn-pause { background: var(--panel2); color: var(--dim); border: 1px solid var(--line);
+      padding: 3px 10px; margin-right: 8px; cursor: pointer; }
+    #btn-pause:hover, #btn-pause.on { color: var(--gold); border-color: var(--gold); }
+    #btn-pause.hidden { display: none; }
+    /* 일시정지 오버레이 — 전장 위에 덮어 "멈췄다"를 분명히 알린다 */
+    #paused {
+      position: absolute; inset: 0; z-index: 30;
+      background: rgba(10, 8, 5, .55);
+      display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px;
+      cursor: pointer;
+    }
+    #paused.hidden { display: none; }
+    #paused .pz-title { color: var(--gold); font-size: 26px; letter-spacing: .3em; }
+    #paused .pz-sub { color: var(--text); font-size: 13px; }
     #sfx { display: flex; align-items: center; gap: 6px; margin-right: 10px; }
     #sfx button { background: var(--panel2); color: var(--dim); border: 1px solid var(--line);
       padding: 3px 8px; cursor: pointer; line-height: 1; }
@@ -70,6 +97,10 @@
     #bottombar {
       display: flex; gap: 14px; align-items: stretch;
       padding: 10px 14px; background: var(--panel); border-top: 2px solid var(--line);
+      /* 모바일 하단 제스처 바·브라우저 UI 에 가려지지 않게 */
+      padding-bottom: max(10px, env(safe-area-inset-bottom));
+      padding-left: max(14px, env(safe-area-inset-left));
+      padding-right: max(14px, env(safe-area-inset-right));
       max-height: 44vh; flex: 0 0 auto;
     }
     #bottombar.collapsed { display: none; }
@@ -95,6 +126,10 @@
     .unitbtn:hover { border-color: var(--gold); background: #3d2e1c; }
     .unitbtn:disabled { opacity: .35; cursor: default; }
     .unitbtn { position: relative; }
+    /* 용병 (마몬의 장사): 금화빛 테두리로 구분 */
+    .unitbtn.merc { border-color: #c9962a; background: #322414; }
+    .unitbtn.merc .nm { color: #f0c96a; }
+    .unitbtn.merc:hover { border-color: #ffd23d; }
     .unitbtn .key {
       position: absolute; top: 2px; left: 3px; font-size: 10px; line-height: 1;
       color: var(--gold); opacity: .75; pointer-events: none;
@@ -143,11 +178,34 @@
     #overlay {
       position: fixed; inset: 0; background: rgba(10, 7, 4, .88);
       display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 24px; z-index: 10;
+      /* 타이틀에서 고른 아트의 색조를 메뉴 화면까지 끌고 온다 */
+      --gold: var(--tt);
+      animation: overlayIn .38s ease;
     }
+    /* 타이틀 아트를 흐리게 깐 배경 — 메뉴로 넘어가도 같은 그림 위에 있게 된다.
+       overlay 자신의 배경색 위, 내용 아래에 그려진다 (z-index: -1). */
+    #overlay::before {
+      content: ''; position: absolute; inset: 0; z-index: -1;
+      background: var(--title-art) center / cover no-repeat;
+      filter: blur(28px) brightness(.32) saturate(1.1);
+      transform: scale(1.08);
+    }
+    @keyframes overlayIn { from { opacity: 0; } to { opacity: 1; } }
     #overlay.hidden { display: none; }
-    #overlay h1 { font-size: 34px; color: var(--gold); letter-spacing: 4px; }
+    #overlay h1 { font-size: 34px; color: var(--gold); letter-spacing: 4px; text-align: center; }
+    #overlay h1 small {
+      display: block; margin-top: 5px; font-size: 11px;
+      letter-spacing: .42em; color: var(--dim); font-weight: normal;
+    }
     #overlay p { color: var(--dim); max-width: 520px; text-align: center; line-height: 1.6; }
-    #races { display: flex; gap: 16px; }
+    /* 화면이 바뀔 때마다 살짝 떠오르게 — 전환이 툭 끊기지 않도록 */
+    #menu-screen:not(.hidden), #race-screen:not(.hidden), #room-screen:not(.hidden) {
+      animation: screenIn .3s ease both;
+    }
+    @keyframes screenIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+    /* 종족 카드 한 장이 아니라 제목·안내·목록이 차례로 쌓이는 화면이라 세로로 둔다 */
+    #races { display: flex; flex-direction: column; align-items: center; gap: 12px; }
+    #races h2 { color: var(--gold); }
     /* 종족 선택 아트 (3분할 클릭) */
     .racechooser { position: relative; width: min(88vw, 920px); user-select: none; }
     .racechooser img { display: block; width: 100%; height: auto; }
@@ -265,9 +323,13 @@
 
     /* 가로 폭이 좁을 때 (세로로 든 폰) */
     @media (max-width: 700px) {
-      #topbar { flex-wrap: wrap; gap: 6px 10px; padding: 5px 8px; }
-      .basebars { min-width: 96px; }
+      #topbar { flex-wrap: wrap; gap: 6px 8px; padding: 5px 8px; }
+      .basebars { min-width: 84px; flex: 1 1 84px; }
       #sfx input[type=range] { display: none; } /* 버튼만 남긴다 */
+      /* 컨트롤 버튼들: 크기를 줄이되 반드시 화면 안에 보이게 */
+      #sfx button, #btn-roster, #btn-chat, #btn-shop, #btn-quit, #btn-pause,
+      #speed button { padding: 3px 7px; font-size: 11px; }
+      #btn-pause { margin-right: 4px; }
       #wave { min-width: 80px; font-size: 12px; }
       #economy {
         min-width: 0; flex-direction: row; flex-wrap: wrap;
@@ -284,6 +346,8 @@
       /* 정보창이 화면을 덮지 않도록 */
       #tooltip, #unit-info { max-width: 74vw; font-size: 11px; }
       #upg-panel { max-width: 84vw; }
+      /* 캠페인 배너: 세로폰에서 topbar 가 두 줄이라 그 아래로 내린다 */
+      #campaign-goal { top: 92px; font-size: 11px; max-width: 92vw; }
       #overlay h1 { font-size: 24px; letter-spacing: 2px; }
       #overlay p { font-size: 12px; padding: 0 12px; }
       #races { flex-direction: column; gap: 8px; }
@@ -303,9 +367,9 @@
     /* ── 참여자 목록 (인게임) ───────────────────────────────────────────── */
     #roster {
       position: fixed; top: 56px; left: 12px; z-index: 45;
-      background: rgba(20,14,8,.94); border: 1px solid var(--line);
-      padding: 8px 10px; display: flex; gap: 16px; font-size: 12px;
-      max-width: 92vw; box-shadow: 0 6px 20px rgba(0,0,0,.5);
+      background: var(--panel); border: 1px solid var(--line);
+      padding: 10px 12px; display: flex; gap: 18px; font-size: 12px;
+      max-width: 92vw;
     }
     #roster.hidden { display: none; }
     #roster h4 { font-size: 11px; margin-bottom: 4px; padding-bottom: 2px; border-bottom: 1px solid var(--line); }
@@ -385,6 +449,30 @@
     .dlg-hint { color: var(--dim, #8a7f6a); font-size: 11px; text-align: right; margin-top: 6px; }
     /* ── 캠페인 스테이지 목록 ── */
     #campaign-list { display: flex; flex-direction: column; gap: 6px; max-height: 56vh; overflow-y: auto; width: min(560px, 92vw); }
+    /* 캠페인 선택: 막(Act)별 컬럼 — 18스테이지가 한눈에 들어온다 */
+    #camp-acts {
+      display: grid; grid-template-columns: repeat(3, minmax(220px, 1fr));
+      gap: 14px; width: min(880px, 94vw); max-height: 62vh; overflow-y: auto;
+    }
+    .camp-act-col {
+      background: var(--panel); border: 1px solid var(--line); padding: 10px;
+      display: flex; flex-direction: column; gap: 5px; align-self: start;
+    }
+    .camp-act-col h3 {
+      color: var(--gold); font-size: 13px; margin: 0 0 6px;
+      padding-bottom: 6px; border-bottom: 1px solid var(--line);
+    }
+    .camp-act-col .camp-stage { padding: 7px 10px; font-size: 13px; }
+    .camp-progress { color: var(--dim); font-size: 12px; }
+    /* 기능 버튼 바: 스테이지 목록과 분리된 영역으로 */
+    .camp-tools {
+      display: flex; gap: 10px; flex-wrap: wrap; justify-content: center;
+      padding: 8px 0 0; border-top: 1px solid var(--line);
+      width: min(880px, 94vw); box-sizing: border-box;
+    }
+    @media (max-width: 900px) {
+      #camp-acts { grid-template-columns: 1fr; max-height: 52vh; }
+    }
     .camp-stage {
       display: flex; align-items: center; gap: 10px; text-align: left;
       background: var(--panel2, #1c1712); border: 1px solid var(--line, #3a3025);
@@ -403,6 +491,82 @@
       max-width: 92vw; text-align: center;
     }
     #campaign-goal.hidden { display: none; }
+    /* ── 로딩 오버레이 ── */
+    #loading {
+      position: fixed; inset: 0; z-index: 400;
+      background: rgba(10, 8, 5, .88);
+      display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 18px;
+    }
+    #loading.hidden { display: none; }
+    .load-spinner {
+      width: 44px; height: 44px; border-radius: 50%;
+      border: 4px solid rgba(201, 168, 106, .25);
+      border-top-color: var(--gold, #c9a86a);
+      animation: loadspin .8s linear infinite;
+    }
+    @keyframes loadspin { to { transform: rotate(360deg); } }
+    .load-text { color: var(--text, #efe6d5); font-size: 14px; letter-spacing: .06em; }
+    .load-sub { color: var(--dim, #8a7f6a); font-size: 11px; }
+
+    /* ── 타이틀 화면 ──────────────────────────────────────────────────────
+       메뉴 버튼이 아트에 그려져 있어서, 그 위에 투명 핫스팟을 얹어 클릭을
+       받는다 (좌표는 title.ts 가 원본 아트 픽셀 기준으로 계산해 넣는다).
+       화면비가 아트(3:2)와 다를 때 남는 여백은 같은 그림을 흐리게 깔아 메운다. */
+    #title {
+      position: fixed; inset: 0; z-index: 100;
+      display: flex; align-items: center; justify-content: center;
+      background: #06040a; overflow: hidden;
+      transition: opacity .34s ease;
+      animation: titleIn .5s ease;
+    }
+    #title.hidden { display: none; }
+    #title.fading { opacity: 0; pointer-events: none; }
+    @keyframes titleIn { from { opacity: 0; } to { opacity: 1; } }
+    .title-blur {
+      position: absolute; inset: -8%;
+      background: var(--title-art) center / cover no-repeat;
+      filter: blur(36px) brightness(.42) saturate(1.15);
+    }
+    .title-art { position: relative; line-height: 0; }
+    .title-art img {
+      display: block; width: auto; height: auto;
+      max-width: 100vw; max-height: 100dvh;
+      box-shadow: 0 0 90px rgba(0, 0, 0, .8);
+      /* 로드되면 아주 살짝 줌아웃하며 떠오른다 */
+      opacity: 0; transform: scale(1.035);
+      transition: opacity .9s ease, transform 1.4s ease;
+    }
+    .title-art img.ready { opacity: 1; transform: scale(1); }
+    .title-hot {
+      position: absolute; padding: 0; cursor: pointer;
+      background: transparent; border: 1px solid transparent;
+      -webkit-tap-highlight-color: transparent;
+      transition: background .16s, box-shadow .16s, border-color .16s;
+    }
+    .title-hot:focus { outline: none; }
+    .title-hot:hover, .title-hot.sel {
+      border-color: rgb(var(--tt-rgb) / .85);
+      background: rgb(var(--tt-rgb) / .16);
+      box-shadow: 0 0 16px rgb(var(--tt-rgb) / .4), inset 0 0 22px rgb(var(--tt-rgb) / .18);
+    }
+    .title-hint {
+      position: absolute; right: 14px; bottom: 12px;
+      color: rgba(232, 217, 191, .5); font-size: 11px; letter-spacing: .08em;
+      text-shadow: 0 1px 3px #000; pointer-events: none;
+    }
+    @media (max-width: 700px) { .title-hint { display: none; } }
+
+    /* ── 종료 화면 ── */
+    #farewell {
+      position: fixed; inset: 0; z-index: 110; background: #06040a;
+      display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 18px;
+      animation: titleIn .6s ease;
+    }
+    #farewell.hidden { display: none; }
+    #farewell .fw-mark { font-size: 30px; letter-spacing: .32em; color: var(--tt); }
+    #farewell p { color: var(--dim); text-align: center; line-height: 1.7; font-size: 13px; }
+
+    #menu-screen h2 { color: var(--gold); }
   </style>
 </head>
 <body>
@@ -424,6 +588,7 @@
     <button id="btn-chat" title="채팅 (Enter)" style="display:none">채팅</button>
     <button id="btn-shop" class="on" title="상점 접기/펼치기" style="display:none">상점</button>
     <button id="btn-quit" title="게임에서 나가기" style="display:none">나가기</button>
+    <button id="btn-pause" title="일시정지 (P / Space)">⏸ 일시정지</button>
     <div id="speed">
       <button data-speed="1" class="on">×1</button><button data-speed="2">×2</button><button data-speed="4">×4</button>
     </div>
@@ -431,6 +596,10 @@
   <div id="stage">
     <canvas id="minimap" width="280" height="44"></canvas>
     <div id="camhint">드래그·방향키(WASD): 이동 · 휠·+/−: 확대/축소 · 미니맵 클릭: 점프</div>
+    <div id="paused" class="hidden">
+      <div class="pz-title">일시정지</div>
+      <div class="pz-sub">아무 곳이나 클릭하거나 P · Space 를 눌러 계속</div>
+    </div>
   </div>
   <div id="bottombar">
     <div id="economy">
@@ -455,6 +624,11 @@
   <div id="tooltip" class="hidden"></div>
   <div id="unit-info" class="hidden"></div>
   <div id="upg-panel" class="hidden"></div>
+  <div id="loading" class="hidden">
+    <div class="load-spinner"></div>
+    <div class="load-text">전장을 여는 중…</div>
+    <div class="load-sub">지형과 부대를 불러오고 있습니다</div>
+  </div>
   <div id="dialogue" class="hidden">
     <div class="dlg-box">
       <img class="dlg-portrait" alt="" />
@@ -466,22 +640,34 @@
     </div>
   </div>
   <div id="campaign-goal" class="hidden"></div>
+  <div id="title" class="hidden">
+    <div class="title-blur"></div>
+    <div class="title-art">
+      <img id="title-img" alt="DESERTLIKE" />
+    </div>
+    <div class="title-hint">↑ ↓ 선택 · Enter 결정</div>
+  </div>
+  <div id="farewell" class="hidden">
+    <div class="fw-mark">DESERTLIKE</div>
+    <p>전장의 먼지가 가라앉았습니다.<br/>탭을 닫으면 완전히 종료됩니다.</p>
+    <button id="btn-fw-back" class="menubtn alt">← 타이틀로</button>
+  </div>
   <div id="overlay">
-    <h1>DESERTLIKE</h1>
+    <h1>DESERTLIKE<small id="overlay-sub"></small></h1>
     <div id="menu-screen">
-      <p>유닛을 구매하면 부대에 영구 편성되고, 내 차례가 올 때마다 부대 전체가 출격합니다.<br/>
-         상대 수호탑을 부수고 넥서스를 파괴하세요.</p>
+      <h2>⚔ 대전 게임</h2>
+      <p>다른 사람과 1:1 ~ 3:3 으로 겨룹니다. 방을 만들거나 열린 방에 참가하세요.<br/>
+         빈 자리는 AI 가 대신 맡을 수 있습니다.</p>
       <div class="menurow">
         <input id="nickname" maxlength="16" placeholder="닉네임" />
         <button id="btn-create" class="menubtn">방 만들기</button>
-        <button id="btn-solo" class="menubtn alt">연습 게임 (오프라인)</button>
-        <button id="btn-campaign" class="menubtn">🌲 캠페인</button>
       </div>
       <div id="net-status"></div>
       <div id="room-list"></div>
+      <div class="menurow"><button id="btn-menu-title" class="menubtn alt">← 타이틀로</button></div>
     </div>
     <div id="race-screen" class="hidden">
-      <p>연습 게임 — 나머지 5자리는 AI 로 채워집니다.</p>
+      <p id="race-note" class="hidden">연습 게임 (3:3) — 종족을 고르면 바로 시작합니다. 나머지 자리는 AI 가 맡아요.</p>
       <div id="races"></div>
     </div>
     <div id="room-screen" class="hidden">

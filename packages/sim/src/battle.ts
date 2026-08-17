@@ -12,7 +12,8 @@ import {
 } from './data.ts';
 import { dist2, idiv, isqrt, clamp, tiles } from './math.ts';
 import { nextChance, nextInt } from './rng.ts';
-import type { ActiveSkill, Entity, EntityDef, Game, TeamId } from './types.ts';
+import { isCombatTag } from './types.ts';
+import type { ActiveSkill, CombatTeam, Entity, EntityDef, Game, TeamId } from './types.ts';
 import { enemyOf } from './types.ts';
 
 function def(e: Entity): EntityDef {
@@ -30,6 +31,9 @@ function isFlying(g: Game, e: Entity): boolean {
 function canHit(g: Game, attacker: EntityDef, target: Entity): boolean {
   const w = attacker.weapon;
   if (!w) return false;
+  // 영구 무적(둥지 수호탑): 어차피 피해가 안 들어가므로 아예 조준하지 않는다 —
+  // 무적 몸빵이 적 화력을 빨아들이는 것 방지. 일시 무적(인비저블)은 그대로 조준된다.
+  if (target.invulnUntil >= Number.MAX_SAFE_INTEGER) return false;
   const tFlying = isFlying(g, target);
   if (w.targets === 'ground') return !tFlying;
   if (w.targets === 'air') return tFlying;
@@ -41,7 +45,7 @@ function canHit(g: Game, attacker: EntityDef, target: Entity): boolean {
  * (수호탑 → 수호자 → 넥서스 순서 강제)
  */
 function isShielded(g: Game, t: Entity): boolean {
-  return t.defId === 'nexus' && !g.guardianDown[t.team];
+  return t.defId === 'nexus' && !g.guardianDown[t.team as TeamId];
 }
 
 /** 수호자(중간보스)는 모든 상태이상에 면역이다. */
@@ -189,7 +193,7 @@ function nearestFoeWithin(
 
 /** 시각 전용 장판(폭발·마법진 자국)을 잠깐 심는다. 게임 효과 없음 — 그림만. */
 function dropFxZone(
-  g: Game, team: TeamId, kind: import('./types.ts').ZoneKind,
+  g: Game, team: CombatTeam, kind: import('./types.ts').ZoneKind,
   x: number, y: number, radius: number,
 ): void {
   g.zones.push({
@@ -333,9 +337,14 @@ function applyDamage(g: Game, attacker: Entity, attackerDef: EntityDef, victim: 
   }
   const w = attackerDef.weapon!;
   const vd = def(victim);
+  // 회피 (캠페인 강화): 평타만 피한다 — 마법·스킬·장판·독은 회피 불가
+  if (vd.dodgePct && nextChance(g.rng, vd.dodgePct)) {
+    victim.lastAttackerId = attacker.id;
+    return;
+  }
   let dmg = w.damage;
   if (w.bonus) {
-    for (const tag of vd.tags) dmg += w.bonus[tag] ?? 0;
+    for (const tag of vd.tags) if (isCombatTag(tag)) dmg += w.bonus[tag] ?? 0;
     if (vd.flying) dmg += w.bonus.flying ?? 0;
   }
   // 약화: 방어력 계산 전에 가하는 피해를 깎는다
@@ -410,11 +419,13 @@ function applyDamage(g: Game, attacker: Entity, attackerDef: EntityDef, victim: 
  */
 function pickNukeTarget(
   g: Game, e: Entity, d: EntityDef, range: number, mode: 'nearest' | 'highestHp',
+  extraFilter?: (t: Entity) => boolean,
 ): Entity | undefined {
   let best: Entity | undefined;
   let bestKey = -1;
   for (const t of g.entities) {
     if (!t.alive || t.team === e.team || !canHit(g, d, t) || isShielded(g, t)) continue;
+    if (extraFilter && !extraFilter(t)) continue;
     const td = def(t);
     const reach = range + d.radius + td.radius;
     const d2 = dist2(e.x, e.y, t.x, t.y);
@@ -449,7 +460,7 @@ function applyStrike(g: Game, attacker: Entity, a: ActiveSkill, victim: Entity):
 }
 
 /** 전투 중 유닛 생성 (수호자·소환수 공용). */
-function spawnBattleEntity(g: Game, defId: string, team: TeamId, owner: number, x: number, y: number, ov?: EntityDef): Entity {
+function spawnBattleEntity(g: Game, defId: string, team: CombatTeam, owner: number, x: number, y: number, ov?: EntityDef): Entity {
   const d = ov ?? DEFS[defId]!;
   const e: Entity = {
     id: g.nextEntityId++,
@@ -496,7 +507,9 @@ function spawnBattleEntity(g: Game, defId: string, team: TeamId, owner: number, 
 }
 
 function spawnGuardian(g: Game, team: TeamId, x: number, y: number): void {
-  spawnBattleEntity(g, GUARDIAN_OF[team], team, -1, x, y);
+  // 캠페인 테마 보스: 적 팀 수호자를 스테이지가 지정한 것으로 교체할 수 있다
+  const defId = team === 1 && g.enemyGuardian ? g.enemyGuardian : GUARDIAN_OF[team];
+  spawnBattleEntity(g, defId, team, -1, x, y);
   g.events.push({ tick: g.tick, kind: 'guardianSpawn', team });
 }
 
@@ -520,12 +533,15 @@ export function stepCombat(g: Game): void {
       if (!e.alive) continue;
       // 독/화상은 방어 무시 (무적 중엔 면역)
       if (g.tick < e.dotUntil && e.dotDps > 0 && g.tick >= e.invulnUntil) e.hp -= e.dotDps;
-      // 숲의 가호: 재생 특성 유닛 회복
+      // 재생: 숲의 가호 + 유닛 자체 재생(캠페인 강화)을 합산.
+      // (둥지 자체 재생은 뺐다 — 방어 28 상대 잡몹 실피해가 1이라 사실상 무적이 된다.
+      //  둥지 회복은 드루이드 치유로만.)
       const fb = forestBuffOf(g, e);
-      if (fb?.regenPerSec) {
+      const regen = (fb?.regenPerSec ?? 0) + (def(e).regenPerSec ?? 0);
+      if (regen > 0) {
         const max = def(e).maxHp;
         if (e.hp < max) {
-          e.hp += fb.regenPerSec;
+          e.hp += regen;
           if (e.hp > max) e.hp = max;
         }
       }
@@ -573,9 +589,38 @@ export function stepCombat(g: Game): void {
           // 아군 실바린: 숲의 가호 마킹 (비행 포함 — 숲 위를 나는 것도 가호)
           const until = g.tick + 6;
           if (until > e.forestUntil) e.forestUntil = until;
+        } else if (zd.healBioPerSec && dmgTick && d.tags.includes('bio')) {
+          // 치유 포자 (balm): 장판 안의 아군 생체를 초당 회복
+          const max = d.maxHp;
+          if (e.hp < max) {
+            e.hp += zd.healBioPerSec;
+            if (e.hp > max) e.hp = max;
+          }
         }
       }
     }
+  }
+
+  // 수비 모드: 이번 스텝의 "둥지 최근접 위협"을 한 번만 계산해 공유한다.
+  // 위협 = 팀 0 이 아닌 유닛 중 아군 넥서스에 가장 가까운 것 (동률은 배열 앞쪽).
+  let defendThreat: Entity | null = null;
+  if (g.defendNexus) {
+    const nx = g.map.nexusX[0];
+    const ny = laneCenterY(g.map, nx);
+    let bestD2 = -1;
+    for (const v of g.entities) {
+      if (!v.alive || v.team === 0) continue;
+      const vd = def(v);
+      if (vd.tier === 'structure') continue;
+      const d2v = dist2(nx, ny, v.x, v.y);
+      if (bestD2 < 0 || d2v < bestD2) {
+        bestD2 = d2v;
+        defendThreat = v;
+      }
+    }
+    // 마중 반경 13타일 — 그보다 먼 위협은 무시하고 둥지 곁을 지킨다
+    // (넓게 잡으면 위협이 바뀔 때마다 부대가 전장을 우왕좌왕 쏘다닌다)
+    if (defendThreat && bestD2 > tiles(13) * tiles(13)) defendThreat = null;
   }
 
   // 1) 타겟팅
@@ -605,7 +650,9 @@ export function stepCombat(g: Game): void {
 
     const cur = e.targetId >= 0 ? byId.get(e.targetId) : undefined;
     let valid = false;
-    if (cur && cur.alive && canHit(g, d, cur)) {
+    // cur.team 체크: 혼란 중 조준했던 "자기 편"이 회복 후에도 타겟으로 남아
+    // 유닛이 아군만 영원히 따라다니는 바보 상태를 막는다
+    if (cur && cur.alive && cur.team !== e.team && canHit(g, d, cur)) {
       const origin = acquireOrigin(e, d);
       const cd = def(cur);
       // 이미 문 대상은 탐지 거리의 1.3배까지 따라간다 (수호자는 앵커 기준 유지).
@@ -616,7 +663,7 @@ export function stepCombat(g: Game): void {
     // 보복 우선: 나를 때린 적을 내가 때릴 수 있으면 그쪽으로 전환한다.
     // 단, 현재 목표가 이미 나를 노리는 상호 교전이면 유지 (타겟 튐 방지).
     const atk = e.lastAttackerId >= 0 ? byId.get(e.lastAttackerId) : undefined;
-    if (atk && atk.alive && atk.id !== e.targetId && canHit(g, d, atk)) {
+    if (atk && atk.alive && atk.team !== e.team && atk.id !== e.targetId && canHit(g, d, atk)) {
       const curNow = valid ? byId.get(e.targetId) : undefined;
       const mutual = curNow !== undefined && curNow.targetId === e.id;
       if (!mutual) {
@@ -657,7 +704,8 @@ export function stepCombat(g: Game): void {
 
     // 공포: 싸움을 포기하고 자기 기지 방향으로 달아난다
     if (g.tick < e.fearedUntil) {
-      const nx = g.map.nexusX[e.team];
+      // 야생(팀 2)은 기지가 없다 — 적(팀 1) 기지 쪽으로 달아나는 것으로 근사
+      const nx = g.map.nexusX[e.team === 2 ? 1 : e.team];
       moveToward(g, e, d, nx, laneCenterY(g.map, nx), slowed);
       continue;
     }
@@ -708,8 +756,32 @@ export function stepCombat(g: Game): void {
     // 단, 적 넥서스가 아직 보호막(수호자 생존) 상태면 수호탑 자리까지만 밀고 간다.
     const m = g.map;
     const foe = enemyOf(e.team);
-    const nexusX = g.guardianDown[foe] ? m.nexusX[foe] : m.towerX[foe];
+    let nexusX = g.guardianDown[foe] ? m.nexusX[foe] : m.towerX[foe];
     const dir = e.team === 0 ? 1 : -1;
+    // 마몬의 상점 (점령제): 우리 팀 소유가 아니면 상점을 지나 진격하지 않는다 —
+    // 점령이 먼저다. 부대가 상점 앞에 멈춰 서고, 단독 점유 10초로 깃발을 꽂는다.
+    if (g.mercCaptureRequired && g.mercOwner !== e.team) {
+      const shopX = idiv(m.length, 2);
+      nexusX = dir > 0 ? Math.min(nexusX, shopX) : Math.max(nexusX, shopX);
+    }
+    // 디펜스전 (둥지 방어): 팀 0 부대는 수비선 너머로 진격하지 않는다
+    if (g.holdLineX > 0 && e.team === 0) {
+      nexusX = Math.min(nexusX, g.holdLineX);
+    }
+    // 수비 모드: 진군 대신 — 위협이 있으면 그 위치로 마중, 없으면 둥지 주변 대기
+    if (g.defendNexus && e.team === 0) {
+      if (defendThreat) {
+        moveToward(g, e, d, defendThreat.x, defendThreat.y, slowed);
+      } else {
+        const hx = g.map.nexusX[0];
+        const hy = laneCenterY(g.map, hx);
+        // 둥지에서 4타일 넘게 떨어졌으면 복귀, 가까우면 제자리 (겹침은 separate 가 푼다)
+        if (dist2(e.x, e.y, hx, hy) > tiles(4) * tiles(4)) {
+          moveToward(g, e, d, hx, hy, slowed);
+        }
+      }
+      continue;
+    }
     const distToNexus = dir > 0 ? nexusX - e.x : e.x - nexusX;
     if (distToNexus <= tiles(6)) {
       // 넥서스가 가까우면 직접 향한다
@@ -774,12 +846,25 @@ export function stepCombat(g: Game): void {
             if (aim) {
               const r = a.splash ?? tiles(2.5);
               const until = g.tick + (a.durTicks ?? 0);
+              // maxTargets 가 있으면 중심에서 가까운 순으로만 건다 (삽입 정렬,
+              // 동률은 배열 앞쪽이 이긴다 — 결정론 규칙 그대로).
+              const cap = a.maxTargets ?? Infinity;
+              const picks: { v: Entity; d2: number }[] = [];
               for (const v of g.entities) {
                 if (!v.alive || v.team === e.team || def(v).speed <= 0) continue;
                 if (g.tick < v.invulnUntil || isStatusImmune(v)) continue;
-                if (dist2(aim.x, aim.y, v.x, v.y) > r * r) continue;
-                if (until > v.fearedUntil) v.fearedUntil = until;
+                const d2v = dist2(aim.x, aim.y, v.x, v.y);
+                if (d2v > r * r) continue;
+                if (cap === Infinity) {
+                  if (until > v.fearedUntil) v.fearedUntil = until;
+                  continue;
+                }
+                let at = picks.length;
+                while (at > 0 && d2v < picks[at - 1]!.d2) at--;
+                picks.splice(at, 0, { v, d2: d2v });
+                if (picks.length > cap) picks.pop();
               }
+              for (const p of picks) if (until > p.v.fearedUntil) p.v.fearedUntil = until;
               e.skillCds[i] = a.cooldown;
             }
             break;
@@ -857,6 +942,21 @@ export function stepCombat(g: Game): void {
             }
             break;
           }
+          case 'root': { // 「덩굴 옭아매기」류 — 시전자 주변 지상 적을 제자리에 묶는다
+            if (!inCombat) break;
+            const r = a.splash ?? tiles(1.8);
+            const until = g.tick + (a.durTicks ?? 0);
+            let hit = false;
+            for (const v of g.entities) {
+              if (!v.alive || v.team === e.team || isFlying(g, v)) continue;
+              if (g.tick < v.invulnUntil || def(v).speed <= 0 || isStatusImmune(v)) continue;
+              if (dist2(e.x, e.y, v.x, v.y) > r * r) continue;
+              if (until > v.rootedUntil) v.rootedUntil = until;
+              hit = true;
+            }
+            if (hit) e.skillCds[i] = a.cooldown;
+            break;
+          }
           case 'freeze': { // 「블리자드」 대상 지역 빙결 (판금·거대·구조물 면역)
             const canFreeze = (v: Entity): boolean =>
               !isStatusImmune(v) && !FREEZE_IMMUNE_TAGS.some((tag) => def(v).tags.includes(tag));
@@ -894,11 +994,17 @@ export function stepCombat(g: Game): void {
           }
           case 'nuke': { // 무기와 무관하게 쿨마다 터지는 마법 (지옥불·화염구·망자의 만찬)
             const range = a.castRange ?? tiles(5);
-            const victim = pickNukeTarget(g, e, d, range, a.targetMode ?? 'nearest');
+            // 스킬 자체 대상 제한 (화살비 = 지상 전용) — 생략 시 무기 기준(canHit)
+            const skillCanHit = (v: Entity): boolean => {
+              if (a.targets === 'ground' && isFlying(g, v)) return false;
+              if (a.targets === 'air' && !isFlying(g, v)) return false;
+              return true;
+            };
+            const victim = pickNukeTarget(g, e, d, range, a.targetMode ?? 'nearest', skillCanHit);
             if (victim) {
               if (a.splash) {
                 for (const v of g.entities) {
-                  if (!v.alive || v.team === e.team || !canHit(g, d, v)) continue;
+                  if (!v.alive || v.team === e.team || !canHit(g, d, v) || !skillCanHit(v)) continue;
                   if (dist2(victim.x, victim.y, v.x, v.y) <= a.splash * a.splash) applyStrike(g, e, a, v);
                 }
               } else {
@@ -1119,10 +1225,13 @@ export function stepCombat(g: Game): void {
         if (picks.length > n) picks.pop();
       }
       for (const p of picks) applyDamage(g, e, d, p.v);
-    } else if (d.weapon.splash) {
+    } else if (d.weapon.splash && !(d.weapon.splashAirOnly && !isFlying(g, target))) {
+      // splashAirOnly: 공중을 때릴 때만 광역 — 지상 타겟은 아래 단일 타격으로 빠진다
       const r = d.weapon.splash;
+      const airOnly = d.weapon.splashAirOnly === true;
       for (const v of g.entities) {
         if (!v.alive || v.team !== target.team || v.id === e.id || !canHit(g, d, v) || isShielded(g, v)) continue;
+        if (airOnly && !isFlying(g, v)) continue; // 공중 전용 폭발은 지상을 휩쓸지 않는다
         if (dist2(target.x, target.y, v.x, v.y) <= r * r) applyDamage(g, e, d, v);
       }
     } else {
@@ -1187,30 +1296,54 @@ export function stepCombat(g: Game): void {
     }
   }
 
+  // 부활 대기 처리: 시간이 되면 되살아난다
+  for (const e of g.entities) {
+    if (!e.alive || e.reviveAtTick === undefined) continue;
+    if (g.tick >= e.reviveAtTick) {
+      const d = def(e);
+      e.hp = idiv(d.maxHp * (d.rebirth?.hpPct ?? 50), 100);
+      delete e.reviveAtTick;
+    }
+  }
+
   // 6) 사망 처리
   for (const e of g.entities) {
     if (!e.alive || e.hp > 0) continue;
+    // 1회 부활 (검은새): 죽는 대신 쓰러져 있다가 되살아난다
+    {
+      const rb = def(e).rebirth;
+      if (rb && !e.rebirthUsed) {
+        e.rebirthUsed = true;
+        e.hp = 1;
+        e.reviveAtTick = g.tick + rb.delayTicks;
+        e.invulnUntil = g.tick + rb.delayTicks; // 쓰러진 동안 무적
+        e.stunnedUntil = g.tick + rb.delayTicks; // + 행동불능
+        continue;
+      }
+    }
     e.alive = false;
     if (e.defId === 'tower') {
-      g.events.push({ tick: g.tick, kind: 'towerDown', team: e.team });
+      const t = e.team as TeamId; // 구조물은 팀 0|1 만 존재
+      g.events.push({ tick: g.tick, kind: 'towerDown', team: t });
       // 파괴 보상: 부순 팀 전원에게 지급
-      const winners = enemyOf(e.team);
+      const winners = enemyOf(t);
       for (const p of g.players) {
         if (p.team === winners) p.money += MAP.TOWER_BOUNTY;
       }
-      spawnGuardian(g, e.team, e.x, e.y);
+      spawnGuardian(g, t, e.x, e.y);
     } else if (e.defId === 'nexus') {
-      const winner = enemyOf(e.team);
+      const winner = enemyOf(e.team as TeamId);
       g.over = { winner };
       g.events.push({ tick: g.tick, kind: 'gameOver', winner });
     } else if (def(e).tier === 'guardian') {
+      const t = e.team as TeamId; // 수호자도 팀 0|1 만 존재
       // 수호자 격파 → 이 팀의 넥서스 보호막 해제 + 부순 팀 전원에게 보상
-      g.guardianDown[e.team] = true;
-      const winners = enemyOf(e.team);
+      g.guardianDown[t] = true;
+      const winners = enemyOf(t);
       for (const p of g.players) {
         if (p.team === winners) p.money += MAP.GUARDIAN_BOUNTY;
       }
-      g.events.push({ tick: g.tick, kind: 'guardianDown', team: e.team });
+      g.events.push({ tick: g.tick, kind: 'guardianDown', team: t });
     }
   }
 
@@ -1226,8 +1359,10 @@ function findWoundedAlly(g: Game, healer: Entity, d: EntityDef, range: number): 
   for (const t of g.entities) {
     if (!t.alive || t.team !== healer.team || t.id === healer.id) continue;
     const td = def(t);
-    // 구조물·수호자는 치유 대상이 아니다 (힐러가 중간보스에 눌러앉는 것 방지)
-    if (td.tier === 'structure' || td.tier === 'guardian' || td.heal) continue;
+    // 구조물·수호자는 치유 대상이 아니다 (힐러가 중간보스에 눌러앉는 것 방지).
+    // 예외: 수비 모드(둥지 방어)의 아군 넥서스(둥지)는 치유할 수 있다.
+    const nestHealable = g.defendNexus && t.defId === 'nexus' && t.team === healer.team;
+    if ((td.tier === 'structure' && !nestHealable) || td.tier === 'guardian' || td.heal) continue;
     if (t.hp >= td.maxHp) continue;
     // 수리 불가 대상 (예: 재봉사는 언데드를 수리할 수 없다)
     if (d.heal!.excludeTags?.some((tag) => td.tags.includes(tag))) continue;

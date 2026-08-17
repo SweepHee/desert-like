@@ -9,10 +9,10 @@
  * 전부 시각 연출일 뿐 시뮬 상태는 건드리지 않는다 (결정론 무관).
  */
 import {
-  Application, Assets, ColorMatrixFilter, Container, Graphics, Rectangle, Sprite, Texture,
+  Application, Assets, ColorMatrixFilter, Container, Graphics, Rectangle, Sprite, Text, Texture,
 } from 'pixi.js';
 import {
-  DEFS, FP, MAPS, DEFAULT_MAP, laneCenterY, mapHalfH, tiles,
+  DEFS, FP, MAPS, DEFAULT_MAP, laneCenterY, laneHalfWAt, mapHalfH, tiles,
   type Game, type MapDef,
 } from '@desertlike/sim';
 import { artOf } from './sprites.ts';
@@ -38,6 +38,11 @@ const EDGE_MARGIN = tiles(3);
 /** 렌더 기준 맵 반높이 (시뮬 반높이 + 바깥 지형 여백). */
 function renderHalfH(m: MapDef = curMap): number {
   return mapHalfH(m) + EDGE_MARGIN;
+}
+
+/** 시뮬 y 좌표(FP) → 월드 픽셀 y (미니맵 점프용). */
+export function worldYOf(yFP: number): number {
+  return ((yFP + renderHalfH()) / FP) * TILE * Y_SQUASH + PAD_TOP;
 }
 
 /** 월드 픽셀 크기 (줌 적용 전, 현재 맵 기준). */
@@ -118,6 +123,37 @@ export const ASSET_UNITS: Record<string, string | string[]> = {
   tower: '/assets/units/tower.png',
   dragon: '/assets/units/dragon.png',
   hollow: '/assets/units/hollow.png',
+  teddy_guardian: '/assets/units/teddy_guardian.png',
+  // 장난감 나라(toybox) 전용 건물 스킨 — 스프라이트 생성 시 맵으로 갈린다
+  tower_toy: '/assets/units/tower_toy.png',
+  nexus_toy: '/assets/units/nexus_toy.png',
+  // 사령(판데모니엄) 건물 스킨 — 캠페인 enemySkin: 'bone'
+  tower_bone: '/assets/units/tower_bone.png',
+  nexus_bone: '/assets/units/nexus_bone.png',
+  // 마몬의 상점 (캠페인 점령 오브젝트 — 전투 개입 없음, 그림+점령 표시만)
+  mercshop: '/assets/units/mercshop.png',
+  // 둥지 (11스테이지) — nest 맵의 아군 넥서스 스킨
+  nexus_nest: '/assets/units/nexus_nest.png',
+  // 12스테이지 보스 — 발타르의 선봉장
+  c_balthar_general: '/assets/units/c_balthar_general.png',
+  // 마몬의 용병 — 원본 판데모니엄 그림 재사용 (스펙만 독립)
+  merc_headless_knight: '/assets/units/p_headless_knight.png',
+  merc_lich: '/assets/units/p_lich.png',
+  merc_thanatos: '/assets/units/p_thanatos.png',
+  // 둥지 수호탑 (11스테이지) — 원본 공중 유닛 그림 재사용
+  c_nest_wyvern: '/assets/units/s_wyvern.png',
+  c_nest_unicorn: '/assets/units/s_unicorn.png',
+  c_nest_fairy: '/assets/units/s_fairy.png',
+  // 야생 무리 (11스테이지)
+  c_wild_wolf_gray: '/assets/units/c_wild_wolf_gray.png',
+  c_wild_snake: '/assets/units/c_wild_snake.png',
+  c_wild_wolf_black: '/assets/units/c_wild_wolf_black.png',
+  c_wild_tarantula: '/assets/units/c_wild_tarantula.png',
+  c_wild_kestrel: '/assets/units/c_wild_kestrel.png',
+  c_wild_bear_gray: '/assets/units/c_wild_bear_gray.png',
+  c_wild_direwolf: '/assets/units/c_wild_direwolf.png',
+  c_wild_grizzly: '/assets/units/c_wild_grizzly.png',
+  c_wild_blackbird: '/assets/units/c_wild_blackbird.png',
 };
 
 /** 상점 아이콘용 정면(south) 스프라이트. 전장은 측면, 아이콘은 정면. */
@@ -160,6 +196,9 @@ const ASSET_ICONS: Record<string, string> = {
   p_hound: '/assets/units/p_hound_icon.png',
   p_bone_thrower: '/assets/units/p_bone_thrower_icon.png',
   p_headless_knight: '/assets/units/p_headless_knight_icon.png',
+  merc_headless_knight: '/assets/units/p_headless_knight_icon.png',
+  merc_lich: '/assets/units/p_lich_icon.png',
+  merc_thanatos: '/assets/units/p_thanatos_icon.png',
   p_corpsecaller: '/assets/units/p_corpsecaller_icon.png',
   p_banshee: '/assets/units/p_banshee_icon.png',
   p_thanatos: '/assets/units/p_thanatos_icon.png',
@@ -185,6 +224,37 @@ export function assetIconUrl(defId: string): string | undefined {
  */
 /** 공격 애니메이션: [변형][프레임] URL. 공격 순간 프레임을 순차 재생한다. */
 const atk4 = (id: string): string[][] => [[0, 1, 2, 3].map((n) => `/assets/units/${id}_atk${n}.png`)];
+
+/**
+ * 이동 방향별 그림을 보유한 유닛. `<defId>_e/_w/_n/_s.png` 4장이 모두 있어야
+ * 등록된다 (하나라도 빠지면 기존 좌우 반전 방식 유지).
+ * 엘프 궁수는 여/남 변형이라 제외 — 변형과 방향을 함께 다루려면 별도 작업 필요.
+ */
+const DIR_SPRITE_UNITS: string[] = [
+  's_gouto', 's_vine_hunter', 's_marmot', 's_druid', 's_mushroom_bomber',
+  's_owl', 's_butterfly', 's_thorn_witch', 's_treekeeper', 's_apostle',
+  's_treant', 's_marksman', 's_sage', 's_wyvern', 's_unicorn', 's_fairy',
+  'p_deadman', 'p_skeleton', 'p_hound', 'p_bone_thrower', 'p_headless_knight',
+  'p_corpsecaller', 'p_banshee', 'p_thanatos', 'p_corpse_golem', 'p_wraith',
+  'p_summoner', 'p_lich', 'p_demilich', 'p_mammon',
+  'p_minion_ghoul', 'p_minion_undead', 'p_minion_skeleton', 'p_minion_rat',
+  'm_plushbear', 'm_clockwork_soldier', 'm_button_doll', 'm_puppet_swordsman',
+  'm_clockwork_spider', 'm_clown_doll', 'm_cursed_doll', 'm_casper',
+  'm_puppet_ann', 'm_specter_teddy', 'm_grandfather_clock', 'm_pennywise',
+  'm_thread_needle', 'm_clocktower_gear', 'm_gore_teddy', 'm_alice',
+  'dragon', 'hollow', 'teddy_guardian',
+  'c_wild_wolf_gray', 'c_wild_wolf_black', 'c_wild_direwolf', 'c_wild_bear_gray',
+  'c_wild_grizzly', 'c_wild_snake', 'c_wild_tarantula', 'c_wild_kestrel', 'c_wild_blackbird',
+  'c_balthar_general',
+  // 엘프 궁수는 여/남 변형별 세트 — 렌더에서 변형 인덱스로 키를 고른다
+  's_elf_archer_f', 's_elf_archer_m',
+];
+
+/** 공중 타겟 전용 공격 프레임 — 등록된 유닛은 지상/공중 모션이 갈린다. */
+const ASSET_ATTACK_ANIMS_AIR: Record<string, string[][]> = {
+  // 곰인형 수호자: 공중엔 양팔 치켜들어 내리찍기, 지상엔 포효하며 땅찍기
+  teddy_guardian: [[0, 1, 2, 3].map((n) => `/assets/units/teddy_guardian_air${n}.png`)],
+};
 
 const ASSET_ATTACK_ANIMS: Record<string, string[][]> = {
   // 엘프 궁수: 변형(여/남)별 4프레임 발사 모션 (화살 뽑기→시위 당기기→발사)
@@ -229,6 +299,9 @@ const ASSET_ATTACK_ANIMS: Record<string, string[][]> = {
   p_hound: atk4('p_hound'),
   p_bone_thrower: atk4('p_bone_thrower'),
   p_headless_knight: atk4('p_headless_knight'),
+  merc_headless_knight: atk4('p_headless_knight'),
+  merc_lich: atk4('p_lich'),
+  merc_thanatos: atk4('p_thanatos'),
   p_corpsecaller: atk4('p_corpsecaller'),
   p_banshee: atk4('p_banshee'),
   p_thanatos: atk4('p_thanatos'),
@@ -245,6 +318,7 @@ const ASSET_ATTACK_ANIMS: Record<string, string[][]> = {
   // 수호자 (중간보스)
   dragon: atk4('dragon'),
   hollow: atk4('hollow'),
+  teddy_guardian: atk4('teddy_guardian'),
   // 캠페인 특수 유닛 — 원본 유닛 모션 재활용
   c_ash_revenant: atk4('p_wraith'),
   c_mad_ballerina: atk4('m_puppet_ann'),
@@ -338,6 +412,10 @@ const ASSET_SIZE_MUL: Record<string, number> = {
   c_kurga: 1.7,
   c_mammon_lord: 1.6,
   c_balthar: 2.1,
+  teddy_guardian: 1.25, // 수호자 위용 — radius 보정 위에 한 번 더
+  c_nest_wyvern: 1.3, c_nest_unicorn: 1.3, c_nest_fairy: 1.3, // 둥지 수호탑 — 타워 위용
+  c_wild_blackbird: 1.4, c_wild_grizzly: 1.2, c_wild_direwolf: 1.15,
+  c_balthar_general: 1.5, // 12 보스 — 슬리피 할로우급 거구
 };
 
 /**
@@ -366,37 +444,75 @@ interface GroundTheme {
   /** 레인 안(걷는 길)에 낮은 밀도로 깔 납작한 지면 장식. */
   readonly laneProps?: readonly string[];
   /**
+   * 길 안쪽(완전히 걷는 길인 칸, wang idx 15)의 변형 타일 파일명들.
+   * 시트의 기본 타일과 해시로 섞여 "여러 타입의 바닥"을 만든다.
+   */
+  readonly fullVariants?: readonly string[];
+  /**
    * 지면 타일에 탈색·감광 필터를 씌운다 (불탄 지형).
    * 같은 숲 시트를 재활용하므로 초록 구역과 형태가 이어져 경계가 자연스럽다.
    * 소품은 필터를 타지 않아 잔불이 그대로 빛난다.
    */
   readonly scorched?: boolean;
+  /** 대형 랜드마크 소품 (선택). */
+  landmark?: string;
+  /**
+   * 바깥 지형(idx 0) 변형 무늬 — 64px 는 2×2 블록으로 깔린다.
+   * 기본 타일과 해시로 섞여 반복 잔무늬의 피로를 줄인다.
+   */
+  outerVariants?: string[];
 }
 
 const THEMES: Record<string, GroundTheme> = {
   forest: {
     sheet: '/assets/tiles/forest.png',
     wang: WANG_16,
-    // 길 위 장식은 생성물이 네모 배경째 얹혀 보여서 일단 비웠다.
-    // 길 타일 자체(흙길)에 이미 결이 있어 단조롭지 않다.
     props: ['forest_tree', 'forest_bush', 'forest_grass'],
+    // 길 위 장식 (투명 배경 소품) — 이동엔 영향 없는 순수 그림.
+    // 풀·꽃은 자주, 묘목은 드물게 (가중치 = 배열 중복 등장 횟수)
+    laneProps: ['lane_grass', 'lane_grass', 'lane_flowers', 'lane_leaves', 'lane_leaves', 'lane_sapling'],
   },
   burnt: {
     sheet: '/assets/tiles/forest.png',
     wang: WANG_16,
     scorched: true,
     props: ['burnt_tree', 'burnt_stump'],
+    laneProps: ['lane_embers', 'lane_charred', 'lane_charred'],
   },
   desert: {
     sheet: '/assets/tiles/desert.png',
     wang: WANG_16,
-    props: ['prop_cactus', 'prop_skull', 'prop_tree'],
+    props: [
+      'prop_cactus', 'prop_cactus2', 'prop_cactus3', 'prop_cactus4',
+      'prop_skull', 'prop_skull2', 'prop_bones1', 'prop_bones2',
+      'prop_tree', 'prop_tree2', 'prop_tree3', 'prop_tree4',
+    ],
+    laneProps: ['lane_gravel', 'lane_gravel', 'lane_dryweed'],
+    /** 대형 랜드마크 — 맵당 몇 곳에만 큼지막하게 자리 잡는다. */
+    landmark: 'prop_giant_ribcage',
+    outerVariants: ['desert_out1', 'desert_out2', 'desert_out3'],
+  },
+  // 고산 지대 (캠페인 11 — 바람의 둥지): 안개 낀 설산 바위 사이 판석 길
+  alpine: {
+    sheet: '/assets/tiles/alpine.png',
+    wang: WANG_16,
+    props: ['prop_pine_snow', 'prop_alpine_rock', 'prop_alpine_rock'],
+    laneProps: ['lane_alpinegrass', 'lane_pebbles', 'lane_alpinegrass'],
+  },
+  // 저주받은 땅 (캠페인 12 — 발타르군 요새 앞): 검은 현무암 길 + 소울파이어 균열
+  necro: {
+    sheet: '/assets/tiles/necro.png',
+    wang: WANG_16,
+    props: ['prop_necro_candles', 'prop_necro_pillar', 'prop_skull2', 'prop_bones1'],
+    laneProps: ['lane_ash', 'lane_ash', 'lane_charred'],
   },
   // 장난감 나라 (캠페인 2막 — 마리오네타 왕국)
   toy: {
     sheet: '/assets/tiles/toy.png',
     wang: WANG_16,
     props: ['prop_teddy', 'prop_rockinghorse', 'prop_blocks'],
+    laneProps: ['lane_crayon', 'lane_marbles', 'lane_marbles'],
+    fullVariants: ['toy_full_puzzle2', 'toy_full_puzzle3'],
   },
 };
 
@@ -407,11 +523,17 @@ const THEMES: Record<string, GroundTheme> = {
 const MAP_THEMES: Record<string, readonly string[]> = {
   plains: ['forest', 'burnt'],
   valley: ['desert'],
+  greedvalley: ['desert'],
+  nest: ['alpine'],
+  confluence: ['necro'],
   toybox: ['toy'],
 };
 
 /** 맵 바깥(캔버스 여백) 색. 지형과 이어지는 톤으로. */
 const MAP_BG: Record<string, number> = {
+  confluence: 0x131a14, // 소울파이어가 스민 칠흑
+  nest: 0x2b3240, // 고산의 푸른 안개
+  greedvalley: 0x2a2013, // 금빛이 스민 협곡 그늘
   plains: 0x1d2a19, // 깊은 숲 그늘
   valley: 0x9c7c4e,
   toybox: 0x3a2438, // 장난감 방의 어둑한 자주빛
@@ -490,6 +612,10 @@ interface UnitFx {
   /** 공격 애니메이션 재생 구간 [aimStart, aimUntil). */
   aimStart: number;
   aimUntil: number;
+  /** 직전 공격의 타겟이 공중 유닛이었나 — 공중 전용 모션 분기. */
+  atkAir: boolean;
+  /** 바라보는 방향 (이동 벡터 기반, 방향 그림 보유 유닛용). */
+  faceDir: 'e' | 'w' | 'n' | 's';
   /** 스킬 시전 애니메이션 재생 구간 (전용 프레임 보유 유닛만). */
   skillStart: number;
   skillUntil: number;
@@ -528,11 +654,13 @@ export interface Renderer {
   app: Application;
   /** 게임 시작 시 맵 교체 — 지형을 다시 그리고 카메라를 리셋한다. */
   setMap(m: MapDef): void;
+  /** 적(팀1) 건물 스킨 설정 (캠페인). null = 기본/맵 자동. */
+  setEnemySkin(skin: 'toy' | 'bone' | null): void;
   /** 시뮬 스텝 직전에 호출 — 보간용 이전 위치 스냅샷. */
   beforeStep(g: Game): void;
   draw(g: Game, alpha: number): void;
   panBy(dxScreenPx: number, dyScreenPx?: number): void;
-  centerOn(xWorldPx: number): void;
+  centerOn(xWorldPx: number, yWorldPx?: number): void;
   zoomBy(factor: number, anchorX?: number, anchorY?: number): void;
   view(): { x0: number; x1: number };
   /** 화면 좌표에서 가장 가까운 유닛 id (없으면 null). 클릭 선택용. */
@@ -585,6 +713,12 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
 
   // 공격 애니메이션 텍스처: [변형][프레임] (없으면 교체 없이 기본 자세 유지)
   const attackTex = new Map<string, Texture[][]>();
+  const airAttackTex = new Map<string, Texture[][]>();
+  /**
+   * 이동 방향별 스프라이트 (있는 유닛만): east 는 기존 기본 그림, 나머지는
+   * `<defId>_w/_n/_s.png`. 등록된 유닛은 좌우 반전 대신 실제 방향 그림을 쓴다.
+   */
+  const dirTex = new Map<string, { e?: Texture; w?: Texture; n?: Texture; s?: Texture }>();
   await Promise.all(
     Object.entries(ASSET_ATTACK_ANIMS).map(async ([defId, variants]) => {
       const loaded: Texture[][] = [];
@@ -598,6 +732,35 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
         if (texs.length > 0) loaded.push(texs);
       }
       if (loaded.length > 0) attackTex.set(defId, loaded);
+    }),
+  );
+  await Promise.all(
+    DIR_SPRITE_UNITS.map(async (defId) => {
+      const [eTex, w, n, sTex] = await Promise.all([
+        loadTex(`/assets/units/${defId}_e.png`),
+        loadTex(`/assets/units/${defId}_w.png`),
+        loadTex(`/assets/units/${defId}_n.png`),
+        loadTex(`/assets/units/${defId}_s.png`),
+      ]);
+      // 4방향이 온전히 갖춰진 유닛만 등록 — 한 캐릭터의 그림으로 일관되게 돈다
+      if (eTex && w && n && sTex) {
+        dirTex.set(defId, { e: eTex, w, n, s: sTex });
+      }
+    }),
+  );
+  await Promise.all(
+    Object.entries(ASSET_ATTACK_ANIMS_AIR).map(async ([defId, variants]) => {
+      const loaded: Texture[][] = [];
+      for (const frames of variants) {
+        const texs: Texture[] = [];
+        for (const url of frames) {
+          const t = await loadTex(url);
+          if (t) texs.push(t);
+          else break;
+        }
+        if (texs.length > 0) loaded.push(texs);
+      }
+      if (loaded.length > 0) airAttackTex.set(defId, loaded);
     }),
   );
   // 업그레이드 스킨 텍스처 (+ 스킨 전용 공격 프레임)
@@ -633,7 +796,10 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
   );
   // 지형 테마별 Wang 타일 + 소품 텍스처. 시트가 없는 테마는 코드 지형으로 폴백.
   const themeTiles = new Map<string, Map<number, Texture>>();
+  const themeFullVariants = new Map<string, Texture[][]>();
+  const themeOuterVariants = new Map<string, Texture[][]>();
   const themeProps = new Map<string, Texture[]>();
+  const themeLandmarks = new Map<string, Texture>();
   const themeLaneProps = new Map<string, Texture[]>();
   await Promise.all(
     Object.entries(THEMES).map(async ([name, theme]) => {
@@ -654,12 +820,53 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
         if (t) props.push(t);
       }
       if (props.length > 0) themeProps.set(name, props);
+      if (theme.landmark) {
+        const lt = await loadTex(`/assets/tiles/${theme.landmark}.png`);
+        if (lt) themeLandmarks.set(name, lt);
+      }
       const lane: Texture[] = [];
       for (const p of theme.laneProps ?? []) {
         const t = await loadTex(`/assets/tiles/${p}.png`);
         if (t) lane.push(t);
       }
       if (lane.length > 0) themeLaneProps.set(name, lane);
+      const fulls: Texture[][] = [];
+      for (const v of theme.fullVariants ?? []) {
+        const t = await loadTex(`/assets/tiles/${v}.png`);
+        if (!t) continue;
+        if (t.width >= 64) {
+          // 64px 변형: 2×2 타일에 걸쳐 깔리는 큰 무늬 — 사분면 [좌상, 우상, 좌하, 우하]
+          const h2 = t.width / 2;
+          const v2 = t.height / 2;
+          fulls.push([
+            new Texture({ source: t.source, frame: new Rectangle(0, 0, h2, v2) }),
+            new Texture({ source: t.source, frame: new Rectangle(h2, 0, h2, v2) }),
+            new Texture({ source: t.source, frame: new Rectangle(0, v2, h2, v2) }),
+            new Texture({ source: t.source, frame: new Rectangle(h2, v2, h2, v2) }),
+          ]);
+        } else {
+          fulls.push([t]); // 32px 변형: 단일 타일
+        }
+      }
+      if (fulls.length > 0) themeFullVariants.set(name, fulls);
+      const outers: Texture[][] = [];
+      for (const v of theme.outerVariants ?? []) {
+        const t = await loadTex(`/assets/tiles/${v}.png`);
+        if (!t) continue;
+        if (t.width >= 64) {
+          const h2 = t.width / 2;
+          const v2 = t.height / 2;
+          outers.push([
+            new Texture({ source: t.source, frame: new Rectangle(0, 0, h2, v2) }),
+            new Texture({ source: t.source, frame: new Rectangle(h2, 0, h2, v2) }),
+            new Texture({ source: t.source, frame: new Rectangle(0, v2, h2, v2) }),
+            new Texture({ source: t.source, frame: new Rectangle(h2, v2, h2, v2) }),
+          ]);
+        } else {
+          outers.push([t]);
+        }
+      }
+      if (outers.length > 0) themeOuterVariants.set(name, outers);
     }),
   );
   // 투사체 그림 (없으면 색 선분 폴백)
@@ -673,6 +880,8 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
 
   // 장판 데칼 (없으면 코드 타원 폴백)
   const zoneTex = new Map<string, Texture>();
+  /** 장판 성장 프레임 (가시밭): 돋아남 → 반쯤 자람 → 만개(zone_thorns.png). */
+  const zoneGrowTex = new Map<string, Texture[]>();
   await Promise.all(
     [
       'thorns', 'spores', 'forest', 'grave', 'blaze',
@@ -683,6 +892,15 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
       if (t) zoneTex.set(kind, t);
     }),
   );
+  {
+    // 가시밭: 솟아오르는 성장 프레임 (없으면 조용히 단일 데칼로)
+    const frames: Texture[] = [];
+    for (const n of [0, 1]) {
+      const t = await loadTex(`/assets/fx/zone_thorns_grow${n}.png`);
+      if (t) frames.push(t);
+    }
+    if (frames.length > 0) zoneGrowTex.set('thorns', frames);
+  }
   // 부유/날갯짓 프레임
   const flapTex = new Map<string, Texture[]>();
   await Promise.all(
@@ -711,7 +929,14 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
   }
   const ground = new Graphics();       // 폴백 지형 + 진영 틴트/중앙선 오버레이
   const zonesGr = new Graphics(); // 장판 폴백 (데칼 텍스처가 없을 때)
+  /** 마몬의 상점 (캠페인 점령 오브젝트) — 필요할 때만 생성. */
+  let mercShopSp: Sprite | null = null;
+  /** 앨리스 베이스 장식 (합류점 맵 위 갈래 끝) — 순수 그림. */
+  let allyBaseSp: Sprite | null = null;
+  let mercShopLabel: Text | null = null;
   const zoneLayer = new Container(); // 장판 픽셀 데칼
+  /** 고산 구름·안개 (nest 맵): 전장 위를 느리게 흐르는 반투명 레이어. */
+  const cloudLayer = new Container();
   const shadows = new Graphics();
   const corpseLayer = new Container();
   const units = new Container();
@@ -722,6 +947,7 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
   world.addChild(
     groundTiles, scorchedTiles, groundProps, ground,
     zonesGr, zoneLayer, shadows, corpseLayer, units, fx, projLayer, bars,
+    cloudLayer, // 구름은 모든 것 위로 흐른다 (반투명)
   );
   app.stage.addChild(world);
 
@@ -756,11 +982,20 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
       const burntChance = ((d + BLEND) / (BLEND * 2)) * 1000;
       return h % 1000 < burntChance ? names[1]! : names[0]!;
     };
-    // Wang 코너 판정: 꼭짓점이 코리도어(걷는 길) 안인가
+    // Wang 코너 판정: 꼭짓점이 코리도어(걷는 길) 안인가 — 메인 레인 + 가지 길
     const laneV = (vx: number, vy: number): number => {
       const wx = Math.max(0, Math.min(m.length, vx * FP));
       const cy = (laneCenterY(m, wx) + halfH) / FP;
-      return Math.abs(vy - cy) <= laneHalf ? 1 : 0;
+      const hw = laneHalfWAt(m, wx) / FP; // 초크 구간은 좁다
+      if (Math.abs(vy - cy) <= hw) return 1;
+      for (const b of m.branches ?? []) {
+        const bw = (b.halfW ?? m.halfW) / FP;
+        const bx = b.x / FP;
+        const by0 = (b.y0 + halfH) / FP;
+        const by1 = (b.y1 + halfH) / FP;
+        if (Math.abs(vx - bx) <= bw && vy >= by0 - 0.5 && vy <= by1 + bw) return 1;
+      }
+      return 0;
     };
     // 같은 타일이 반복될 때의 단조로움을 덜기 위한 아주 미세한 명암 변주.
     // 규칙적인 식으로 고르면 체커보드가 보이므로 해시로 흩는다.
@@ -771,7 +1006,32 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
         const tiles = themeTiles.get(name);
         if (!tiles) continue;
         const idx = laneV(i, j) * 8 + laneV(i + 1, j) * 4 + laneV(i, j + 1) * 2 + laneV(i + 1, j + 1);
-        const tex = tiles.get(idx);
+        let tex = tiles.get(idx);
+        // 길 안쪽 칸: 변형 무늬와 해시로 섞는다. 64px 변형은 2×2 블록에 걸쳐
+        // 깔려 큼지막한 무늬가 되고, 블록 단위로 종류를 고르므로 무늬가 안 끊긴다.
+        if (idx === 0) {
+          const outers = themeOuterVariants.get(name);
+          if (outers && outers.length > 0) {
+            const bi = i >> 1;
+            const bj = j >> 1;
+            const vh = ((bi * 2654435761) ^ (bj * 40503)) >>> 0;
+            // 변형만 사용 — 원본 잔무늬 타일은 반복 피로의 원인이라 아예 걷어낸다.
+            // 변형끼리는 같은 팔레트라 경계가 자연스럽다.
+            const quads = outers[vh % outers.length]!;
+            tex = quads.length === 4 ? quads[(j & 1) * 2 + (i & 1)]! : quads[0]!;
+          }
+        }
+        if (idx === 15) {
+          const variants = themeFullVariants.get(name);
+          if (variants && variants.length > 0) {
+            const bi = i >> 1;
+            const bj = j >> 1;
+            const vh = ((bi * 2654435761) ^ (bj * 40503)) >>> 0;
+            // 길 안쪽은 변형 무늬만 사용 — 시트의 잔무늬 기본 타일이 섞이면 얼룩져 보인다
+            const quads = variants[vh % variants.length]!;
+            tex = quads.length === 4 ? quads[(j & 1) * 2 + (i & 1)]! : quads[0]!;
+          }
+        }
         if (!tex) continue;
         const sp = new Sprite(tex);
         sp.x = i * TILE;
@@ -794,7 +1054,7 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
         if (!props || props.length === 0) continue;
         const h = ((i * 73856093) ^ (j * 19349663)) >>> 0;
         // 길가는 우거지게, 멀어질수록 성기게 (협곡처럼 바깥이 넓은 맵에서 과밀 방지)
-        const density = inBand ? 8 : out < 2 ? 24 : out < 5 ? 13 : 6;
+        const density = inBand ? 14 : out < 2 ? 24 : out < 5 ? 13 : 6;
         if (h % 100 >= density) continue;
         const tex = props[h % props.length]!;
         const sp = new Sprite(tex);
@@ -807,6 +1067,53 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
         groundProps.addChild(sp);
       }
     }
+    // 대형 랜드마크: 맵 25%·75% 지점 길가 바깥에 하나씩 큼지막하게.
+    // 위치는 맵 길이 기반 고정 — 어느 시드든 같은 자리라 지형지물로 기억된다.
+    for (const [name, ltex] of themeLandmarks) {
+      if (!MAP_THEMES[m.id]?.includes(name)) continue;
+      for (const frac of [0.25, 0.75]) {
+        const i = Math.floor(tilesX * frac);
+        const cyT = (laneCenterY(m, i * FP) + halfH) / FP;
+        const above = frac < 0.5; // 하나는 길 위쪽, 하나는 아래쪽
+        const j = cyT + (above ? -(laneHalf + 3.2) : laneHalf + 4.6);
+        const sp = new Sprite(ltex);
+        sp.anchor.set(0.5, 1);
+        sp.scale.set((TILE * 7) / ltex.width);
+        sp.x = i * TILE;
+        sp.y = PAD_TOP + j * th;
+        sp.zIndex = sp.y;
+        groundProps.addChild(sp);
+      }
+    }
+  }
+
+  // 고산 구름: nest 맵에서만 — 화면을 가로질러 느리게 흐른다
+  const cloudTexs: Texture[] = [];
+  for (const n of ['fx_cloud', 'fx_mist']) {
+    const t = await loadTex(`/assets/tiles/${n}.png`);
+    if (t) cloudTexs.push(t);
+  }
+  interface Drifter { sp: Sprite; vx: number }
+  const drifters: Drifter[] = [];
+  function rebuildClouds(): void {
+    for (const d of drifters) d.sp.destroy();
+    drifters.length = 0;
+    cloudLayer.removeChildren();
+    if (curMap.id !== 'nest' || cloudTexs.length === 0) return;
+    const w = worldW();
+    const h = worldH();
+    for (let k = 0; k < 8; k++) {
+      const tex = cloudTexs[k % cloudTexs.length]!;
+      const sp = new Sprite(tex);
+      sp.anchor.set(0.5);
+      const scale2 = 1.6 + (k % 3) * 0.7;
+      sp.scale.set(scale2);
+      sp.alpha = 0.16 + (k % 3) * 0.05;
+      sp.x = ((k * 977) % Math.max(1, Math.floor(w)));
+      sp.y = ((k * 613) % Math.max(1, Math.floor(h)));
+      cloudLayer.addChild(sp);
+      drifters.push({ sp, vx: 0.12 + (k % 4) * 0.05 });
+    }
   }
 
   const tiled = (): boolean => groundTiles.children.length + scorchedTiles.children.length > 0;
@@ -817,7 +1124,7 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
   /** 스프라이트 id → defId. 유닛이 사라진 뒤(=사망) 어떤 소리를 낼지 알아야 해서 따로 들고 있는다. */
   const spriteDefId = new Map<number, string>();
   // 전향(인형의 실) 감지: 스폰 시 팀을 기억해뒀다가 달라지면 표식을 남긴다
-  const spriteTeam = new Map<number, 0 | 1>();
+  const spriteTeam = new Map<number, 0 | 1 | 2>();
   const charmedIds = new Set<number>();
   const zoneSprites = new Map<number, { sp: Sprite; born: number }>();
   const prevPos = new Map<number, { x: number; y: number }>();
@@ -833,11 +1140,26 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
   let userZoom = 1;
   let zoom = 1;
   // 선택된 유닛 (클릭 정보창)
+  /** 전용 스킨 텍스처를 쓰는 구조물 id — 팀 틴트를 입히지 않는다. */
+  const skinnedStructures = new Set<number>();
   let selectedId: number | null = null;
   // 효과음 (setAudio 로 주입, 없으면 무음)
   let audio: Audio | null = null;
   const sfx = (key: SfxKey, screenX: number, volume = 1): void => {
     audio?.play(key, { screenX, volume });
+  };
+  // 마법 속성별 시전음 — fxZone/장판 종류가 가장 정확하고, 없으면 스킬 kind 로 가른다
+  const castSfxOf = (a: { kind?: string; fxZone?: string; zone?: { kind?: string } } | undefined): SfxKey => {
+    const z = a?.fxZone ?? a?.zone?.kind;
+    if (z === 'blaze' || z === 'hellfire' || z === 'fireburst') return 'cast_fire';
+    if (z === 'frost' || a?.kind === 'freeze') return 'cast_ice';
+    if (z === 'quake' || a?.kind === 'slowfield') return 'cast_quake';
+    if (a?.kind === 'ground') return 'cast_gravity';
+    if (z === 'feast' || z === 'grave') return 'cast_dark';
+    if (a?.kind === 'fear') return 'cast_bell';
+    if (a?.kind === 'confuse' || a?.kind === 'charm') return 'cast_puppet';
+    if (a?.kind === 'sleep') return 'cast_sleep';
+    return 'cast_skill';
   };
 
   /** 유닛의 피격음 키 — 장갑/존재 태그에 따라 재질이 갈린다. */
@@ -849,9 +1171,32 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
     return 'hit_cloth';
   };
   /** 유닛의 사망음 키. */
-  const deathKeyOf = (defId: string): SfxKey => {
+  /** 네임드 전용 사망음 — 태그보다 우선한다. */
+  const DEATH_SFX_OF: Record<string, SfxKey> = {
+    m_alice: 'death_alice',
+  };
+  const deathKeyOf = (defId: string, entityId: number): SfxKey => {
+    const named = DEATH_SFX_OF[defId];
+    if (named) return named;
+    // 엘프 궁수: 스프라이트 변형 [여, 남] 중 어느 쪽으로 그려졌는지에 맞춘다
+    // (개체마다 갈려 data.ts 성별 태그를 붙일 수 없는 유일한 유닛)
+    if (defId === 's_elf_archer') {
+      const variants = assetTex.get(defId);
+      const n = variants?.length ?? 2;
+      return entityId % n === 0 ? 'death_female' : 'death_male';
+    }
     const tags = DEFS[defId]?.tags ?? [];
-    if (tags.includes('construct')) return 'death_construct';
+    const female = tags.includes('female');
+    const male = tags.includes('male');
+    // 인형(기물)은 같은 성별이라도 어린 목소리로 — 사람과 확실히 구분된다
+    if (tags.includes('construct')) {
+      if (female) return 'death_doll_female';
+      if (male) return 'death_doll_male';
+      return 'death_construct';
+    }
+    // 인간형 성별 음성이 재질음보다 우선 (data.ts 의 'male'/'female' 태그)
+    if (female) return 'death_female';
+    if (male) return 'death_male';
     if (tags.includes('undead')) return 'death_undead';
     return 'death_bio';
   };
@@ -883,7 +1228,15 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
       : -camY * zoom;
   }
 
+  /** 유닛별 투사체·착탄 색 오버라이드 — 비슷한 폭발형끼리 헷갈리지 않게. */
+  const PROJECTILE_COLOR_OF: Record<string, number> = {
+    s_thorn_witch: 0xe0559a,      // 가시 마녀 — 진분홍 (가시밭 장판과 같은 계열)
+    s_mushroom_bomber: 0xb07fe0,  // 버섯 폭탄병 — 보라 (포자 구름과 같은 계열)
+  };
+  const idivSafe = (a: number, b: number): number => Math.floor(a / b);
   const raceColor = (defId: string): number => {
+    const override = PROJECTILE_COLOR_OF[defId];
+    if (override !== undefined) return override;
     const race = DEFS[defId]?.race;
     return race === 'sylvarin' ? 0xc9e08a : race === 'pandemonium' ? 0x9a7fe8 : race === 'marionetta' ? 0xffb35c : 0xffe98a;
   };
@@ -895,6 +1248,76 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
     audio?.setViewport(camX, camX + visibleW());
     shadows.clear();
     fx.clear();
+    // 고산 구름 드리프트 — 오른쪽으로 흘러가 끝에 닿으면 왼쪽에서 다시
+    if (drifters.length > 0) {
+      const w = worldW();
+      for (const dr of drifters) {
+        dr.sp.x += dr.vx;
+        if (dr.sp.x - dr.sp.width / 2 > w) dr.sp.x = -dr.sp.width / 2;
+      }
+    }
+    // ── 마몬의 상점 (점령제 용병 상점): 맵 중앙 길가에 상점 + 점령 팀 깃발 링 ──
+    if (g.mercCaptureRequired) {
+      const shopWx = idivSafe(g.map.length, 2);
+      const shopPx = sx(shopWx);
+      const cyLane = sy(laneCenterY(g.map, shopWx));
+      // 상점을 점령 반경 상단 가장자리에 붙여 "이 링이 상점의 영역"임이 읽히게
+      const shopPy = cyLane - (tiles(2.2) / FP) * TILE * 0.62;
+      const tex0 = assetTex.get('mercshop')?.[0];
+      if (tex0 && !mercShopSp) {
+        mercShopSp = new Sprite(tex0);
+        mercShopSp.anchor.set(0.5, 1);
+        mercShopSp.scale.set((TILE * 3.2) / tex0.width);
+        zoneLayer.addChild(mercShopSp);
+        mercShopLabel = new Text({
+          text: '🚩 마몬의 상점 — 점령 지역',
+          style: { fontSize: 13, fill: 0xffd76a, stroke: { color: 0x000000, width: 3 }, fontWeight: 'bold' },
+        });
+        mercShopLabel.anchor.set(0.5, 1);
+        zoneLayer.addChild(mercShopLabel);
+      }
+      if (mercShopSp) {
+        mercShopSp.x = shopPx;
+        mercShopSp.y = shopPy;
+      }
+      if (mercShopLabel) {
+        mercShopLabel.x = shopPx;
+        mercShopLabel.y = shopPy - (mercShopSp?.height ?? 60) - 4;
+        const capLeft = g.mercCapturingTeam !== -1 ? Math.ceil((200 - g.mercCaptureTicks) / 20) : 0;
+        mercShopLabel.text = g.mercCapturingTeam === 0 ? `🚩 점령 중… ${capLeft}초`
+          : g.mercCapturingTeam === 1 ? `⚠ 적이 점령 중… ${capLeft}초`
+          : g.mercOwner === 0 ? '🚩 마몬의 상점 — 아군 소유'
+          : g.mercOwner === 1 ? '🚩 마몬의 상점 — 적 소유'
+          : '🚩 마몬의 상점 — 점령 지역';
+      }
+      // 점령 링: 내 팀 = 파랑, 적 = 빨강, 중립 = 금색. 펄스 이중 링 + 채움으로 확실히 보이게
+      const capturing = g.mercCapturingTeam;
+      const ringColor = capturing === 0 ? 0x5fa8ff : capturing === 1 ? 0xff6a57
+        : g.mercOwner === 0 ? 0x5fa8ff : g.mercOwner === 1 ? 0xff6a57 : 0xffd23d;
+      const rr = (tiles(3.5) / FP) * TILE;
+      const pulse2 = capturing !== -1
+        ? 0.6 + 0.4 * Math.sin(now * 0.012) // 채널링: 빠른 펄스
+        : 0.75 + 0.25 * Math.sin(now * 0.004);
+      fx.ellipse(shopPx, cyLane, rr, rr * 0.62).fill({ color: ringColor, alpha: 0.1 });
+      fx.ellipse(shopPx, cyLane, rr, rr * 0.62).stroke({ color: ringColor, width: 3.5, alpha: 0.85 * pulse2 });
+      fx.ellipse(shopPx, cyLane, rr * 0.9, rr * 0.9 * 0.62).stroke({ color: ringColor, width: 1.5, alpha: 0.45 * pulse2 });
+      // 채널링 진행 호: 위에서 시계방향으로 차오른다
+      if (capturing !== -1) {
+        const prog = Math.min(1, g.mercCaptureTicks / 200);
+        const seg = 40;
+        for (let k = 0; k < Math.floor(seg * prog); k++) {
+          const ang = -Math.PI / 2 + (k / seg) * Math.PI * 2;
+          const px2 = shopPx + Math.cos(ang) * rr * 1.08;
+          const py2 = cyLane + Math.sin(ang) * rr * 1.08 * 0.62;
+          fx.circle(px2, py2, 2.4).fill({ color: ringColor, alpha: 0.95 });
+        }
+      }
+    } else if (mercShopSp) {
+      mercShopSp.destroy();
+      mercShopSp = null;
+      mercShopLabel?.destroy();
+      mercShopLabel = null;
+    }
     bars.clear();
 
     // ── 장판 ──
@@ -920,18 +1343,32 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
           zoneLayer.addChild(sp);
         }
         const sp = zs.sp;
-        if (sp.texture !== tex) sp.texture = tex; // 새 게임에서 id 재사용 대비
+        const age = now - zs.born;
+        // 성장 프레임 보유 장판(가시밭): 돋아남(0~220ms) → 반쯤(~440ms) → 만개.
+        // 가시가 "솟아오르는" 게 보이도록 초반엔 세로로 눌렸다가 튀어오른다.
+        const growFrames = zoneGrowTex.get(z.kind);
+        const want = growFrames
+          ? (age < 220 ? growFrames[0]! : age < 440 ? (growFrames[1] ?? tex) : tex)
+          : tex;
+        if (sp.texture !== want) sp.texture = want;
         sp.x = cx;
         sp.y = cy;
         // 데칼 폭을 장판 지름에 맞춘다 (데칼 자체가 납작한 타원이라 y 는 비율 유지).
-        // 생성 후 250ms 동안 자라나며 등장.
-        const grow = Math.min(1, 0.55 + (0.45 * (now - zs.born)) / 250);
+        const grow = Math.min(1, 0.55 + (0.45 * age) / 250);
         const s = ((r * 2.15) / tex.width) * grow;
-        sp.scale.set(s);
+        if (growFrames) {
+          // 세로 스쿼시 팝: 0.35 → 1.08 (오버슈트) → 1.0
+          const t01 = Math.min(1, age / 480);
+          const popY = t01 < 0.85 ? 0.35 + 0.85 * t01 : 1.08 - 0.08 * ((t01 - 0.85) / 0.15);
+          sp.scale.set(s, s * popY);
+        } else {
+          sp.scale.set(s);
+        }
         sp.alpha = 0.82 * fade * pulse;
       } else {
-        const color = z.kind === 'thorns' ? 0xd4574a
-          : z.kind === 'spores' ? 0xb07fe0
+        const color = z.kind === 'thorns' ? 0xd4574a // 가시밭 — 핏빛 빨강
+          : z.kind === 'spores' ? 0x6ab82a // 포자 구름 — 탁한 독초록 (가시밭과 확실히 구분)
+          : z.kind === 'balm' ? 0x9fefad // 치유 포자 — 밝은 민트 (독초록과도 구분)
           : z.kind === 'grave' ? 0x7a5fd0 // 사후의 경계
           : z.kind === 'blaze' ? 0xff7a2e // 블레이즈 — 불구덩이
           : z.kind === 'quake' ? 0xa8845c // 어스퀘이크 — 갈라진 땅
@@ -962,19 +1399,31 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
       const d = DEFS[e.defId]!;
       let sp = sprites.get(e.id);
       if (!sp) {
-        const variants = assetTex.get(e.defId);
+        // 적(팀1) 건물 스킨: 캠페인 명시 스킨 우선, 장난감 나라는 자동 — 아군 기지는 그대로.
+        // 예외: 둥지 맵의 아군 넥서스는 「둥지」 그림 (지켜야 할 대상이 한눈에 보이게)
+        const autoSkin = curMap?.id === 'toybox' ? 'toy' : null;
+        const skin = enemySkin ?? autoSkin;
+        const toyKey = curMap?.id === 'nest' && e.team === 0 && e.defId === 'nexus'
+          ? 'nexus_nest'
+          : skin && e.team === 1 && (e.defId === 'tower' || e.defId === 'nexus')
+            ? `${e.defId}_${skin}` : undefined;
+        if (toyKey && assetTex.has(toyKey)) skinnedStructures.add(e.id);
+        const variants = (toyKey ? assetTex.get(toyKey) : undefined) ?? assetTex.get(e.defId);
         // 변형은 유닛 id 로 결정론적 배정 (엘프 궁수 여/남 50:50 등)
         const custom = variants ? variants[e.id % variants.length] : undefined;
         // 업그레이드 스킨: 소유 플레이어가 해당 업그레이드를 보유하면 교체
         const skinCfg = ASSET_UPGRADE_SKINS[e.defId];
         const useSkin = !!skinCfg && e.owner >= 0
           && !!g.players[e.owner]?.upgrades[skinCfg.upgrade] && skinTex.has(e.defId);
-        sp = new Sprite(useSkin ? skinTex.get(e.defId)! : (custom ?? artOf(e.defId, e.team).texture));
+        sp = new Sprite(useSkin ? skinTex.get(e.defId)! : (custom ?? artOf(e.defId, e.team === 2 ? 0 : e.team).texture));
         sp.anchor.set(0.5, 1);
         const sizeMul = ASSET_SIZE_MUL[e.defId] ?? 1;
         const targetW = Math.max(20, (d.radius / FP) * 2 * TILE * 2.2) * (useSkin ? skinCfg!.scaleMul : 1) * sizeMul;
         sp.scale.set(targetW / sp.texture.width);
-        if (e.team === 1 && d.tier !== 'structure') sp.scale.x = -sp.scale.x;
+        const hasDir = dirTex.has(
+          e.defId === 's_elf_archer' ? (e.id % 2 === 0 ? 's_elf_archer_f' : 's_elf_archer_m') : e.defId,
+        );
+        if (!hasDir && e.team === 1 && d.tier !== 'structure') sp.scale.x = -sp.scale.x;
         sprites.set(e.id, sp);
         spriteDefId.set(e.id, e.defId);
         spriteTeam.set(e.id, e.team);
@@ -983,7 +1432,8 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
         unitFx.set(e.id, {
           lastCooldown: e.cooldown, lastHealCd: e.healCooldown,
           lastSkillCd: e.skillCds.reduce((a, b) => a + b, 0), lastSkillCds: [...e.skillCds], lastHp: e.hp, flashUntil: 0,
-          lungeStart: 0, lungeDx: 0, lungeDy: 0,
+          lungeStart: 0, lungeDx: 0, lungeDy: 0, atkAir: false,
+          faceDir: e.team === 0 ? 'e' : 'w',
           recoilStart: 0, recoilDx: 0, aimStart: 0, aimUntil: 0, skillStart: 0, skillUntil: 0, healGlowUntil: 0,
           walkPhase: Math.random() * 6.28, moving: false,
           baseScaleX: sp.scale.x, baseScaleY: sp.scale.y,
@@ -1004,12 +1454,22 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
       // 발사: 쿨다운이 늘었다 = 이번 스텝에 공격했다
       if (e.cooldown > vfx.lastCooldown && d.weapon) {
         const target = e.targetId >= 0 ? byId.get(e.targetId) : undefined;
+        vfx.atkAir = !!target && !!DEFS[target.defId]?.flying;
         // 수호자(중간보스) 광역 스윙: 넓은 충격파가 퍼진다 (드래곤 = 화염, 할로우 = 저주)
         if (target && d.tier === 'guardian' && d.weapon.splash) {
           const bossR = (d.weapon.splash / FP) * TILE;
-          const bossColor = e.defId === 'dragon' ? 0xff8a3d : 0x9a6ae0;
-          impacts.push({ x: sx(target.x), y: sy(target.y) - 4, start: now, radius: bossR, color: bossColor });
-          impacts.push({ x: sx(target.x), y: sy(target.y) - 4, start: now + 120, radius: bossR * 0.65, color: bossColor });
+          if (e.defId === 'teddy_guardian' && !vfx.atkAir) {
+            // 곰인형 지상 강타: 자기 발밑에서 땅이 울리듯 흙빛 충격파가 3겹으로 퍼진다
+            const gx = sx(e.x), gy = sy(e.y) - 2;
+            impacts.push({ x: gx, y: gy, start: now, radius: bossR * 1.15, color: 0xc8a05a });
+            impacts.push({ x: gx, y: gy, start: now + 110, radius: bossR * 0.85, color: 0xa8845c });
+            impacts.push({ x: gx, y: gy, start: now + 220, radius: bossR * 0.55, color: 0x8a6c48 });
+          } else {
+            const bossColor = e.defId === 'dragon' ? 0xff8a3d
+              : e.defId === 'teddy_guardian' ? 0xff9a7a : 0x9a6ae0;
+            impacts.push({ x: sx(target.x), y: sy(target.y) - 4, start: now, radius: bossR, color: bossColor });
+            impacts.push({ x: sx(target.x), y: sy(target.y) - 4, start: now + 120, radius: bossR * 0.65, color: bossColor });
+          }
         }
         if (target) {
           const ranged = d.weapon.range >= RANGED_THRESHOLD;
@@ -1038,9 +1498,13 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
             vfx.aimStart = now;
             vfx.aimUntil = now + 400; // 근접 휘두르기 애니메이션 (있는 유닛만)
           }
-          // 공격음: 원거리는 마법/투사체로 나눠서
+          // 공격음: 원거리는 마법/투사체로 나눠서. 가시·독은 전용음.
+          const pu = e.owner >= 0 ? g.players[e.owner]?.upgrades : undefined;
+          const poisonous = !!pu && (d.id === 's_elf_archer' ? !!pu['su_elf_poison'] : d.id === 's_vine_hunter' ? !!pu['su_vine_poison'] : false);
           const magic = ranged && d.weapon.range >= tiles(3) && (d.heal !== undefined || d.weapon.zone !== undefined);
-          sfx(ranged ? (magic ? 'atk_magic' : 'atk_ranged') : 'atk_melee', fromX, 0.6);
+          sfx(d.id === 's_thorn_witch' ? 'atk_thorn'
+            : poisonous ? 'atk_poison'
+            : ranged ? (magic ? 'atk_magic' : 'atk_ranged') : 'atk_melee', fromX, 0.6);
         }
       }
       vfx.lastCooldown = e.cooldown;
@@ -1061,14 +1525,22 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
         const cy = strikeTarget ? sy(strikeTarget.y) - 6 : sy(e.y) - 10;
         // 방금 발동한 스킬의 종류로 링 색을 가른다 (도발 = 보라, 반사 = 빨강)
         let castKind: string | undefined;
+        let castSkill: import('@desertlike/sim').ActiveSkill | undefined;
         for (let i = 0; i < e.skillCds.length; i++) {
-          if ((e.skillCds[i] ?? 0) > (vfx.lastSkillCds?.[i] ?? 0) + 4) castKind = d.actives?.[i]?.kind;
+          if ((e.skillCds[i] ?? 0) > (vfx.lastSkillCds?.[i] ?? 0) + 4) {
+            castKind = d.actives?.[i]?.kind;
+            castSkill = d.actives?.[i];
+          }
         }
+        // 오라형 스킬(가호 등)은 실제 오라 반경만큼 링을 그려 범위를 보여준다
+        const auraR = castSkill?.auraRadius ? (castSkill.auraRadius / FP) * TILE : 0;
         impacts.push({
           x: cx, y: cy, start: now,
-          radius: castKind === 'taunt' ? 34 : castKind === 'reflect' ? 30
+          radius: castKind === 'allyarmor' && auraR ? auraR
+            : castKind === 'taunt' ? 34 : castKind === 'reflect' ? 30
             : strike?.splash ? (strike.splash / FP) * TILE : 18,
-          color: castKind === 'taunt' ? 0xb06ad0
+          color: castKind === 'allyarmor' ? 0x8fd8ff // 가호 — 하늘빛 보호 오라
+            : castKind === 'taunt' ? 0xb06ad0
             : castKind === 'reflect' ? 0xff4d4d
             : castKind === 'fear' ? 0x7a3de0
             : strikeTarget ? 0xffd23d : 0x7ddcff,
@@ -1082,7 +1554,7 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
           vfx.aimStart = now;
           vfx.aimUntil = now + (strikeTarget ? 400 : 600);
         }
-        sfx('cast_skill', cx, 0.85);
+        sfx(castSfxOf(castSkill), cx, 0.85);
       }
       vfx.lastSkillCd = skillCdSum;
       vfx.lastSkillCds = [...e.skillCds];
@@ -1101,6 +1573,18 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
       const iy = pv.y + (e.y - pv.y) * alpha;
       const movedNow = e.x !== pv.x || e.y !== pv.y;
       vfx.moving = movedNow;
+      // 엘프 궁수(여/남 변형): 스프라이트 변형과 같은 규칙으로 방향 세트를 고른다
+      const dirKey = e.defId === 's_elf_archer'
+        ? (e.id % 2 === 0 ? 's_elf_archer_f' : 's_elf_archer_m')
+        : e.defId;
+      if (movedNow && dirTex.has(dirKey)) {
+        const mdx = e.x - pv.x;
+        const mdy = e.y - pv.y;
+        // 주 이동축 기준 4방향 — 대각선은 가로 우선 (그림이 자연스럽다)
+        vfx.faceDir = Math.abs(mdx) >= Math.abs(mdy)
+          ? (mdx >= 0 ? 'e' : 'w')
+          : (mdy >= 0 ? 's' : 'n');
+      }
 
       let px = sx(ix);
       let py = sy(iy);
@@ -1170,11 +1654,12 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
       const invulnNow = g.tick < e.invulnUntil;
       const confusedNow = g.tick < e.confusedUntil;
       const asleepNow = g.tick < e.sleepUntil;
+      const skinnedStructure = skinnedStructures.has(e.id);
       const weakenedNow = g.tick < e.weakenedUntil;
       const frozenNow = g.tick < e.frozenUntil;
       const fearedNow = g.tick < e.fearedUntil;
       // 수호자 생존 중인 넥서스는 보호막 상태 (때려도 안 들어간다)
-      const shieldedNow = e.defId === 'nexus' && !g.guardianDown[e.team];
+      const shieldedNow = e.defId === 'nexus' && !g.guardianDown[e.team as 0 | 1];
       sp.tint = now < vfx.flashUntil ? 0xff7a6a
         : invulnNow ? 0xfff6d0
         // 빙결: 얼음빛 — 수면보다 차갑고 밝게
@@ -1189,8 +1674,9 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
         : buffedNow ? 0xffe6a0
         // 약화: 핏기 빠진 회보라
         : weakenedNow ? 0xc4b0c8
-        // 구조물은 팀 색으로 물들인다 (양 팀이 같은 그림이라 편 구분이 안 됐다)
-        : d.tier === 'structure' ? STRUCTURE_TEAM_TINT[e.team] : 0xffffff;
+        // 구조물은 팀 색으로 물들인다 (양 팀이 같은 그림이라 편 구분이 안 됐다).
+        // 전용 스킨을 쓰는 건물은 생김새로 이미 구분되므로 원색 그대로 둔다.
+        : d.tier === 'structure' && !skinnedStructure ? STRUCTURE_TEAM_TINT[e.team as 0 | 1] : 0xffffff;
       // 뿌리박기류: 지속 중 발밑에 갈색 뿌리 링
       if (buffedNow && sbSkill?.holdGround) {
         fx.ellipse(px, shadowY, 12, 5.5).stroke({ color: 0x8a6a3d, width: 2, alpha: 0.8 });
@@ -1333,7 +1819,7 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
         const want = frames[fi];
         if (want && sp.texture !== want) sp.texture = want;
       } else {
-        const atkVariants = attackTex.get(e.defId);
+        const atkVariants = (vfx.atkAir ? airAttackTex.get(e.defId) : undefined) ?? attackTex.get(e.defId);
         if (atkVariants) {
           const baseVariants = assetTex.get(e.defId);
           const vi = e.id % (baseVariants?.length ?? atkVariants.length);
@@ -1348,6 +1834,21 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
             const want = baseVariants?.[vi];
             if (want && sp.texture !== want) sp.texture = want;
           }
+        }
+        // 이동 방향별 그림: 공격 애니 중이 아닐 때 바라보는 방향으로 스왑
+        const dt = dirTex.get(dirKey);
+        if (dt && !(now < vfx.aimUntil)) {
+          const face = vfx.faceDir;
+          const want = face === 'w' ? dt.w : face === 'n' ? dt.n : face === 's' ? dt.s : dt.e;
+          const pick2 = want ?? assetTex.get(e.defId)?.[0];
+          if (pick2 && sp.texture !== pick2) sp.texture = pick2;
+          // 방향 그림 유닛은 좌우 반전을 쓰지 않는다 (그림이 이미 그 방향을 본다)
+          if (sp.scale.x < 0) sp.scale.x = -sp.scale.x;
+        } else if (dt && now < vfx.aimUntil) {
+          // 공격 중엔 동향 프레임 재생 — 서쪽을 보고 있었다면 반전으로 맞춘다
+          const flip = vfx.faceDir === 'w';
+          const ax = Math.abs(sp.scale.x);
+          sp.scale.x = flip ? -ax : ax;
         }
       }
 
@@ -1383,11 +1884,12 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
       const deadDefId = spriteDefId.get(id);
       // 구조물 파괴는 별도 이벤트(towerDown)로 처리하므로 여기선 유닛만
       if (deadDefId && DEFS[deadDefId]?.tier !== 'structure') {
-        sfx(deathKeyOf(deadDefId), sp.x, 0.45);
+        sfx(deathKeyOf(deadDefId, id), sp.x, deadDefId === 'm_alice' ? 0.9 : 0.45);
       }
       sprites.delete(id);
       spriteTeam.delete(id);
       charmedIds.delete(id);
+      skinnedStructures.delete(id);
       spriteDefId.delete(id);
       prevPos.delete(id);
       unitFx.delete(id);
@@ -1475,13 +1977,32 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
     }
   }
 
+  let enemySkin: 'toy' | 'bone' | null = null;
   return {
     app,
+    setEnemySkin(skin) {
+      enemySkin = skin;
+    },
     setMap(m) {
       curMap = m;
       app.renderer.background.color = MAP_BG[m.id] ?? 0x9c7c4e;
       buildGroundTiles();
       drawGround(ground, tiled());
+      rebuildClouds();
+      // 합류점 맵: 위 갈래 끝에 앨리스의 성(장난감 넥서스 그림)을 세워 둔다
+      if (allyBaseSp) { allyBaseSp.destroy(); allyBaseSp = null; }
+      const br = m.branches?.[0];
+      if (m.id === 'confluence' && br) {
+        const t = assetTex.get('nexus_toy')?.[0];
+        if (t) {
+          allyBaseSp = new Sprite(t);
+          allyBaseSp.anchor.set(0.5, 1);
+          allyBaseSp.scale.set((TILE * 3.4) / t.width);
+          allyBaseSp.x = sx(br.x);
+          allyBaseSp.y = sy(br.y0) + 10;
+          zoneLayer.addChild(allyBaseSp);
+        }
+      }
       camX = 0;
       camY = 0;
       clampCam();
@@ -1499,9 +2020,10 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
       camY += dy / zoom;
       clampCam();
     },
-    centerOn(x) {
+    centerOn(x, y) {
       applyCamera(); // 첫 호출 시 줌이 아직 fit 계산 전일 수 있어 먼저 확정
       camX = x - visibleW() / 2;
+      if (y !== undefined) camY = y - visibleH() / 2;
       clampCam();
     },
     zoomBy(factor, anchorX, anchorY) {

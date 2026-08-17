@@ -18,7 +18,7 @@ const GRACE_MS = 60_000;
 
 type RaceId = 'sylvarin' | 'pandemonium' | 'marionetta';
 const RACES: RaceId[] = ['sylvarin', 'pandemonium', 'marionetta'];
-const MAP_IDS = ['plains', 'valley'];
+const MAP_IDS = ['plains', 'toybox', 'valley'];
 
 interface Seat {
   type: 'empty' | 'human' | 'ai';

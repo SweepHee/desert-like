@@ -3,20 +3,21 @@
  */
 import { stepCombat } from './battle.ts';
 import {
-  DEFS, DEFAULT_MAP, GUARDIAN_OF, MAP, MAPS, clampLaneY, effectiveDef, techOfUnit,
+  DEFS, DEFAULT_MAP, GUARDIAN_OF, MAP, MAPS, applyBoons, clampLaneY, effectiveDef, techOfUnit,
   incomeUpgradeCost, laneCenterY, techOfTier, techUpCost,
   upgradeById, upgradesOfUnit, unitsOfRace,
 } from './data.ts';
 import { clamp, idiv, tiles } from './math.ts';
 import { createRng, nextChance, nextInt, nextRange } from './rng.ts';
-import type { BotStyle, Entity, EntityDef, Game, GameConfig, HeroPerks, PlayerState, TeamId } from './types.ts';
+import { isCombatTag } from './types.ts';
+import type { BotStyle, CombatTeam, Entity, EntityDef, Game, GameConfig, HeroPerks, PlayerState, TeamId } from './types.ts';
 
 /** 테스트/밸런스 도구용 직접 스폰. 게임 로직은 deployWave 를 쓴다. */
-export function spawnUnit(g: Game, defId: string, team: TeamId, x: number, y: number): Entity {
+export function spawnUnit(g: Game, defId: string, team: CombatTeam, x: number, y: number): Entity {
   return spawnEntity(g, defId, team, -1, x, y);
 }
 
-function spawnEntity(g: Game, defId: string, team: TeamId, owner: number, x: number, y: number, ov?: EntityDef): Entity {
+function spawnEntity(g: Game, defId: string, team: CombatTeam, owner: number, x: number, y: number, ov?: EntityDef): Entity {
   const d = DEFS[defId];
   if (!d) throw new Error(`unknown def: ${defId}`);
   const e: Entity = {
@@ -77,11 +78,31 @@ export function createGame(cfg: GameConfig): Game {
     incomeCap: Math.min(MAP.INCOME_MAX_LEVEL, cfg.incomeCap ?? MAP.INCOME_MAX_LEVEL),
     techCap: Math.min(MAP.TECH_MAX, cfg.techCap ?? MAP.TECH_MAX),
     enemyPreferredUnits: cfg.enemyPreferredUnits ?? [],
+    enemyUnitCaps: cfg.enemyUnitCaps ?? {},
+    enemyUnitMinWave: cfg.enemyUnitMinWave ?? {},
+    enemyCapsUntilWave: cfg.enemyCapsUntilWave ?? Infinity,
+    enemyGuardian: cfg.enemyGuardian ?? null,
+    allowedUnits: cfg.allowedUnits ?? [],
+    unitBoons: cfg.unitBoons ?? [],
+    mercUnits: cfg.mercUnits ?? [],
+    mercCostPct: cfg.mercCostPct ?? 100,
+    mercCaptureRequired: cfg.mercCaptureRequired ?? false,
+    holdLineX: cfg.holdLineX ?? 0,
+    defendNexus: cfg.defendNexus ?? false,
+    jointDeploy: cfg.jointDeploy ?? false,
+    allyDeploy: cfg.allyDeploy ?? null,
+    mercOwner: -1,
+    mercCapturingTeam: -1,
+    mercCaptureTicks: 0,
     heroPerks: cfg.heroPerks ?? null,
     players: cfg.players.map((p, idx): PlayerState => {
       const botRng = createRng(cfg.seed ^ (0x9e37 * (idx + 7)));
-      // 봇 성격을 시드로 무작위 배정 — 같은 시드면 항상 같은 성격 (결정론)
-      const botStyle = BOT_STYLES[nextInt(botRng, BOT_STYLES.length)]!;
+      // 봇 성격을 시드로 무작위 배정 — 같은 시드면 항상 같은 성격 (결정론).
+      // 캠페인은 적 봇 성격을 강제할 수 있다 (스테이지 디자인).
+      const rolled = BOT_STYLES[nextInt(botRng, BOT_STYLES.length)]!;
+      const botStyle = p.team === 1 && cfg.enemyBotStyle ? cfg.enemyBotStyle
+        : p.team === 0 && cfg.allyBotStyle ? cfg.allyBotStyle
+        : rolled;
       return {
         idx,
         team: p.team,
@@ -97,6 +118,7 @@ export function createGame(cfg: GameConfig): Game {
         comp: {},
         botRng,
         botStyle,
+        botGoal: null,
       };
     }),
     entities: [],
@@ -125,10 +147,30 @@ export function buyUnit(g: Game, playerIdx: number, defId: string): boolean {
   const p = g.players[playerIdx];
   const d = DEFS[defId];
   if (!p || !d || g.over) return false;
-  if (d.race !== p.race) return false;
-  if (techOfUnit(d) > p.techLevel) return false; // 테크 미달
-  if (p.money < d.cost) return false;
-  p.money -= d.cost;
+  // 용병 (캠페인): 팀 0 사람 플레이어는 목록의 타종족 유닛을 살 수 있다.
+  // 상점 점령제(mercCaptureRequired)면 양 팀 모두 — 점령한 팀만 용병 품목을 산다.
+  const isMercItem = g.mercUnits.includes(defId);
+  const isMerc = p.team === 0 && !p.isBot && isMercItem;
+  if (g.mercCaptureRequired && isMercItem && g.mercOwner !== p.team) return false;
+  if (d.race !== p.race && !isMerc) return false;
+  if (!isMercItem && techOfUnit(d) > p.techLevel) return false; // 테크 미달 (용병은 테크 무관 — 돈이 곧 자격)
+  // 캠페인 해금 제한: "사람 플레이어"만 화이트리스트 적용 (용병은 별도 허가).
+  // 아군 봇(앨리스 군단 등)은 다른 종족이라 화이트리스트를 적용하면 아무것도 못 산다.
+  if (!isMerc && p.team === 0 && !p.isBot && g.allowedUnits.length > 0 && !g.allowedUnits.includes(defId)) return false;
+  // 캠페인: 적팀 유닛 수량 상한 (팀 합산) — 최상급 유닛의 조기 물량화 방지.
+  // enemyCapsUntilWave 이후엔 전부 해제 (후반 총력전).
+  const cap = p.team === 1 && g.waveIndex < g.enemyCapsUntilWave ? g.enemyUnitCaps[defId] : undefined;
+  if (cap !== undefined) {
+    let owned = 0;
+    for (const q of g.players) if (q.team === 1) owned += q.comp[defId] ?? 0;
+    if (owned >= cap) return false;
+  }
+  // 캠페인: 최소 등장 웨이브 — 이 턴 전엔 네임드급 유닛이 나오지 않는다
+  const minWave = p.team === 1 ? g.enemyUnitMinWave[defId] : undefined;
+  if (minWave !== undefined && g.waveIndex < minWave) return false;
+  const cost = isMerc ? idiv(d.cost * g.mercCostPct, 100) : d.cost;
+  if (p.money < cost) return false;
+  p.money -= cost;
   p.comp[defId] = (p.comp[defId] ?? 0) + 1;
   return true;
 }
@@ -190,6 +232,13 @@ function deployWave(g: Game, p: PlayerState): void {
     const n = p.comp[d.id] ?? 0;
     for (let i = 0; i < n; i++) list.push(d);
   }
+  // 용병 (타종족): 편성에 있으면 함께 출정한다 — 순회 순서는 mercUnits 배열 고정 (결정론)
+  for (const id of g.mercUnits) {
+    const d = DEFS[id];
+    if (!d || d.race === p.race) continue;
+    const n = p.comp[id] ?? 0;
+    for (let i = 0; i < n; i++) list.push(d);
+  }
   if (list.length === 0) return;
   // 사거리 오름차순 = 근접 앞열. 힐러는 최후열.
   list.sort((a, b) => rangeKey(a) - rangeKey(b));
@@ -198,12 +247,15 @@ function deployWave(g: Game, p: PlayerState): void {
   const colGap = tiles(0.7);
   const rowGap = tiles(0.75);
   const m = g.map;
-  const baseX = m.spawnX[p.team];
+  let baseX = m.spawnX[p.team];
+  // 아군 봇 출정 위치 오버라이드 (앨리스 군단 — 위 갈래에서 내려온다)
+  const allyOv = p.team === 0 && p.isBot ? g.allyDeploy : null;
+  if (allyOv) baseX = allyOv.x;
   // 슬롯별 y 밴드: 팀 인원 수만큼 코리도어 폭을 나눠 고르게 배치한다.
   // (1명이면 정중앙, 3명이면 기존과 동일하게 상/중/하)
   const n = g.teamSize[p.team];
   const slotY = idiv((2 * p.slot - (n - 1)) * m.halfW, n);
-  const baseY = laneCenterY(m, baseX) + slotY;
+  const baseY = allyOv ? allyOv.y : laneCenterY(m, baseX) + slotY;
   const dir = p.team === 0 ? -1 : 1; // 후열이 자기 진영 쪽으로
 
   for (let i = 0; i < list.length; i++) {
@@ -215,6 +267,11 @@ function deployWave(g: Game, p: PlayerState): void {
     const x = clamp(baseX + dir * col * colGap + jx, 0, m.length);
     const y = clampLaneY(m, x, baseY + (row * rowGap - Math.floor(((perCol - 1) * rowGap) / 2)) + jy);
     let ov = effectiveDef(d.id, p.upgrades);
+    // 캠페인 유닛 강화 (사람 플레이어의 유닛만)
+    if (!p.isBot && g.unitBoons.length > 0) {
+      const boon = applyBoons(ov ?? d, g.unitBoons);
+      if (boon !== (ov ?? d)) ov = boon;
+    }
     // 영웅 특성: 세계수의 축복 (사람 플레이어의 유닛만 강화)
     if (!p.isBot && g.heroPerks) ov = applyHeroPerks(ov ?? d, g.heroPerks);
     spawnEntity(g, d.id, p.team, p.idx, x, y, ov);
@@ -288,7 +345,7 @@ function countersUnit(d: EntityDef, target: EntityDef): boolean {
   if (!target.flying && w.targets === 'air') return false;
   if (!w.bonus) return false;
   for (const tag of target.tags) {
-    if ((w.bonus[tag] ?? 0) > 0) return true;
+    if (isCombatTag(tag) && (w.bonus[tag] ?? 0) > 0) return true;
   }
   if (target.flying && (w.bonus.flying ?? 0) > 0) return true;
   return false;
@@ -331,7 +388,7 @@ function botDecide(g: Game, p: PlayerState): void {
     const cands = Object.keys(p.comp)
       .filter((id) => (p.comp[id] ?? 0) > 0)
       .flatMap((id) => upgradesOfUnit(id))
-      .filter((u) => !p.upgrades[u.id] && u.tech <= p.techLevel);
+      .filter((u) => !u.campaignOnly && !p.upgrades[u.id] && u.tech <= p.techLevel);
     const affordable = cands.filter((u) => u.cost <= p.money);
     if (nextChance(p.botRng, brain.upgradePct) && affordable.length > 0) {
       const unlocks = affordable.filter((u) => u.cost >= 1000);
@@ -346,6 +403,29 @@ function botDecide(g: Game, p: PlayerState): void {
 
   // 4) 유닛 구매 풀. finalOnly 는 테크 3 이후 최상급·최종만 노린다.
   let pool = unitsOfRace(p.race).filter((d) => techOfUnit(d) <= p.techLevel);
+  // 상점 점령제: 점령한 팀의 봇은 용병 품목을 구매 목록에 넣는다
+  // (용병은 summonOnly 라 기본 pool 에 없다 — 점령 중에만 열린다)
+  if (g.mercUnits.length > 0 && (!g.mercCaptureRequired || g.mercOwner === p.team)) {
+    for (const id of g.mercUnits) {
+      const d = DEFS[id];
+      if (d && d.race === p.race && !pool.some((x) => x.id === id)) pool.push(d);
+    }
+  }
+  if (p.team === 0 && !p.isBot && g.allowedUnits.length > 0) {
+    pool = pool.filter((d) => g.allowedUnits.includes(d.id));
+  }
+  if (p.team === 1) {
+    pool = pool.filter((d) => {
+      const minWave = g.enemyUnitMinWave[d.id];
+      if (minWave !== undefined && g.waveIndex < minWave) return false;
+      if (g.waveIndex >= g.enemyCapsUntilWave) return true; // 캡 해제 구간
+      const cap = g.enemyUnitCaps[d.id];
+      if (cap === undefined) return true;
+      let owned = 0;
+      for (const q of g.players) if (q.team === 1) owned += q.comp[d.id] ?? 0;
+      return owned < cap;
+    });
+  }
   if (p.botStyle === 'finalOnly' && p.techLevel >= g.techCap) {
     const top = pool.filter((d) => d.tier === 'supreme' || d.tier === 'final');
     if (top.length > 0) pool = top;
@@ -366,25 +446,36 @@ function botDecide(g: Game, p: PlayerState): void {
   const weights = pool.map(weightOf);
   const totalW = weights.reduce((a, b) => a + b, 0);
 
+  // 목표 유지형 구매: 목표를 한 번 정하면 살 때까지 저축한다.
+  // (매번 재추첨하면 고티어 유닛 값이 영영 안 모여 봇이 저티어만 뽑는다 — 실측된 문제)
   for (let guard = 0; guard < 8; guard++) {
-    let r = nextInt(p.botRng, totalW);
-    let target = pool[pool.length - 1]!;
-    for (let i = 0; i < pool.length; i++) {
-      if (r < weights[i]!) {
-        target = pool[i]!;
-        break;
+    let goal = p.botGoal ? pool.find((d) => d.id === p.botGoal) : undefined;
+    if (!goal) {
+      let r = nextInt(p.botRng, totalW);
+      goal = pool[pool.length - 1]!;
+      for (let i = 0; i < pool.length; i++) {
+        if (r < weights[i]!) {
+          goal = pool[i]!;
+          break;
+        }
+        r -= weights[i]!;
       }
-      r -= weights[i]!;
+      p.botGoal = goal.id;
     }
-    if (p.money >= target.cost) {
-      buyUnit(g, p.idx, target.id);
+    if (p.money >= goal.cost) {
+      if (!buyUnit(g, p.idx, goal.id)) {
+        p.botGoal = null; // 캡 등으로 막힌 목표는 버린다
+        continue;
+      }
+      p.botGoal = null;
       if (!brain.spendAll && nextChance(p.botRng, 35)) break; // 가끔 잔돈을 남기고 멈춤
     } else {
-      if (!brain.spendAll && nextChance(p.botRng, 70)) break; // 목표를 위해 저축
-      const cheap = pool.filter((d) => d.cost <= p.money);
-      if (cheap.length === 0) break;
-      buyUnit(g, p.idx, cheap[nextInt(p.botRng, cheap.length)]!.id);
-      if (!brain.spendAll) break;
+      // 저축. 아주 가끔만, 목표 저축을 크게 훼손하지 않는 잔돈 유닛으로 전선을 채운다.
+      if (brain.spendAll || nextChance(p.botRng, 15)) {
+        const cheap = pool.filter((d) => d.cost <= p.money && d.cost * 4 <= goal.cost);
+        if (cheap.length > 0) buyUnit(g, p.idx, cheap[nextInt(p.botRng, cheap.length)]!.id);
+      }
+      break;
     }
   }
 }
@@ -420,7 +511,8 @@ export function stepGame(g: Game): void {
   const waveTick = MAP.PREP_TICKS + g.waveIndex * MAP.WAVE_TICKS;
   if (g.tick === waveTick) {
     for (const p of g.players) {
-      if (p.slot === g.waveIndex % g.teamSize[p.team]) deployWave(g, p);
+      const joint = g.jointDeploy && p.team === 0;
+      if (joint || p.slot === g.waveIndex % g.teamSize[p.team]) deployWave(g, p);
     }
     g.events.push({ tick: g.tick, kind: 'wave', slot: g.waveIndex % g.teamSize[0] });
     g.waveIndex++;

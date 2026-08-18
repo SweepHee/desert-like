@@ -246,6 +246,26 @@
     }
     .hidden { display: none !important; }
     #menu-screen, #room-screen, #race-screen { display: flex; flex-direction: column; align-items: center; gap: 14px; }
+    /* ── 구글 로그인 바 ── */
+    #authbar { display: flex; align-items: center; gap: 10px; min-height: 40px; }
+    #auth-me { display: flex; align-items: center; gap: 8px; }
+    #auth-me.hidden, #google-btn.hidden { display: none; }
+    #auth-pic { width: 28px; height: 28px; border-radius: 50%; border: 1px solid var(--line); }
+    #auth-name { color: var(--gold); font-size: 14px; font-weight: bold; }
+    #btn-logout { padding: 4px 10px; font-size: 12px; }
+    /* ── 진행 상황 동기화 ── */
+    #sync-modal {
+      position: fixed; inset: 0; z-index: 320; background: rgba(10, 7, 4, .82);
+      display: flex; align-items: center; justify-content: center;
+    }
+    #sync-modal.hidden { display: none; }
+    .sync-box {
+      background: var(--panel); border: 1px solid var(--gold); padding: 22px 26px;
+      max-width: min(460px, 92vw); display: flex; flex-direction: column; gap: 14px;
+    }
+    .sync-box h3 { color: var(--gold); font-size: 17px; }
+    .sync-box p { color: var(--text); font-size: 13px; line-height: 1.6; white-space: pre-line; }
+    .sync-rows { display: flex; flex-direction: column; gap: 8px; }
     .menurow { display: flex; gap: 10px; align-items: center; }
     #nickname {
       background: var(--panel2); border: 1px solid var(--line); color: var(--text);
@@ -629,6 +649,17 @@
     <div class="load-text">전장을 여는 중…</div>
     <div class="load-sub">지형과 부대를 불러오고 있습니다</div>
   </div>
+  <div id="sync-modal" class="hidden">
+    <div class="sync-box">
+      <h3>☁ 진행 상황 동기화</h3>
+      <p id="sync-desc"></p>
+      <div class="sync-rows">
+        <button id="sync-pull" class="menubtn">☁ → 💻 계정 기록 불러오기</button>
+        <button id="sync-push" class="menubtn">💻 → ☁ 이 기기 기록 올리기</button>
+        <button id="sync-skip" class="menubtn alt">나중에</button>
+      </div>
+    </div>
+  </div>
   <div id="dialogue" class="hidden">
     <div class="dlg-box">
       <img class="dlg-portrait" alt="" />
@@ -655,6 +686,14 @@
   <div id="overlay">
     <h1>DESERTLIKE<small id="overlay-sub"></small></h1>
     <div id="menu-screen">
+      <div id="authbar">
+        <div id="google-btn"></div>
+        <div id="auth-me" class="hidden">
+          <img id="auth-pic" alt="" />
+          <span id="auth-name"></span>
+          <button id="btn-logout" class="menubtn alt">로그아웃</button>
+        </div>
+      </div>
       <h2>⚔ 대전 게임</h2>
       <p>다른 사람과 1:1 ~ 3:3 으로 겨룹니다. 방을 만들거나 열린 방에 참가하세요.<br/>
          빈 자리는 AI 가 대신 맡을 수 있습니다.</p>

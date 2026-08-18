@@ -9,6 +9,7 @@
  */
 import { createServer } from 'node:http';
 import { WebSocketServer, WebSocket } from 'ws';
+import { handleApi } from './auth.ts';
 
 const PORT = Number(process.env.PORT ?? 8787);
 const TICK_MS = 50; // 20Hz
@@ -88,6 +89,15 @@ let nextId = 1;
  * 400 만 돌려줘서 배포 문제를 진단하기 어렵다.
  */
 const server = createServer((req, res) => {
+  // 구글 로그인·클라우드 세이브 API (/api/*) 는 별도 모듈이 처리한다
+  void handleApi(req, res).then((handled) => {
+    if (handled) return;
+    healthResponse(req, res);
+  });
+});
+
+/** 상태 확인용 응답 (Railway 헬스체크). */
+function healthResponse(req: import('node:http').IncomingMessage, res: import('node:http').ServerResponse): void {
   res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' });
   res.end(JSON.stringify({
     ok: true,
@@ -96,7 +106,7 @@ const server = createServer((req, res) => {
     clients: clients.size,
     path: req.url,
   }));
-});
+}
 const wss = new WebSocketServer({ server });
 server.listen(PORT, () => {
   console.log(`desertlike server listening on :${PORT} (http + ws)`);

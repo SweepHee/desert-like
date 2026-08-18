@@ -567,7 +567,8 @@ export function stepCombat(g: Game): void {
         const r = z.radius + d.radius;
         if (dist2(z.x, z.y, e.x, e.y) > r * r) continue;
         if (e.team !== z.team) {
-          if (isFlying(g, e)) continue; // 공격성 장판은 지상 전용 (지상화된 공중은 걸린다)
+          // 공격성 장판은 기본 지상 전용. hitsAir 장판(망자의 만찬·사후의 경계)만 공중도 걸린다.
+          if (isFlying(g, e) && !zd.hitsAir) continue;
           // 적: 지속피해 + 둔화 (장판 안에 있는 동안 갱신, 나가면 0.3초 뒤 풀림)
           if (zd.dps && dmgTick && g.tick >= e.invulnUntil) e.hp -= zd.dps;
           if (zd.slow && d.speed > 0 && !isStatusImmune(e)) {
@@ -879,9 +880,13 @@ export function stepCombat(g: Game): void {
             let zx = e.x;
             let zy = e.y;
             if (a.zoneAtTarget) {
-              // 원격 시전: castRange 안 가장 가까운 지상 적의 발밑에 깐다. 없으면 아낀다.
-              const aim = nearestFoeWithin(g, e, d, a.castRange ?? tiles(8),
-                (v) => !isFlying(g, v));
+              // 원격 시전: castRange 안 가장 가까운 적의 발밑에 깐다. 없으면 아낀다.
+              // targets 가 지정되면 그 부류만 조준한다 (블레이즈 = 지상 전용).
+              const aim = nearestFoeWithin(g, e, d, a.castRange ?? tiles(8), (v) => {
+                if (a.targets === 'ground') return !isFlying(g, v);
+                if (a.targets === 'air') return isFlying(g, v);
+                return true;
+              });
               if (!aim) break;
               zx = aim.x;
               zy = aim.y;
@@ -904,6 +909,16 @@ export function stepCombat(g: Game): void {
                 x: zx, y: zy, radius: z.radius, untilTick: g.tick + z.ticks,
                 followId: follow,
               });
+            }
+            // 시전 순간의 즉발 피해 (망자의 만찬의 "첫 피해") — 장판 범위 안 전원
+            if (a.damage) {
+              const br = a.splash ?? z.radius;
+              for (const v of g.entities) {
+                if (!v.alive || v.team === e.team || isShielded(g, v)) continue;
+                if (a.targets === 'ground' && isFlying(g, v)) continue;
+                if (a.targets === 'air' && !isFlying(g, v)) continue;
+                if (dist2(zx, zy, v.x, v.y) <= br * br) applyStrike(g, e, a, v);
+              }
             }
             e.skillCds[i] = a.cooldown;
             break;
@@ -1190,10 +1205,17 @@ export function stepCombat(g: Game): void {
         if (a.kind !== 'strike' || e.skillCds[i]! > 0) continue;
         if (a.requiresUpgrade && (e.owner < 0 || !g.players[e.owner]?.upgrades[a.requiresUpgrade])) continue;
         if (a.executeBelowPct !== undefined && target.hp * 100 > td.maxHp * a.executeBelowPct) continue;
+        // 스킬 자체 대상 제한 (와이번 내리꽂기 = 지상 전용) — 대상이 안 맞으면 쿨을 태우지 않는다
+        const strikeCanHit = (v: Entity): boolean => {
+          if (a.targets === 'ground' && isFlying(g, v)) return false;
+          if (a.targets === 'air' && !isFlying(g, v)) return false;
+          return true;
+        };
+        if (!strikeCanHit(target)) continue;
         if (a.splash) {
           const r = a.splash;
           for (const v of g.entities) {
-            if (!v.alive || v.team === e.team || !canHit(g, d, v)) continue;
+            if (!v.alive || v.team === e.team || !canHit(g, d, v) || !strikeCanHit(v)) continue;
             if (dist2(target.x, target.y, v.x, v.y) <= r * r) applyStrike(g, e, a, v);
           }
         } else {

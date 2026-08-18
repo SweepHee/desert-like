@@ -616,6 +616,9 @@ interface UnitFx {
   atkAir: boolean;
   /** 바라보는 방향 (이동 벡터 기반, 방향 그림 보유 유닛용). */
   faceDir: 'e' | 'w' | 'n' | 's';
+  /** 내리꽂기(지상 전용 strike) 연출 구간 — 솟구쳤다 내리찍는다. 0 = 비활성. */
+  diveStart: number;
+  diveUntil: number;
   /** 스킬 시전 애니메이션 재생 구간 (전용 프레임 보유 유닛만). */
   skillStart: number;
   skillUntil: number;
@@ -736,11 +739,12 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
   );
   await Promise.all(
     DIR_SPRITE_UNITS.map(async (defId) => {
+      // ?v= 캐시 버스터: 방향 그림을 교체(고우토 등)해도 브라우저 캐시에 안 가리게
       const [eTex, w, n, sTex] = await Promise.all([
-        loadTex(`/assets/units/${defId}_e.png`),
-        loadTex(`/assets/units/${defId}_w.png`),
-        loadTex(`/assets/units/${defId}_n.png`),
-        loadTex(`/assets/units/${defId}_s.png`),
+        loadTex(`/assets/units/${defId}_e.png?v=3`),
+        loadTex(`/assets/units/${defId}_w.png?v=3`),
+        loadTex(`/assets/units/${defId}_n.png?v=3`),
+        loadTex(`/assets/units/${defId}_s.png?v=3`),
       ]);
       // 4방향이 온전히 갖춰진 유닛만 등록 — 한 캐릭터의 그림으로 일관되게 돈다
       if (eTex && w && n && sTex) {
@@ -1132,6 +1136,11 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
   const projectiles: Projectile[] = [];
   const projPool: Sprite[] = []; // 투사체 스프라이트 재사용 풀
   const impacts: Impact[] = [];
+  /** 내리꽂기: 전체 연출 길이와 "착지" 시점 비율 (앞 40% 상승, 뒤 60% 급강하). */
+  const DIVE_MS = 430;
+  const DIVE_DOWN_AT = 0.55;
+  /** 착지 흙먼지 (튀어오르는 파편). */
+  const diveDusts: { x: number; y: number; start: number; r: number }[] = [];
   const corpses: Corpse[] = [];
 
   // 카메라
@@ -1432,7 +1441,7 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
         unitFx.set(e.id, {
           lastCooldown: e.cooldown, lastHealCd: e.healCooldown,
           lastSkillCd: e.skillCds.reduce((a, b) => a + b, 0), lastSkillCds: [...e.skillCds], lastHp: e.hp, flashUntil: 0,
-          lungeStart: 0, lungeDx: 0, lungeDy: 0, atkAir: false,
+          lungeStart: 0, lungeDx: 0, lungeDy: 0, atkAir: false, diveStart: 0, diveUntil: 0,
           faceDir: e.team === 0 ? 'e' : 'w',
           recoilStart: 0, recoilDx: 0, aimStart: 0, aimUntil: 0, skillStart: 0, skillUntil: 0, healGlowUntil: 0,
           walkPhase: Math.random() * 6.28, moving: false,
@@ -1545,16 +1554,32 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
             : castKind === 'fear' ? 0x7a3de0
             : strikeTarget ? 0xffd23d : 0x7ddcff,
         });
+        // 「내리꽂기」류(지상 전용 strike): 솟구쳤다 내리찍는 전용 연출
+        const isDive = castKind === 'strike' && castSkill?.targets === 'ground';
+        if (isDive) {
+          vfx.diveStart = now;
+          vfx.diveUntil = now + DIVE_MS;
+          const gy = strikeTarget ? sy(strikeTarget.y) : sy(e.y);
+          const gx = strikeTarget ? sx(strikeTarget.x) : sx(e.x);
+          const r = castSkill?.splash ? (castSkill.splash / FP) * TILE : 24;
+          // 착지 순간(하강 완료 시점)에 맞춰 흙먼지 3겹 + 바깥으로 퍼지는 균열 링
+          const land = now + DIVE_MS * DIVE_DOWN_AT;
+          impacts.push({ x: gx, y: gy, start: land, radius: r * 1.25, color: 0xd8b98a });
+          impacts.push({ x: gx, y: gy, start: land + 70, radius: r * 0.95, color: 0xb08c5a });
+          impacts.push({ x: gx, y: gy, start: land + 150, radius: r * 0.6, color: 0x8a6a42 });
+          impacts.push({ x: gx, y: gy, start: land, radius: r * 1.6, color: 0xfff0c0 });
+          diveDusts.push({ x: gx, y: gy, start: land, r });
+        }
         if (skillAnimTex.has(e.defId)) {
           // 전용 시전 프레임 재생
           vfx.skillStart = now;
           vfx.skillUntil = now + 650;
-        } else {
+        } else if (!isDive) {
           // 공격 모션 재활용
           vfx.aimStart = now;
           vfx.aimUntil = now + (strikeTarget ? 400 : 600);
         }
-        sfx(castSfxOf(castSkill), cx, 0.85);
+        sfx(isDive ? 'cast_quake' : castSfxOf(castSkill), cx, isDive ? 1 : 0.85);
       }
       vfx.lastSkillCd = skillCdSum;
       vfx.lastSkillCds = [...e.skillCds];
@@ -1597,9 +1622,34 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
         py -= Math.abs(Math.sin(vfx.walkPhase)) * 2.2;
         rot = Math.sin(vfx.walkPhase) * 0.06;
       }
+      // ── 내리꽂기: 솟구쳤다 급강하해 땅에 박는다 (비행 봅보다 우선) ──
+      let diving = false;
+      let diveSquash = 1;
+      if (now < vfx.diveUntil) {
+        diving = true;
+        const dt = (now - vfx.diveStart) / DIVE_MS; // 0~1
+        const up = 62; // 솟구치는 높이(px)
+        if (dt < DIVE_DOWN_AT) {
+          // 상승: 처음엔 빠르게, 정점에서 잠깐 머문다 (ease-out)
+          const k = dt / DIVE_DOWN_AT;
+          py -= up * Math.sin(k * Math.PI * 0.5);
+          diveSquash = 1 + k * 0.12; // 솟구치며 살짝 늘어남
+        } else {
+          // 급강하 + 착지 스쿼시 (땅을 때리는 맛)
+          const k = (dt - DIVE_DOWN_AT) / (1 - DIVE_DOWN_AT);
+          const slam = Math.min(1, k * 3.2); // 매우 빠르게 내리꽂힘
+          py -= up * (1 - slam);
+          if (k > 0.31) {
+            const s2 = (k - 0.31) / 0.69;
+            diveSquash = 0.72 + 0.28 * s2; // 납작하게 눌렸다 복원
+          } else {
+            diveSquash = 1.1;
+          }
+        }
+      }
       // 비행 봅 + 날갯짓 (리버스그라비티로 지상화되면 땅에 붙는다)
       const groundedNow = g.tick < e.groundedUntil;
-      if (d.flying && !groundedNow) {
+      if (d.flying && !groundedNow && !diving) {
         py -= 26 + Math.sin((g.tick + e.id * 13) * 0.12) * 3;
         const flapFrames = vfx.hasSkin ? undefined : flapTex.get(e.defId);
         if (flapFrames && now >= vfx.aimUntil) {
@@ -1644,6 +1694,12 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
         else vfx.recoilStart = 0;
       }
 
+      // 내리꽂기 스쿼시: 세로로 눌리고 가로로 퍼진다 (땅을 때리는 맛)
+      if (diving) {
+        sp.scale.y = vfx.baseScaleY * diveSquash;
+        sp.scale.x = (sp.scale.x < 0 ? -1 : 1) * Math.abs(vfx.baseScaleX) * (2 - diveSquash);
+        rot += (1 - diveSquash) * 0.5; // 내리꽂을 때 앞으로 기운다
+      }
       sp.x = px;
       sp.y = py;
       sp.rotation = rot;
@@ -1974,6 +2030,27 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
       }
       if (t < 0) continue; // 예약된 2차 충격파 (수호자 이중 링) — 아직 시작 전
       fx.circle(im.x, im.y, im.radius * (0.4 + t * 0.6)).stroke({ color: im.color, width: 2, alpha: 1 - t });
+    }
+    // ── 내리꽂기 착지 흙먼지: 사방으로 튀는 파편 (420ms) ──
+    for (let i = diveDusts.length - 1; i >= 0; i--) {
+      const du = diveDusts[i]!;
+      const t = (now - du.start) / 420;
+      if (t >= 1) {
+        diveDusts.splice(i, 1);
+        continue;
+      }
+      if (t < 0) continue;
+      const ease = 1 - (1 - t) * (1 - t); // 빠르게 퍼졌다 느려짐
+      for (let k = 0; k < 10; k++) {
+        const ang = (k / 10) * Math.PI * 2 + du.r * 0.03;
+        const dist = du.r * (0.25 + ease * 0.95);
+        const hop = Math.sin(t * Math.PI) * 9; // 튀어올랐다 떨어지는 포물선
+        fx.circle(
+          du.x + Math.cos(ang) * dist,
+          du.y + Math.sin(ang) * dist * 0.5 - hop,
+          3.2 * (1 - t) + 0.8,
+        ).fill({ color: k % 3 === 0 ? 0xe8d0a8 : 0xb08c5a, alpha: (1 - t) * 0.85 });
+      }
     }
   }
 

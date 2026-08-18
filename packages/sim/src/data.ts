@@ -269,12 +269,15 @@ export const ZONE_DEFS: Record<string, {
   readonly healBioPerSec?: number;
   /** 적을 중심으로 끌어당기는 힘 (FP/틱). 사후의 경계. */
   readonly pull?: number;
+  /** true 면 공중 유닛에게도 적용된다 (기본 장판은 지상 전용). */
+  readonly hitsAir?: boolean;
 }> = {
   thorns: { dps: 8 },                // 가시밭 — 지속피해 전담 (둔화는 포자 구름의 몫)
   spores: { slow: true },            // 포자 구름
   balm: { slow: true, healBioPerSec: 8 }, // 치유 포자 — 적은 둔화, 아군 생체는 회복
   forest: {},                        // 숲의 영역 — 효과는 FOREST_BUFFS (유닛별)
-  grave: { dps: 14, pull: 90 },      // 사후의 경계 — 중앙으로 끌려오며 갉인다
+  // 사후의 경계 — 순수 끌어당김 (딜 없음). 지상·공중 모두 빨려온다.
+  grave: { pull: 90, hitsAir: true },
   blaze: { dps: 34 },                // 블레이즈 — 불구덩이, 세이지 전용 고화력 장판
   // 마법의 시전 자국 (효과 없음 — 상태이상·피해는 시전 순간 부여, 이건 그림만)
   quake: {},                         // 어스퀘이크 — 갈라진 땅
@@ -282,7 +285,8 @@ export const ZONE_DEFS: Record<string, {
   gravity: {},                       // 리버스그라비티 — 중력 마법진
   hellfire: {},                      // 지옥불 — 저주 화염 폭발
   fireburst: {},                     // 화염구 — 착탄 폭발
-  feast: {},                         // 망자의 만찬 — 사령 마법진
+  // 망자의 만찬 — 넓고 오래가는 저댐 장판 (지상·공중 모두). 중복되지 않는다.
+  feast: { dps: 4, hitsAir: true },
 };
 
 /** 시각 전용 장판(시전 자국)의 표시 시간 (틱). */
@@ -481,7 +485,7 @@ reg(D({
       requiresUpgrade: 'su_sage_gravity',
     },
     {
-      name: '블레이즈', desc: '대상 구역을 10초간 불구덩이로 만든다 (초당 34)', kind: 'zone',
+      name: '블레이즈', desc: '대상 구역을 10초간 불구덩이로 만든다 (초당 34)', kind: 'zone', targets: 'ground',
       cooldown: seconds(30), zoneAtTarget: true, castRange: tiles(11),
       zone: { kind: 'blaze', radius: tiles(1.8), ticks: seconds(10) },
     },
@@ -502,19 +506,19 @@ reg(D({
   id: 's_wyvern', race: 'sylvarin', name: '와이번', tier: 'air', techReq: 3,
   cost: 330, supply: 4, maxHp: 430, armor: 2, tags: ['leather', 'bio'], flying: true,
   speed: tilesPerSecond(3.0), radius: tiles(0.5), acquireRange: tiles(6),
-  // 관통 (송곳니): 가죽 카운터
-  weapon: { damage: 42, bonus: { leather: 21 }, cooldown: seconds(1.1), range: tiles(1.0), targets: 'both' },
+  // 포지션: 공대지 전문. 평타는 무난하고, 내리꽂기로 지상을 쓸어담는다.
+  weapon: { damage: 40, bonus: { plate: 20 }, cooldown: seconds(1.3), range: tiles(1.2), targets: 'both' },
   actives: [{
-    name: '내리꽂기', desc: '솟구쳤다 내리꽂아 착지 지점에 광역 피해 (쿨 6초)', kind: 'strike',
-    cooldown: seconds(6), damage: 26, splash: tiles(1.6),
+    name: '내리꽂기', desc: '솟구쳤다 지상에 내리꽂아 넓은 광역 피해 (쿨 6초, 공중엔 안 통함)', kind: 'strike',
+    cooldown: seconds(6), damage: 55, splash: tiles(2.0), targets: 'ground',
   }],
 }));
 reg(D({
   id: 's_unicorn', race: 'sylvarin', name: '유니콘', tier: 'air', techReq: 3,
   cost: 290, supply: 3, maxHp: 380, armor: 2, tags: ['leather', 'bio'], flying: true,
   speed: tilesPerSecond(2.9), radius: tiles(0.46), acquireRange: tiles(5.5),
-  // 보조 유닛 — 자체 화력은 약하다
-  weapon: { damage: 11, cooldown: seconds(1.4), range: tiles(3.5), targets: 'both' },
+  // 서포터 — 버프·해제가 본체지만 자체 화력도 준수하다
+  weapon: { damage: 24, cooldown: seconds(1.3), range: tiles(4.0), targets: 'both' },
   actives: [
     {
       name: '가호', desc: '주변 아군 전체 방어력 +1 (12초)', kind: 'allyarmor',
@@ -534,8 +538,8 @@ reg(D({
   id: 's_fairy', race: 'sylvarin', name: '페어리', tier: 'air', techReq: 3,
   cost: 300, supply: 3, maxHp: 200, armor: 0, tags: ['cloth', 'bio', 'female'], flying: true,
   speed: tilesPerSecond(2.2), radius: tiles(0.3), acquireRange: tiles(7),
-  // 후방 공성: 사거리가 길고 구조물에 특히 강하다
-  weapon: { damage: 38, bonus: { structure: 30, plate: 12 }, cooldown: seconds(2.0), range: tiles(6.5), targets: 'both' },
+  // 포지션: 공대공 전문. 공중 단일 화력은 최강이지만 지상·구조물에는 무력하다.
+  weapon: { damage: 16, bonus: { flying: 34 }, cooldown: seconds(1.4), range: tiles(5.0), targets: 'both' },
   actives: [{
     name: '수면', desc: '적 하나를 10초간 재운다 — 3회 피격당하면 깨어난다', kind: 'sleep',
     cooldown: seconds(16), durTicks: seconds(10),
@@ -703,12 +707,14 @@ reg(D({
   },
   actives: [
     {
-      name: '망자의 만찬', desc: '아주 넓은 범위 마법 (딜은 낮음)', kind: 'nuke',
-      cooldown: seconds(30), damage: 34, splash: tiles(3.6), castRange: tiles(6), fxZone: 'feast',
+      // 넓게 오래 깔리지만 딜은 얕은 장판 — 겹쳐 깔아도 중복되지 않는다 (병합)
+      name: '망자의 만찬', desc: '반경 5타일에 12초간 죽음의 안개 — 첫 피해 10, 이후 초당 4 (지상·공중 모두)',
+      kind: 'zone', cooldown: seconds(30), damage: 10, splash: tiles(5), castRange: tiles(6),
+      zoneAtTarget: true, zone: { kind: 'feast', radius: tiles(5), ticks: seconds(12) },
     },
     {
-      name: '사후의 경계', desc: '5초간 적을 중앙으로 끌어당기는 장판', kind: 'zone',
-      cooldown: seconds(60), zone: { kind: 'grave', radius: tiles(2.6), ticks: seconds(5) },
+      name: '사후의 경계', desc: '반경 4타일의 적을 5초간 중앙으로 끌어당긴다 (피해 없음, 지상·공중 모두)',
+      kind: 'zone', cooldown: seconds(60), zone: { kind: 'grave', radius: tiles(4), ticks: seconds(5) },
     },
   ],
 }));
@@ -1021,7 +1027,8 @@ reg(D({
   id: 'c_wild_blackbird', race: null, name: '검은새', tier: 'supreme', summonOnly: true,
   cost: 0, supply: 0, maxHp: 3200, armor: 4, tags: ['leather', 'massive', 'bio'], flying: true,
   speed: tilesPerSecond(2.6), radius: tiles(0.8), acquireRange: tiles(7.5),
-  weapon: { damage: 85, cooldown: seconds(1.2), range: tiles(1.2), targets: 'both', splash: tiles(1.2) },
+  // 하늘의 왕: 공중엔 넓고 강력한 광역, 지상엔 단타뿐 — 지상 물량으로 잡아야 한다
+  weapon: { damage: 85, cooldown: seconds(1.2), range: tiles(1.5), targets: 'both', splash: tiles(2.5), splashAirOnly: true },
   rebirth: { delayTicks: seconds(3), hpPct: 60 },
   actives: [
     {
@@ -1029,12 +1036,12 @@ reg(D({
       cooldown: seconds(22), durTicks: seconds(8), armorAdd: 46,
     },
     {
-      name: '깃털 폭풍', desc: '주변에 깃털을 흩뿌려 광역 피해', kind: 'nuke',
-      cooldown: seconds(9), damage: 45, splash: tiles(2.2), castRange: tiles(5),
+      name: '깃털 폭풍', desc: '깃털을 흩뿌려 공중 적을 광역 타격 (지상엔 안 통함)', kind: 'nuke',
+      cooldown: seconds(9), damage: 45, splash: tiles(2.2), castRange: tiles(5), targets: 'air',
     },
     {
-      name: '암흑 구체', desc: '검은 거대 구체 — 가장 체력이 높은 적을 노린다', kind: 'nuke',
-      cooldown: seconds(14), damage: 110, splash: tiles(1.2), castRange: tiles(6), targetMode: 'highestHp', fxZone: 'feast',
+      name: '암흑 구체', desc: '검은 거대 구체 — 공중의 가장 튼튼한 적을 노린다 (지상엔 안 통함)', kind: 'nuke',
+      cooldown: seconds(14), damage: 110, splash: tiles(1.2), castRange: tiles(6), targetMode: 'highestHp', targets: 'air', fxZone: 'feast',
     },
   ],
 }));
@@ -1084,7 +1091,9 @@ reg(D({
   // 캠페인 12 보스 — 발타르가 아끼는 선봉장. 슬리피 할로우급 거구에 그 이상의 힘.
   // 요새 앞을 지키며(leashed) 접근하는 모든 것을 소울파이어 대검으로 갈라 버린다.
   id: 'c_balthar_general', race: null, name: '사령장군 카르가스', tier: 'guardian', summonOnly: true,
-  cost: 0, supply: 0, maxHp: 14000, armor: 6, tags: ['plate', 'massive', 'undead'], ...GROUND,
+  cost: 0, supply: 0, maxHp: 21000, armor: 6, tags: ['plate', 'massive', 'undead'], ...GROUND,
+  regenPerSec: 4, // 사령 재생 — 찔끔찔끔 갉아서는 못 잡는다, 화력을 집중해야
+  // (상태이상 면역은 guardian 티어 공통 규칙으로 이미 적용된다)
   speed: tilesPerSecond(1.6), radius: tiles(1.0), acquireRange: tiles(8), leashed: true,
   weapon: { damage: 120, bonus: { bio: 40 }, cooldown: seconds(1.1), range: tiles(1.6), targets: 'both', splash: tiles(1.9) },
   actives: [

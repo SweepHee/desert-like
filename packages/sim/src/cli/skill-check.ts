@@ -386,8 +386,16 @@ const ok = (cond: boolean, label: string): void => {
   });
   const over = worst.filter((x) => x.net > 1);
   ok(over.length === 0, `기본 유닛 평타는 넥서스에 1 피해 (초과: ${over.map((x) => x.id).join(',') || '없음'})`);
-  ok(DEFS.s_fairy!.weapon!.damage + (DEFS.s_fairy!.weapon!.bonus?.structure ?? 0)
-    + (DEFS.s_fairy!.weapon!.bonus?.plate ?? 0) - nexusDef.armor > 20, '공성 유닛(페어리)은 넥서스에 유효타');
+  // 공성 담당은 판금 특효를 가진 유닛 (마멋·와이번). 페어리는 공대공 전문으로 바뀌어 공성에서 빠졌다.
+  const siegeNet = (id: string): number => {
+    const w = DEFS[id]!.weapon!;
+    let dmg = w.damage;
+    for (const tag of nexusDef.tags) dmg += w.bonus?.[tag] ?? 0;
+    return dmg - nexusDef.armor;
+  };
+  ok(siegeNet('s_marmot') > 20, `공성 유닛(마멋)은 넥서스에 유효타 (${siegeNet('s_marmot')})`);
+  ok(siegeNet('s_wyvern') > 20, `공성 유닛(와이번)은 넥서스에 유효타 (${siegeNet('s_wyvern')})`);
+  ok(siegeNet('s_fairy') <= 2, `페어리는 공성 불가 — 공대공 전문 (${siegeNet('s_fairy')})`);
 }
 
 {

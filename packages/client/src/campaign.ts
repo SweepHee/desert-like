@@ -104,6 +104,11 @@ export interface CampaignStage {
     readonly yOffTile?: number;
     /** 야생 무리: 제3팀(2)으로 스폰 — 자기들끼리 한 편, 나머지 모두와 적대. */
     readonly neutral?: boolean;
+    /**
+     * 필드에 동시에 살아 있을 수 있는 최대 수. 이미 그만큼 있으면 이번 차례는 거른다.
+     * "죽으면 다시 채워지는 상주 위협"을 만든다 (검은새).
+     */
+    readonly concurrentCap?: number;
   }[];
   /**
    * 둥지 수호탑 (11스테이지): 게임 시작 시 아군 진영에 고정 배치되는 무적 수호수.
@@ -252,7 +257,32 @@ export const SYLVARIN_CAMPAIGN: readonly CampaignStage[] = [
     id: 5, act: 1, title: '올빼미 성채', goal: '적 넥서스를 파괴하라 — 하늘을 조심할 것',
     allowedUnits: U5, enemies: ['pandemonium'], allies: [], botDifficulty: 'easy',
     mission: 'destroy', seed: seedOf(5), noTowers: true,
-    enemyPreferredUnits: ['p_wraith', 'p_banshee', 'p_demilich'],
+    // ── 2단계 구성: 22턴까지는 하늘이 정답, 23턴부터는 지상이 없으면 못 버틴다 ──
+    // 1단계 주력은 전부 "지상 전용"(공중을 아예 못 때림) — 공중 조합은 안전하게 학살하고,
+    // 지상으로 막으면 타나토스 광역·골렘·마몬에 갈린다.
+    // 23턴에 대공진이 해금되면서 데미리치 대공광역이 공중을 쓸어버린다 → 마멋·궁수 전환 필수.
+    // preferred 는 데미리치 하나만 — 지상 유닛을 넣으면 ×8 가중으로 폭주한다
+    // (실측: 타나토스가 47기까지 불어나 둥지가 4초 만에 무너짐. 8스테이지 테디와 같은 함정)
+    // 22턴까지는 minWave 로 대공이 막혀 있어 자연 구매만으로도 지상 위주가 된다.
+    enemyPreferredUnits: ['p_demilich'],
+    enemyUnitMinWave: {
+      // 데미리치는 봇 구매를 막고 growth 로만 나온다 (9턴부터 매 턴 +1 — 정확한 스케줄)
+      p_demilich: 99,
+      // 2차 대공진은 23턴에 열린다 (망령·투척병만 예외로 조금 일찍)
+      p_banshee: 23, p_lich: 23, p_corpsecaller: 23,
+      p_wraith: 12,
+    },
+    enemyUnitCaps: {
+      // 1단계 대공은 "찔끔" — 공중 조합에 위협은 안 되되 무풍지대는 아니게
+      p_bone_thrower: 5, p_wraith: 5,
+      // 2단계 대공진 (23턴~). 캡 없으면 23턴에 37~47기까지 불어난다 (봇 경제 실측)
+      p_demilich: 8, p_banshee: 8, p_lich: 6, p_corpsecaller: 4,
+      // 1단계 지상 주력 — 둥지(방어 28)를 실제로 깎는 고화력만 조인다.
+      // 저가 잡졸(망자병 13·스켈레톤 16)은 둥지에 1뎀뿐이라 캡 없이 물량 압박만 담당.
+      p_thanatos: 8, p_corpse_golem: 10, p_headless_knight: 12, p_mammon: 2,
+    },
+    // 9턴부터 매 턴 +1 → 16턴에 8기. 하늘이 서서히 좁아지고, 16턴엔 지상 전환이 강제된다.
+    growth: [{ defId: 'p_demilich', label: '💀 데미리치 — 하늘이 좁아진다', fromWave: 9 }],
     spawns: [{ defId: 'c_dread_gargoyle', label: '공포의 가고일', everySec: 120 }],
     briefing: [
       { who: '실피', text: '…하늘.' },
@@ -421,9 +451,9 @@ export const SYLVARIN_CAMPAIGN: readonly CampaignStage[] = [
     ],
   },
   {
-    id: 11, act: 2, title: '바람의 둥지', goal: '둥지를 지켜라 — 세 방향에서 몰려온다 (60턴 버티기)',
+    id: 11, act: 2, title: '바람의 둥지', goal: '둥지를 지켜라 — 세 방향에서 몰려온다 (30턴 버티기)',
     allowedUnits: U11, enemies: ['pandemonium'], allies: [], botDifficulty: 'normal',
-    mission: 'survive', surviveSec: 3600, noTowers: true,
+    mission: 'survive', surviveSec: 1800, noTowers: true,
     seed: seedOf(11), mapId: 'nest',
     enemySkin: 'bone',
     enemyPreferredUnits: ['p_wraith', 'p_banshee', 'p_demilich'],
@@ -454,7 +484,8 @@ export const SYLVARIN_CAMPAIGN: readonly CampaignStage[] = [
       { defId: 'c_wild_bear_gray', label: '⬋ 회색곰', atSec: 360, everySec: 70, count: 2, atXTile: 6, yOffTile: 0, neutral: true },
       { defId: 'c_wild_direwolf', label: '⬋ 다이어울프 무리', atSec: 540, everySec: 60, count: 3, atXTile: 8, yOffTile: 0, neutral: true },
       { defId: 'c_wild_grizzly', label: '⬋ 그리즐리베어', atSec: 600, everySec: 80, count: 2, atXTile: 6, yOffTile: 0, neutral: true },
-      { defId: 'c_wild_blackbird', label: '⚫ 검은새 — 하늘의 왕', atSec: 780, everySec: 600, atXTile: 5, yOffTile: -2, neutral: true },
+      // 14턴부터 상시 3기 유지 — 죽으면 다시 날아온다 (출현 1회가 아니라 지속 위협)
+      { defId: 'c_wild_blackbird', label: '⚫ 검은새 — 하늘의 왕', atSec: 840, everySec: 45, concurrentCap: 3, atXTile: 5, yOffTile: -2, neutral: true },
     ],
     briefing: [
       { who: '엘로윈', text: '높은 봉우리의 옛 맹약을 깨울 때다. 와이번은 긍지가 높다 — 명령하지 말고 부탁해라.' },
@@ -607,6 +638,24 @@ export const SYLVARIN_CAMPAIGN: readonly CampaignStage[] = [
 ];
 
 // ── 진행 저장 ─────────────────────────────────────────────────────────────
+/** 진행 상황이 바뀔 때마다 호출 — main.ts 가 클라우드 업로드를 연결한다. */
+let onProgressChanged: (() => void) | null = null;
+export function setProgressListener(fn: () => void): void {
+  onProgressChanged = fn;
+}
+
+/** 현재 로컬 진행 상황 스냅샷 (클라우드 세이브와 같은 모양). */
+export function localSave(): { cleared: number; perks: Record<string, number>; boons: Record<string, string>; updatedAt: number } {
+  return { cleared: campaignCleared(), perks: perkAlloc(), boons: boonChoices(), updatedAt: Date.now() };
+}
+
+/** 클라우드에서 받은 진행 상황을 로컬에 통째로 덮어쓴다 (동기화). */
+export function applySave(save: { cleared: number; perks: Record<string, number>; boons: Record<string, string> }): void {
+  localStorage.setItem(SAVE_KEY, String(Math.max(0, Math.floor(save.cleared))));
+  localStorage.setItem(PERK_KEY, JSON.stringify(save.perks ?? {}));
+  localStorage.setItem(BOON_KEY, JSON.stringify(save.boons ?? {}));
+}
+
 const SAVE_KEY = 'campaign_sylvarin_cleared';
 
 /** 클리어한 최대 스테이지 번호 (0 = 아직 없음). */
@@ -616,7 +665,10 @@ export function campaignCleared(): number {
 }
 
 export function markCampaignCleared(stageId: number): void {
-  if (stageId > campaignCleared()) localStorage.setItem(SAVE_KEY, String(stageId));
+  if (stageId > campaignCleared()) {
+    localStorage.setItem(SAVE_KEY, String(stageId));
+    onProgressChanged?.();
+  }
 }
 
 // ── 영웅 특성 「세계수의 축복」 ────────────────────────────────────────────
@@ -654,6 +706,7 @@ export function perkAlloc(): Record<string, number> {
 
 export function savePerkAlloc(alloc: Record<string, number>): void {
   localStorage.setItem(PERK_KEY, JSON.stringify(alloc));
+  onProgressChanged?.();
 }
 
 export function perkPointsSpent(alloc: Record<string, number>): number {
@@ -697,6 +750,7 @@ export function saveBoonChoice(unit: string, boonId: string | null): void {
   if (boonId === null) delete all[unit];
   else all[unit] = boonId;
   localStorage.setItem(BOON_KEY, JSON.stringify(all));
+  onProgressChanged?.();
 }
 
 /** 현재 클리어 수 기준으로 개방된 강화 유닛 목록 (개방 순서대로). */

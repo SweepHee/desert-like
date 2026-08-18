@@ -17,6 +17,7 @@ import {
 import { assetIconUrl, createRenderer, worldToPxX, type Renderer } from './render.ts';
 import {
   SYLVARIN_CAMPAIGN, PERKS, campaignCleared, markCampaignCleared, runDialogue,
+  setProgressListener, localSave, applySave,
   perkAlloc, savePerkAlloc, perkPointsSpent, perksToHero,
   BOON_UNLOCKS, boonChoices, saveBoonChoice, unlockedBoonUnits, selectedBoonIds,
   type CampaignStage,
@@ -26,6 +27,10 @@ import { initTitle, showTitle, titleSubtitle, type TitleAction } from './title.t
 import { createMinimap, type Minimap } from './minimap.ts';
 import { iconUrl } from './sprites.ts';
 import { connect, serverUrl, type Net, type NetMsg } from './net.ts';
+import {
+  authAvailable, isLoggedIn, profile, logout, renderLoginButton,
+  fetchSave, pushSave, markSynced, alreadySynced, type SaveData,
+} from './auth.ts';
 
 const RACES: RaceId[] = ['sylvarin', 'pandemonium', 'marionetta'];
 const RACE_DESC: Record<RaceId, string> = {
@@ -318,6 +323,9 @@ function onTitlePick(action: TitleAction): void {
 }
 
 function nickname(): string {
+  // 로그인했으면 구글 계정 이름을 그대로 쓴다 (닉네임 입력칸은 숨겨진다)
+  const p = profile();
+  if (p?.name) return p.name;
   return ($('#nickname') as HTMLInputElement).value.trim() || '이름없는 자';
 }
 
@@ -509,6 +517,13 @@ let campaignHeroPerks: ReturnType<typeof perksToHero> | null = null;
 let campaignDone = false; // 이 스테이지의 승패가 이미 처리됐는가
 
 function showCampaignSelect(): void {
+  // 로그인 상태인데 아직 이 계정과 맞춰보지 않았다면 먼저 동기화를 묻는다
+  if (isLoggedIn() && !alreadySynced() && !syncDeferred) {
+    void fetchSave().then((remote) => {
+      void maybeSync(remote).then(() => showCampaignSelect());
+    });
+    return;
+  }
   const wrap = $('#races');
   wrap.innerHTML = '';
   $('#race-note').classList.add('hidden');
@@ -810,6 +825,7 @@ function campaignFinish(win: boolean, reason?: string): void {
   if (!campaign || campaignDone) return;
   campaignDone = true;
   const st = campaign;
+  const turnAt = game ? game.waveIndex : 0; // 패배 시점 턴 수 표시용
   if (win) markCampaignCleared(st.id);
   const showEnd = (): void => {
     const overlay = $('#overlay');
@@ -818,7 +834,7 @@ function campaignFinish(win: boolean, reason?: string): void {
     const nextSt = SYLVARIN_CAMPAIGN.find((x) => x.id === st.id + 1);
     const nextUnreleased = nextSt?.act === 3; // 3막 미공개 — 다음으로 못 간다
     overlay.innerHTML =
-      `<h1>${win ? '스테이지 클리어!' : '패배…'}</h1>` +
+      `<h1>${win ? '스테이지 클리어!' : `패배… (${turnAt}턴)`}</h1>` +
       `<p>${st.id}. ${st.title}${reason ? ` — ${reason}` : ''}</p>` +
       (newBoonUnit ? `<p style="color:var(--gold)">⚔ 새 유닛 강화 개방 — ${DEFS[newBoonUnit]!.name}! 캠페인 화면에서 골라 보자.</p>` : '') +
       (win && nextUnreleased ? `<p style="color:var(--dim)">🚧 3막은 준비 중입니다 — 곧 공개!</p>` : '') +
@@ -1544,6 +1560,16 @@ function tick(deltaMS: number): void {
         campaignSpawnNext[i] = Infinity;
         continue;
       }
+      // 동시 생존 상한: 이미 그만큼 살아 있으면 이번 차례는 거른다 (타이머는 계속 돈다)
+      if (rule.concurrentCap !== undefined) {
+        let aliveNow = 0;
+        for (const e of game.entities) if (e.alive && e.defId === rule.defId) aliveNow++;
+        if (aliveNow >= rule.concurrentCap) {
+          campaignSpawnNext[i] = rule.everySec !== undefined
+            ? campaignSpawnNext[i]! + rule.everySec : Infinity;
+          continue;
+        }
+      }
       const n = rule.count ?? 1;
       campaignSpawnedTotal[i] = campaignSpawnedTotal[i]! + n;
       const sx0 = rule.atXTile !== undefined ? Math.floor(rule.atXTile * FP) : game.map.spawnX[1];
@@ -1649,8 +1675,10 @@ function tick(deltaMS: number): void {
         return;
       }
       if (left > 0 && performance.now() >= campaignAlertUntil) {
+        // 1턴 = 60초 — 턴 수와 시계를 함께 보여준다
+        const leftTurns = Math.ceil(left / 60);
         $('#campaign-goal').textContent =
-          `[${campaign.id}. ${campaign.title}] ${campaign.goal} — 남은 시간 ${Math.floor(left / 60)}:${String(left % 60).padStart(2, '0')}`;
+          `[${campaign.id}. ${campaign.title}] ${campaign.goal} — 남은 ${leftTurns}턴 (${Math.floor(left / 60)}:${String(left % 60).padStart(2, '0')})`;
       }
     }
     if (performance.now() < campaignAlertUntil) {
@@ -2143,7 +2171,113 @@ function initRotateHint(): void {
   setInterval(update, 1000);
 }
 
+
+// ── 구글 로그인 · 클라우드 세이브 ─────────────────────────────────────────
+/**
+ * 로그인 상태에 맞춰 메뉴 상단 바를 갱신한다.
+ * 로그인하면 닉네임 입력칸을 감추고 구글 계정 이름을 쓴다.
+ */
+function refreshAuthUi(): void {
+  const bar = $('#authbar');
+  const me = $('#auth-me');
+  const btn = $('#google-btn');
+  const nick = $('#nickname') as HTMLInputElement;
+  if (!authAvailable()) {
+    // 로그인 기능이 꺼진 배포 — 바 자체를 숨기고 기존 닉네임 입력을 쓴다
+    bar.style.display = 'none';
+    return;
+  }
+  bar.style.display = '';
+  const p = profile();
+  if (p) {
+    btn.classList.add('hidden');
+    me.classList.remove('hidden');
+    ($('#auth-pic') as HTMLImageElement).src = p.picture || '';
+    $('#auth-name').textContent = p.name;
+    nick.style.display = 'none';
+  } else {
+    me.classList.add('hidden');
+    btn.classList.remove('hidden');
+    nick.style.display = '';
+    void renderLoginButton(btn, (serverSave) => {
+      refreshAuthUi();
+      void maybeSync(serverSave);
+    });
+  }
+}
+
+/**
+ * 로컬(이 기기)과 계정(클라우드) 진행 상황을 비교해 동기화를 묻는다.
+ * 양쪽이 같거나 이미 이 세션에서 정리했으면 조용히 넘어간다.
+ */
+/** 이번 세션에서 "나중에"를 눌렀는가 — 눌렀으면 다시 묻지 않는다 (무한 반복 방지). */
+let syncDeferred = false;
+
+function maybeSync(serverSave: SaveData | null): Promise<void> {
+  return new Promise((resolve) => {
+    if (!isLoggedIn() || syncDeferred) { resolve(); return; }
+    const local = localSave();
+    const remote = serverSave;
+    const sameProgress = remote !== null
+      && remote.cleared === local.cleared
+      && JSON.stringify(remote.perks) === JSON.stringify(local.perks)
+      && JSON.stringify(remote.boons) === JSON.stringify(local.boons);
+    if (sameProgress) { markSynced(); resolve(); return; }
+    // 계정이 비어 있고 로컬만 있으면 묻지 않고 그대로 올린다 (첫 로그인)
+    if (!remote || (remote.cleared === 0 && Object.keys(remote.perks).length === 0)) {
+      pushSave(local);
+      markSynced();
+      resolve();
+      return;
+    }
+    const modal = $('#sync-modal');
+    const boonCount = (b: Record<string, string>): number => Object.keys(b).length;
+    $('#sync-desc').textContent =
+      `이 기기와 계정의 진행 상황이 다릅니다.
+
+`
+      + `💻 이 기기 — ${local.cleared}스테이지 클리어 · 강화 ${boonCount(local.boons)}종
+`
+      + `☁ 계정 — ${remote.cleared}스테이지 클리어 · 강화 ${boonCount(remote.boons)}종
+
+`
+      + `어느 쪽을 기준으로 맞출까요? (선택한 쪽으로 덮어씁니다)`;
+    modal.classList.remove('hidden');
+    const done = (): void => {
+      modal.classList.add('hidden');
+      markSynced();
+      resolve();
+    };
+    ($('#sync-pull') as HTMLButtonElement).onclick = () => {
+      applySave(remote);
+      done();
+    };
+    ($('#sync-push') as HTMLButtonElement).onclick = () => {
+      pushSave(local);
+      done();
+    };
+    ($('#sync-skip') as HTMLButtonElement).onclick = () => {
+      modal.classList.add('hidden');
+      syncDeferred = true; // 이번 세션엔 다시 묻지 않는다 (새로고침하면 다시 물어봄)
+      resolve();
+    };
+  });
+}
+
+function initAuth(): void {
+  refreshAuthUi();
+  ($('#btn-logout') as HTMLButtonElement).onclick = () => {
+    logout();
+    refreshAuthUi();
+  };
+  // 진행 상황이 바뀔 때마다 계정에 올린다 (로그인 상태일 때만)
+  setProgressListener(() => {
+    if (isLoggedIn()) pushSave(localSave());
+  });
+}
+
 initMenu();
+initAuth();
 initSoundUi();
 initShopToggle();
 initRotateHint();

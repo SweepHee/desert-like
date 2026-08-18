@@ -116,7 +116,9 @@ export async function renderLoginButton(el: HTMLElement, onDone: (serverSave: Sa
     callback: (r) => { void exchange(r.credential, onDone); },
   });
   el.innerHTML = '';
-  g.accounts.id.renderButton(el, { theme: 'filled_black', size: 'large', text: 'signin_with', shape: 'rectangular', locale: 'ko' });
+  // 눈에 보이지 않는 버튼이다 (그림 속 「로그인」 칸 위에 투명하게 덮인다).
+  // 알약형(pill)은 모서리가 둥글어 칸 구석이 안 눌리므로 반드시 사각형으로.
+  g.accounts.id.renderButton(el, { theme: 'filled_black', size: 'large', text: 'signin_with', shape: 'rectangular', width: 260, locale: 'ko' });
 }
 
 async function exchange(idToken: string, onDone: (s: SaveData) => void): Promise<void> {

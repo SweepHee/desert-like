@@ -247,12 +247,18 @@
     .hidden { display: none !important; }
     #menu-screen, #room-screen, #race-screen { display: flex; flex-direction: column; align-items: center; gap: 14px; }
     /* ── 구글 로그인 바 ── */
-    #authbar { display: flex; align-items: center; gap: 10px; min-height: 40px; }
-    #auth-me { display: flex; align-items: center; gap: 8px; }
-    #auth-me.hidden, #google-btn.hidden { display: none; }
-    #auth-pic { width: 28px; height: 28px; border-radius: 50%; border: 1px solid var(--line); }
+    /* 계정 줄 — 메뉴(캠페인·연습·대전) 제목 바로 아래. 오버레이 안이라
+       게임 중에는 자연히 사라진다. */
+    #authbar {
+      display: flex; align-items: center; justify-content: center; gap: 12px;
+      margin-top: -14px; padding: 7px 8px 7px 16px; border-radius: 999px;
+      background: rgba(18, 13, 8, .68); border: 1px solid var(--line);
+    }
+    #authbar.hidden { display: none; }
+    #auth-pic { width: 26px; height: 26px; border-radius: 50%; border: 1px solid var(--gold); }
     #auth-name { color: var(--gold); font-size: 14px; font-weight: bold; }
-    #btn-logout { padding: 4px 10px; font-size: 12px; }
+    #auth-state { color: var(--dim); font-size: 12px; white-space: nowrap; }
+    #btn-logout { padding: 3px 11px; font-size: 11px; }
     /* ── 진행 상황 동기화 ── */
     #sync-modal {
       position: fixed; inset: 0; z-index: 320; background: rgba(10, 7, 4, .82);
@@ -569,6 +575,38 @@
       background: rgb(var(--tt-rgb) / .16);
       box-shadow: 0 0 16px rgb(var(--tt-rgb) / .4), inset 0 0 22px rgb(var(--tt-rgb) / .18);
     }
+    /* ── 「로그인」 칸 ──
+       그림에 그려진 넷째 버튼 자리. GIS 는 커스텀 버튼에서 팝업을 못 띄우게
+       막아 두었으므로, 진짜 구글 버튼을 그 칸 위에 투명하게 덮어 클릭만 받는다.
+       보이는 건 어디까지나 그림 속 「로그인」 버튼. */
+    /* 구글 버튼은 모서리가 살짝 둥글어서, 칸에 딱 맞추면 네 구석이 안 눌린다.
+       칸보다 넉넉히 크게 덮은 다음 칸 경계(.title-login 의 overflow)로 잘라낸다 —
+       구석까지 눌리면서 옆 칸(종료)으로는 넘치지 않는다. */
+    .title-login { overflow: hidden; }
+    .tl-gsi { position: absolute; top: -16%; bottom: -16%; left: -8%; right: -8%; opacity: 0; }
+    .tl-gsi > div { transform-origin: top left; }
+    .tl-gsi.hidden, .tl-me.hidden { display: none; }
+    /* 로그인한 뒤 — 그림 속 「로그인」 글자를 계정 이름이 덮는다.
+       테두리는 그림에 그려진 프레임을 그대로 살리려고 안쪽으로 물려 놓는다. */
+    .tl-me {
+      position: absolute; inset: calc(3px * var(--art-scale, 1));
+      display: flex; align-items: center; justify-content: center;
+      gap: calc(7px * var(--art-scale, 1));
+      background: rgba(9, 6, 4, .94);
+      color: rgb(var(--tt-rgb) / .95);
+      font-size: calc(14px * var(--art-scale, 1));
+      letter-spacing: .03em; white-space: nowrap; cursor: pointer;
+      text-shadow: 0 1px 3px #000;
+    }
+    #tl-pic {
+      width: calc(19px * var(--art-scale, 1)); height: calc(19px * var(--art-scale, 1));
+      border-radius: 50%; border: 1px solid rgb(var(--tt-rgb) / .55); flex: none;
+    }
+    /* 이름 위에 올리면 「로그아웃」으로 바뀐다 */
+    .tl-out { display: none; }
+    .tl-me:hover #tl-pic, .tl-me:hover #tl-name { display: none; }
+    .tl-me:hover .tl-out { display: inline; }
+
     .title-hint {
       position: absolute; right: 14px; bottom: 12px;
       color: rgba(232, 217, 191, .5); font-size: 11px; letter-spacing: .08em;
@@ -685,15 +723,13 @@
   </div>
   <div id="overlay">
     <h1>DESERTLIKE<small id="overlay-sub"></small></h1>
+    <div id="authbar" class="hidden">
+      <img id="auth-pic" alt="" />
+      <span id="auth-name"></span>
+      <span id="auth-state">☁ 진행 상황이 계정에 저장됩니다</span>
+      <button id="btn-logout" class="menubtn alt">로그아웃</button>
+    </div>
     <div id="menu-screen">
-      <div id="authbar">
-        <div id="google-btn"></div>
-        <div id="auth-me" class="hidden">
-          <img id="auth-pic" alt="" />
-          <span id="auth-name"></span>
-          <button id="btn-logout" class="menubtn alt">로그아웃</button>
-        </div>
-      </div>
       <h2>⚔ 대전 게임</h2>
       <p>다른 사람과 1:1 ~ 3:3 으로 겨룹니다. 방을 만들거나 열린 방에 참가하세요.<br/>
          빈 자리는 AI 가 대신 맡을 수 있습니다.</p>

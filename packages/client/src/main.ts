@@ -23,7 +23,9 @@ import {
   type CampaignStage,
 } from './campaign.ts';
 import { createAudio } from './audio.ts';
-import { initTitle, showTitle, titleSubtitle, type TitleAction } from './title.ts';
+import {
+  initTitle, showTitle, titleSubtitle, titleLoginHost, setTitleAccount, type TitleAction,
+} from './title.ts';
 import { createMinimap, type Minimap } from './minimap.ts';
 import { iconUrl } from './sprites.ts';
 import { connect, serverUrl, type Net, type NetMsg } from './net.ts';
@@ -313,6 +315,8 @@ function onTitlePick(action: TitleAction): void {
   else if (action === 'versus') {
     showScreen('menu-screen');
     net?.send({ t: 'listRooms' }); // 들어가자마자 방 목록이 비어 보이지 않게
+  } else if (action === 'login') {
+    // 로그인 칸은 덮여 있는 구글 버튼이 직접 처리한다 — 화면 전환 없음
   } else {
     // 종료: 스크립트로 연 창이 아니면 브라우저가 close 를 막는다 — 작별 화면으로 대신한다
     $('#title').classList.add('hidden');
@@ -2178,31 +2182,29 @@ function initRotateHint(): void {
  * 로그인하면 닉네임 입력칸을 감추고 구글 계정 이름을 쓴다.
  */
 function refreshAuthUi(): void {
-  const bar = $('#authbar');
-  const me = $('#auth-me');
-  const btn = $('#google-btn');
   const nick = $('#nickname') as HTMLInputElement;
-  if (!authAvailable()) {
-    // 로그인 기능이 꺼진 배포 — 바 자체를 숨기고 기존 닉네임 입력을 쓴다
-    bar.style.display = 'none';
-    return;
-  }
-  bar.style.display = '';
-  const p = profile();
+  const p = authAvailable() ? profile() : null;
+  // 오버레이의 계정 줄은 "로그인했다"는 표시 전용 — 로그인 자체는 타이틀 명패에서.
+  // (로그인 기능이 꺼진 배포에서는 계속 닉네임 입력을 쓴다)
+  $('#authbar').classList.toggle('hidden', !p);
+  nick.style.display = p ? 'none' : '';
   if (p) {
-    btn.classList.add('hidden');
-    me.classList.remove('hidden');
     ($('#auth-pic') as HTMLImageElement).src = p.picture || '';
     $('#auth-name').textContent = p.name;
-    nick.style.display = 'none';
-  } else {
-    me.classList.add('hidden');
-    btn.classList.remove('hidden');
-    nick.style.display = '';
-    void renderLoginButton(btn, (serverSave) => {
+  }
+  if (!authAvailable()) return;
+  setTitleAccount(p, () => {
+    logout();
+    refreshAuthUi();
+  });
+  if (!p) {
+    void renderLoginButton(titleLoginHost(), (serverSave) => {
       refreshAuthUi();
       void maybeSync(serverSave);
-    });
+    }).then(() => setTitleAccount(null, () => {
+      logout();
+      refreshAuthUi();
+    }));
   }
 }
 

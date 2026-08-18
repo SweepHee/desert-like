@@ -34,7 +34,7 @@ npx tsx packages/sim/src/cli/battle.ts [seed] # 풀 게임 헤드리스
 - **해금 스킬**: `ActiveSkill.requiresUpgrade` — 업그레이드 구매 시 사용 가능 (세이지 마법 3종, 앨리스 인형의 실, 태엽 감기).
 - **넥서스**: 방어 28(기본 유닛 평타=1), 수호자 생존 중 무적.
 - **봇 AI**: 난이도 3단계(easy/normal=인컴 이점/hard=미러링+카운터픽) + 성격 4유형 시드 배정. `incomeCap`/`techCap`/`enemyPreferredUnits`는 GameConfig 옵션.
-- **타이틀 화면** (`packages/client/src/title.ts`): 종족 아트 4종(실바린·판데모니엄·마리오네타·카르자, `/assets/ui/title_*.jpg`) 중 하나가 접속마다 랜덤(직전 것 제외). **메뉴 버튼이 그림에 그려져 있어** 그 위에 투명 핫스팟을 얹어 클릭을 받는다 — 좌표는 원본 아트 756×504 기준 픽셀(`MENU_X/W/H` + 변종별 `tops`)이므로 아트를 새로 뽑으면 반드시 다시 재야 한다. 고른 아트는 이후 메뉴 화면의 흐린 배경(`--title-art`)과 강조색(`--tt-rgb` → `#overlay`의 `--gold`)으로 이어진다. 메뉴 4개 → 캠페인 목록 / 연습 종족선택 / 대전 로비 / 작별 화면.
+- **타이틀 화면** (`packages/client/src/title.ts`): 종족 아트 4종(실바린·판데모니엄·마리오네타·카르자, `/assets/ui/title_*.jpg`) 중 하나가 접속마다 랜덤(직전 것 제외). **메뉴 버튼이 그림에 그려져 있어** 그 위에 투명 핫스팟을 얹어 클릭을 받는다 — 좌표는 원본 아트 767×511 기준 픽셀(변종별 `menu: {x, w, tops[5], hs[5]}`, 아트마다 위치·크기가 다름)이므로 아트를 새로 뽑으면 반드시 다시 재야 한다. 메뉴 5칸 = 캠페인 / 연습 / 대전 / **로그인** / 종료. 로그인 칸은 구글 공식 버튼(GIS)을 그 위에 투명하게 덮어 클릭을 받고(커스텀 버튼으로는 팝업 불가), 칸보다 크게 덮은 뒤 `overflow:hidden` 으로 잘라 구석까지 눌리게 한다. 로그인하면 그 칸이 계정 이름 패널(`#tl-me`)로 바뀐다. 고른 아트는 이후 메뉴 화면의 흐린 배경(`--title-art`)과 강조색(`--tt-rgb` → `#overlay`의 `--gold`)으로 이어진다. 메뉴 4개 → 캠페인 목록 / 연습 종족선택 / 대전 로비 / 작별 화면.
 - **캠페인** (`packages/client/src/campaign.ts`): 실바린 「자정의 세계수」 18스테이지. 대화(포트레이트 11종 `/assets/portraits/`), localStorage 진행/특성 저장, 미션 3종(destroy/survive≥15분/tower), noTowers·warcamp(협공)·스폰 스크립트(c_* 특수유닛 7종)·mapId(toybox=2막 장난감 나라) 옵션. 시나리오 원본: `docs/campaign-sylvarin.md`.
 
 ## 에셋 파이프라인 (픽셀랩 MCP)

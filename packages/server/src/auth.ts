@@ -38,7 +38,9 @@ interface Store {
   sessions: Record<string, string>;
 }
 
-const DATA_DIR = process.env.DATA_DIR ?? join(process.cwd(), 'data');
+// 저장 위치: DATA_DIR > Railway 볼륨 마운트 경로 > 프로세스 옆 data/
+// (볼륨만 붙여두고 DATA_DIR 설정을 잊어도 데이터가 날아가지 않도록)
+const DATA_DIR = process.env.DATA_DIR ?? process.env.RAILWAY_VOLUME_MOUNT_PATH ?? join(process.cwd(), 'data');
 const DATA_FILE = join(DATA_DIR, 'accounts.json');
 
 function emptySave(): SaveData {

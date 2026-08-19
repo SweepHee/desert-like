@@ -29,8 +29,19 @@ interface Account {
   sub: string;          // 구글 계정 고유 id
   name: string;
   picture: string;
+  email?: string | undefined;
   save: SaveData;
 }
+
+/**
+ * 테스터 이메일 화이트리스트 — 미공개 콘텐츠(3막)를 이 계정들에게만 연다.
+ * TESTER_EMAILS 환경변수(콤마 구분)로 늘릴 수 있다.
+ */
+const TESTERS = new Set(
+  (process.env.TESTER_EMAILS ?? 'jeonsh1991@gmail.com')
+    .split(',').map((e) => e.trim().toLowerCase()).filter(Boolean),
+);
+const isTester = (email?: string): boolean => !!email && TESTERS.has(email.toLowerCase());
 
 interface Store {
   accounts: Record<string, Account>;
@@ -40,7 +51,7 @@ interface Store {
 
 // 저장 위치: DATA_DIR > Railway 볼륨 마운트 경로 > 프로세스 옆 data/
 // (볼륨만 붙여두고 DATA_DIR 설정을 잊어도 데이터가 날아가지 않도록)
-const DATA_DIR = process.env.DATA_DIR ?? process.env.RAILWAY_VOLUME_MOUNT_PATH ?? join(process.cwd(), 'data');
+const DATA_DIR = process.env.DATA_DIR?.trim() || process.env.RAILWAY_VOLUME_MOUNT_PATH?.trim() || join(process.cwd(), 'data');
 const DATA_FILE = join(DATA_DIR, 'accounts.json');
 
 function emptySave(): SaveData {
@@ -77,20 +88,66 @@ function persist(): void {
   }, 1000);
 }
 
-/** 구글 ID 토큰 검증 → 계정 정보. 실패 시 null. */
-async function verifyGoogle(idToken: string): Promise<{ sub: string; name: string; picture: string } | null> {
+interface GoogleProfile { sub: string; name: string; picture: string; email?: string | undefined }
+/**
+ * 구글 ID 토큰 검증 → 계정 정보.
+ * 실패하면 왜 실패했는지 reason 을 함께 돌려준다 — 조용히 401 만 내려보내면
+ * 클라이언트에서는 원인을 알 길이 없어 디버깅이 불가능하다.
+ */
+async function verifyGoogleAccess(accessToken: string): Promise<{ profile?: GoogleProfile; reason?: string }> {
+  try {
+    // 1) 이 토큰이 정말 우리 클라이언트에게 발급된 것인지 (aud 대조)
+    const ti = await fetch(`https://oauth2.googleapis.com/tokeninfo?access_token=${encodeURIComponent(accessToken)}`);
+    if (!ti.ok) {
+      console.error(`[auth] access tokeninfo 거부 status=${ti.status}`);
+      return { reason: `tokeninfo_${ti.status}` };
+    }
+    const info = (await ti.json()) as Record<string, string>;
+    const wantAud = process.env.GOOGLE_CLIENT_ID?.trim();
+    if (wantAud && info.aud !== wantAud) {
+      console.error(`[auth] aud 불일치 got=${info.aud} want=${wantAud}`);
+      return { reason: 'aud_mismatch' };
+    }
+    if (!info.sub) return { reason: 'no_sub' };
+    // 2) 이름·사진은 userinfo 에서
+    const ui = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
+      headers: { authorization: `Bearer ${accessToken}` },
+    });
+    if (!ui.ok) {
+      console.error(`[auth] userinfo 거부 status=${ui.status}`);
+      return { reason: `userinfo_${ui.status}` };
+    }
+    const u = (await ui.json()) as Record<string, string>;
+    return { profile: { sub: info.sub, name: u.name ?? u.email ?? '이름없는 자', picture: u.picture ?? '' } };
+  } catch (e) {
+    console.error('[auth] 구글 액세스 토큰 검증 중 오류', e);
+    return { reason: 'verify_error' };
+  }
+}
+
+async function verifyGoogle(idToken: string): Promise<{ profile?: GoogleProfile; reason?: string }> {
   try {
     const res = await fetch(`https://oauth2.googleapis.com/tokeninfo?id_token=${encodeURIComponent(idToken)}`);
-    if (!res.ok) return null;
+    if (!res.ok) {
+      console.error(`[auth] tokeninfo 거부 status=${res.status}`);
+      return { reason: `tokeninfo_${res.status}` };
+    }
     const p = (await res.json()) as Record<string, string>;
-    if (!p.sub) return null;
-    // aud 검증: 우리 클라이언트에서 발급된 토큰인지 (설정이 없으면 검사 생략)
-    const wantAud = process.env.GOOGLE_CLIENT_ID;
-    if (wantAud && p.aud !== wantAud) return null;
-    return { sub: p.sub, name: p.name ?? p.email ?? '이름없는 자', picture: p.picture ?? '' };
+    if (!p.sub) {
+      console.error('[auth] tokeninfo 응답에 sub 없음');
+      return { reason: 'no_sub' };
+    }
+    // aud 검증: 우리 클라이언트에서 발급된 토큰인지 (설정이 없으면 검사 생략).
+    // 클라이언트 ID 는 공개값이라 로그에 남겨도 안전하다.
+    const wantAud = process.env.GOOGLE_CLIENT_ID?.trim();
+    if (wantAud && p.aud !== wantAud) {
+      console.error(`[auth] aud 불일치 got=${p.aud} want=${wantAud}`);
+      return { reason: 'aud_mismatch' };
+    }
+    return { profile: { sub: p.sub, name: p.name ?? p.email ?? '이름없는 자', picture: p.picture ?? '', email: p.email } };
   } catch (e) {
-    console.error('[auth] 구글 토큰 검증 실패', e);
-    return null;
+    console.error('[auth] 구글 토큰 검증 중 오류', e);
+    return { reason: 'verify_error' };
   }
 }
 
@@ -139,27 +196,40 @@ export async function handleApi(req: IncomingMessage, res: ServerResponse): Prom
   if (url === '/api/auth/google' && req.method === 'POST') {
     const body = await readBody(req);
     let idToken = '';
-    try { idToken = (JSON.parse(body) as { idToken?: string }).idToken ?? ''; } catch { /* 무시 */ }
-    const profile = idToken ? await verifyGoogle(idToken) : null;
+    let accessToken = '';
+    try {
+      const b = JSON.parse(body) as { idToken?: string; accessToken?: string };
+      idToken = b.idToken ?? '';
+      accessToken = b.accessToken ?? '';
+    } catch { /* 무시 */ }
+    if (!idToken && !accessToken) {
+      json(res, 401, { error: 'invalid_token', reason: 'no_token' });
+      return true;
+    }
+    // 커스텀 버튼(OAuth2 토큰 플로우)은 access_token, 공식 버튼은 id_token 을 준다
+    const { profile, reason } = accessToken
+      ? await verifyGoogleAccess(accessToken)
+      : await verifyGoogle(idToken);
     if (!profile) {
-      json(res, 401, { error: 'invalid_token' });
+      json(res, 401, { error: 'invalid_token', reason });
       return true;
     }
     const acc = store.accounts[profile.sub] ?? { ...profile, save: emptySave() };
     acc.name = profile.name;
     acc.picture = profile.picture;
+    acc.email = profile.email;
     store.accounts[profile.sub] = acc;
     const token = randomBytes(24).toString('hex');
     store.sessions[token] = profile.sub;
     persist();
-    json(res, 200, { token, name: acc.name, picture: acc.picture, save: acc.save });
+    json(res, 200, { token, name: acc.name, picture: acc.picture, tester: isTester(acc.email), save: acc.save });
     return true;
   }
 
   if (url === '/api/save' && req.method === 'GET') {
     const acc = sessionOf(req);
     if (!acc) { json(res, 401, { error: 'unauthorized' }); return true; }
-    json(res, 200, { save: acc.save, name: acc.name, picture: acc.picture });
+    json(res, 200, { save: acc.save, name: acc.name, picture: acc.picture, tester: isTester(acc.email) });
     return true;
   }
 

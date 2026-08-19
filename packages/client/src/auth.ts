@@ -18,6 +18,8 @@ export interface SaveData {
 export interface Profile {
   name: string;
   picture: string;
+  /** 미공개 콘텐츠(3막) 테스터인가 — 서버의 이메일 화이트리스트가 정한다. */
+  tester?: boolean;
 }
 
 const LS_TOKEN = 'dl_auth_token';
@@ -25,7 +27,9 @@ const LS_PROFILE = 'dl_auth_profile';
 /** 이 계정과 이미 동기화를 끝냈는지 (스테이지 진입 때마다 묻지 않도록). */
 const LS_SYNCED = 'dl_auth_synced';
 
-const CLIENT_ID = (import.meta.env?.VITE_GOOGLE_CLIENT_ID as string | undefined) ?? '';
+// trim 필수 — 환경변수를 붙여넣을 때 끝에 개행이 딸려 오면 그대로 구워져서
+// 구글이 client_id 를 '...com%0A' 로 받고 400(invalid_request)을 돌려준다
+const CLIENT_ID = ((import.meta.env?.VITE_GOOGLE_CLIENT_ID as string | undefined) ?? '').trim();
 
 /** 로그인 기능을 쓸 수 있는가 (클라이언트 ID 가 설정돼 있는가). */
 export function authAvailable(): boolean {
@@ -51,6 +55,11 @@ export function profile(): Profile | null {
 
 export function isLoggedIn(): boolean {
   return !!authToken() && !!profile();
+}
+
+/** 미공개 콘텐츠(3막) 접근 가능 계정인가. */
+export function isTester(): boolean {
+  return profile()?.tester === true;
 }
 
 export function markSynced(): void {
@@ -92,46 +101,77 @@ function loadGis(): Promise<void> {
   return gisPromise;
 }
 
-interface GisCredentialResponse { credential: string }
+interface TokenResponse { access_token?: string; error?: string }
+interface TokenClient { requestAccessToken(): void }
 interface GisApi {
   accounts: {
-    id: {
-      initialize(cfg: { client_id: string; callback: (r: GisCredentialResponse) => void }): void;
-      renderButton(el: HTMLElement, opts: Record<string, unknown>): void;
-      prompt(): void;
+    oauth2: {
+      initTokenClient(cfg: {
+        client_id: string;
+        scope: string;
+        callback: (r: TokenResponse) => void;
+        error_callback?: (e: unknown) => void;
+      }): TokenClient;
     };
   };
 }
 
 /**
- * 로그인 버튼을 el 안에 그린다. 로그인에 성공하면 onDone(서버 세이브) 호출.
- * GIS 는 커스텀 버튼에서 팝업을 띄우는 걸 막고 있어서 공식 버튼을 렌더한다.
+ * 로그인 팝업을 여는 준비물.
+ *
+ * 공식 「Google 로그인」 버튼(renderButton)은 크로스 오리진 iframe 이라
+ * 우리 UI 와 섞이지 않는다 — 마우스 이벤트도 안 넘어오고, 밖에서 눌러 줄 수도
+ * 없다. 그래서 커스텀 버튼을 공식적으로 허용하는 OAuth2 토큰 플로우를 쓴다.
+ *
+ * 팝업 차단을 피하려면 클릭 핸들러 안에서 곧바로 requestAccessToken() 이
+ * 불려야 하므로(비동기 대기 금지), 클라이언트는 화면이 뜰 때 미리 만들어 둔다.
  */
-export async function renderLoginButton(el: HTMLElement, onDone: (serverSave: SaveData) => void): Promise<void> {
-  if (!authAvailable()) return;
+let tokenClient: TokenClient | null = null;
+let loginDone: ((s: SaveData) => void) | null = null;
+
+/** 페이지가 뜰 때 미리 불러 둔다 — 클릭 시점에는 기다릴 시간이 없다. */
+export async function prepareLogin(onDone: (serverSave: SaveData) => void): Promise<void> {
+  loginDone = onDone;
+  if (!authAvailable() || tokenClient) return;
   await loadGis();
   const g = (window as unknown as { google: GisApi }).google;
-  g.accounts.id.initialize({
+  tokenClient = g.accounts.oauth2.initTokenClient({
     client_id: CLIENT_ID,
-    callback: (r) => { void exchange(r.credential, onDone); },
+    scope: 'openid email profile',
+    callback: (r) => {
+      if (!r.access_token) { console.error('[auth] 토큰 없음', r.error); return; }
+      void exchange(r.access_token, (save) => loginDone?.(save));
+    },
+    error_callback: (e) => { console.error('[auth] 로그인 취소/실패', e); },
   });
-  el.innerHTML = '';
-  // 눈에 보이지 않는 버튼이다 (그림 속 「로그인」 칸 위에 투명하게 덮인다).
-  // 알약형(pill)은 모서리가 둥글어 칸 구석이 안 눌리므로 반드시 사각형으로.
-  g.accounts.id.renderButton(el, { theme: 'filled_black', size: 'large', text: 'signin_with', shape: 'rectangular', width: 260, locale: 'ko' });
 }
 
-async function exchange(idToken: string, onDone: (s: SaveData) => void): Promise<void> {
+/** 로그인 팝업을 연다. 반드시 클릭 핸들러에서 곧바로 부를 것. */
+export function startLogin(): boolean {
+  if (!tokenClient) return false; // 아직 준비 전 — 호출부가 안내를 띄운다
+  tokenClient.requestAccessToken();
+  return true;
+}
+
+async function exchange(accessToken: string, onDone: (s: SaveData) => void): Promise<void> {
   try {
     const res = await fetch(`${apiBase()}/api/auth/google`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ idToken }),
+      body: JSON.stringify({ accessToken }),
     });
-    if (!res.ok) throw new Error(`auth ${res.status}`);
-    const data = (await res.json()) as { token: string; name: string; picture: string; save: SaveData };
+    if (!res.ok) {
+      // 서버가 알려준 실패 사유를 그대로 붙여 둔다 (aud_mismatch / tokeninfo_400 …)
+      const why = await res.json().then((d: { reason?: string }) => d.reason).catch(() => undefined);
+      throw new Error(`auth ${res.status}${why ? ` (${why})` : ''}`);
+    }
+    const data = (await res.json()) as {
+      token: string; name: string; picture: string; tester?: boolean; save: SaveData;
+    };
     localStorage.setItem(LS_TOKEN, data.token);
-    localStorage.setItem(LS_PROFILE, JSON.stringify({ name: data.name, picture: data.picture }));
+    localStorage.setItem(LS_PROFILE, JSON.stringify({
+      name: data.name, picture: data.picture, tester: data.tester === true,
+    }));
     localStorage.removeItem(LS_SYNCED); // 새 로그인 → 동기화 다시 묻는다
     onDone(data.save);
   } catch (e) {
@@ -148,7 +188,13 @@ export async function fetchSave(): Promise<SaveData | null> {
     const res = await fetch(`${apiBase()}/api/save`, { headers: { authorization: `Bearer ${t}` } });
     if (res.status === 401) { logout(); return null; } // 세션 만료
     if (!res.ok) return null;
-    return ((await res.json()) as { save: SaveData }).save;
+    const data = (await res.json()) as { save: SaveData; tester?: boolean };
+    const pr = profile();
+    if (pr && pr.tester !== (data.tester === true)) {
+      // 화이트리스트 변경이 다음 접속에 반영되도록 프로필을 최신화
+      localStorage.setItem(LS_PROFILE, JSON.stringify({ ...pr, tester: data.tester === true }));
+    }
+    return data.save;
   } catch { return null; }
 }
 

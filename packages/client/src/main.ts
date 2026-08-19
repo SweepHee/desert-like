@@ -24,13 +24,13 @@ import {
 } from './campaign.ts';
 import { createAudio } from './audio.ts';
 import {
-  initTitle, showTitle, titleSubtitle, titleLoginHost, setTitleAccount, type TitleAction,
+  initTitle, showTitle, titleSubtitle, setTitleAccount, type TitleAction,
 } from './title.ts';
 import { createMinimap, type Minimap } from './minimap.ts';
 import { iconUrl } from './sprites.ts';
 import { connect, serverUrl, type Net, type NetMsg } from './net.ts';
 import {
-  authAvailable, isLoggedIn, profile, logout, renderLoginButton,
+  authAvailable, isLoggedIn, isTester, profile, logout, prepareLogin, startLogin,
   fetchSave, pushSave, markSynced, alreadySynced, type SaveData,
 } from './auth.ts';
 
@@ -299,6 +299,12 @@ function initMenu(): void {
     net.send({ t: 'createRoom', name: `${nickname()}의 방` });
   };
   $('#btn-menu-title').onclick = () => showScreen('title');
+  $('#need-login').onclick = (e) => {
+    // 상자 바깥이나 확인 버튼 — 어느 쪽을 눌러도 닫힌다
+    if (e.target === $('#need-login') || (e.target as HTMLElement).id === 'nl-ok') {
+      $('#need-login').classList.add('hidden');
+    }
+  };
   $('#btn-fw-back').onclick = () => showScreen('title');
 
   initTitle(audio, onTitlePick);
@@ -308,15 +314,36 @@ function initMenu(): void {
   if (!campaignAutoResume()) showScreen('title');
 }
 
+/**
+ * 3막(미공개)에 들어갈 수 있는가 — 서버 화이트리스트에 오른 테스터 계정만.
+ * 로그인 기능이 꺼진 로컬 개발 빌드에서는 열어 둔다 (개발 편의).
+ */
+function act3Open(): boolean {
+  return isTester() || !authAvailable();
+}
+
+/**
+ * 캠페인에 들어갈 수 있는가 — 진행 상황을 계정에 저장하므로 로그인이 필요하다.
+ * (로그인 기능이 꺼진 배포에서는 막지 않는다 — 게임 자체가 잠기면 안 되므로)
+ */
+function campaignGate(): boolean {
+  if (!authAvailable() || isLoggedIn()) return true;
+  showScreen('title');
+  $('#need-login').classList.remove('hidden');
+  return false;
+}
+
 /** 타이틀 메뉴 → 이어질 화면. */
 function onTitlePick(action: TitleAction): void {
-  if (action === 'campaign') showCampaignSelect();
+  if (action === 'campaign') { if (campaignGate()) showCampaignSelect(); }
   else if (action === 'solo') showSoloRaceSelect();
   else if (action === 'versus') {
     showScreen('menu-screen');
     net?.send({ t: 'listRooms' }); // 들어가자마자 방 목록이 비어 보이지 않게
   } else if (action === 'login') {
-    // 로그인 칸은 덮여 있는 구글 버튼이 직접 처리한다 — 화면 전환 없음
+    if (isLoggedIn()) { logout(); refreshAuthUi(); return; }
+    // 팝업 차단을 피하려면 클릭 직후 곧바로 열어야 한다 (await 금지)
+    if (!startLogin()) alert('로그인 준비 중입니다. 잠시 후 다시 눌러 주세요.');
   } else {
     // 종료: 스크립트로 연 창이 아니면 브라우저가 close 를 막는다 — 작별 화면으로 대신한다
     $('#title').classList.add('hidden');
@@ -507,6 +534,19 @@ let campaignSpawnedTotal: number[] = [];
 let campaignCaptureStartTick = -1;
 /** boss 미션: 처치 대상 보스 엔티티 id (-1 = 없음). */
 let campaignBossId = -1;
+// ── 호위전 (13. 페이로드) 상태 ──
+/** 확보한 거점 수 (0..points.length). */
+let escortFrontier = 0;
+/** 현재 거점 점령 진행 (틱). */
+let escortProgressTicks = 0;
+/** 적 단독 점유 누적 (틱) — loseSec 채우면 거점 상실. */
+let escortLoseTicks = 0;
+/** 보급 마차 엔티티 id. */
+let escortCartId = -1;
+/** 후퇴 목표 x (FP, -1 = 후퇴 아님). */
+let escortRetreatX = -1;
+/** 진행량 계산용 직전 게임 틱 (프레임당 dt 를 구한다). */
+let escortPrevTick = 0;
 let campaignCutsceneDone: boolean[] = [];
 let campaignGrowthWave: number[] = []; // 규칙별 마지막으로 편입한 웨이브 번호
 let campaignGrowthAnnounced: boolean[] = [];
@@ -561,7 +601,7 @@ function showCampaignSelect(): void {
   for (const st of SYLVARIN_CAMPAIGN) {
     const btn = document.createElement('button');
     btn.className = 'camp-stage';
-    const unreleased = st.act === 3; // 3막은 아직 미공개
+    const unreleased = st.act === 3 && st.id > 13 && !act3Open(); // 13은 전체 공개, 14+ 는 테스터만
     const locked = unreleased || st.id > cleared + 1;
     const done = st.id <= cleared;
     const isNext = !unreleased && st.id === cleared + 1;
@@ -729,7 +769,7 @@ function showBoonScreen(): void {
 }
 
 async function startCampaignStage(st: CampaignStage): Promise<void> {
-  if (st.act === 3) { showCampaignSelect(); return; } // 3막 미공개 — 어떤 경로로도 진입 불가
+  if (st.act === 3 && st.id > 13 && !act3Open()) { showCampaignSelect(); return; } // 14+ 는 테스터 전용
   showScreen(null);
   await runDialogue(st.briefing);
   campaign = st;
@@ -766,6 +806,13 @@ async function startCampaignStage(st: CampaignStage): Promise<void> {
   campaignSpawnedTotal = (st.spawns ?? []).map(() => 0);
   campaignCaptureStartTick = -1;
   campaignBossId = -1;
+  escortFrontier = 0;
+  escortProgressTicks = 0;
+  escortLoseTicks = 0;
+  escortCartId = -1;
+  escortRetreatX = -1;
+  escortPrevTick = 0;
+  renderer?.setEscort(null);
   campaignCutsceneDone = (st.cutscenes ?? []).map(() => false);
   campaignGrowthWave = (st.growth ?? []).map(() => 0);
   campaignGrowthAnnounced = (st.growth ?? []).map(() => false);
@@ -791,6 +838,24 @@ async function startCampaignStage(st: CampaignStage): Promise<void> {
     campaignBossId = boss.id;
     campaignAlertText = '⚔ 사령장군 카르가스가 요새 앞을 지키고 있다!';
     campaignAlertUntil = performance.now() + 5000;
+  }
+  if (st.obstacles && game) {
+    // 불타는 숲 장애물: 무적·부동 — 아무도 조준하지 않지만 지상 유닛의 길을 막는다
+    for (const ob of st.obstacles) {
+      const ox = Math.floor(ob.xTile * FP);
+      const oy = laneCenterY(game.map, ox) + Math.floor(ob.yOffTile * FP);
+      const e = spawnUnit(game, ob.defId, 2, ox, oy);
+      e.invulnUntil = Number.MAX_SAFE_INTEGER;
+    }
+  }
+  if (st.escort && game) {
+    // 보급 마차: 아군 진영에서 출발. 무적 — 호위 실패는 「거점 상실」로만 표현된다
+    const cx0 = game.map.spawnX[0];
+    const cart = spawnUnit(game, st.escort.cartDefId, 0, cx0, laneCenterY(game.map, cx0));
+    cart.invulnUntil = Number.MAX_SAFE_INTEGER;
+    escortCartId = cart.id;
+    // 아군 부대는 첫 거점 언저리까지만 진군해 대기
+    game.holdLineX = Math.floor(st.escort.pointsXTile[0]! * FP) + 3 * FP;
   }
   if (st.nestGuards && game) {
     // 둥지 수호탑: 아군 고정 수호수 — 무적 + 제자리 (speed 0)
@@ -836,7 +901,7 @@ function campaignFinish(win: boolean, reason?: string): void {
     const isLast = st.id === SYLVARIN_CAMPAIGN.length;
     const newBoonUnit = win ? BOON_UNLOCKS[st.id] : undefined;
     const nextSt = SYLVARIN_CAMPAIGN.find((x) => x.id === st.id + 1);
-    const nextUnreleased = nextSt?.act === 3; // 3막 미공개 — 다음으로 못 간다
+    const nextUnreleased = nextSt !== undefined && nextSt.act === 3 && nextSt.id > 13 && !act3Open(); // 14+ 테스터 전용
     overlay.innerHTML =
       `<h1>${win ? '스테이지 클리어!' : `패배… (${turnAt}턴)`}</h1>` +
       `<p>${st.id}. ${st.title}${reason ? ` — ${reason}` : ''}</p>` +
@@ -874,6 +939,7 @@ function campaignAutoResume(): boolean {
   const auto = sessionStorage.getItem('camp_auto');
   if (!auto) return false;
   sessionStorage.removeItem('camp_auto');
+  if (!campaignGate()) return true; // 로그아웃 상태 — 안내를 띄우고 타이틀에 머문다
   if (auto === 'list') {
     showCampaignSelect();
     return true;
@@ -1541,6 +1607,115 @@ function tick(deltaMS: number): void {
       }
     }
   }
+  // 캠페인: 호위전(페이로드) — 마차가 거점에 서 있는 동안 점령이 진행된다.
+  // 규칙: 마차 도착 + 적 없음 → 게이지 진행 / 경합 → 일시정지 /
+  //       적 단독 점유 loseSec 초 → 거점 상실, 마차는 직전 거점으로 후퇴.
+  if (campaign?.escort && game && !campaignDone && !game.over) {
+    const es = campaign.escort;
+    const pts = es.pointsXTile;
+    const dt = Math.max(0, game.tick - escortPrevTick); // 배속·프레임 드랍과 무관하게 심 틱 기준
+    escortPrevTick = game.tick;
+    const cart = game.entities.find((e) => e.id === escortCartId);
+    let contested = false;
+    let escortHudNoAllies = false; // 마차는 거점에 닿았는데 아군 부대가 없다 (HUD 안내용)
+    if (escortFrontier < pts.length && cart) {
+      const px = Math.floor(pts[escortFrontier]! * FP);
+      const py = laneCenterY(game.map, px);
+      const r = Math.floor(es.radiusTiles * FP);
+      // 거점 반경 안의 양 팀 전투 유닛 (구조물·수호자·야생 제외)
+      let mine = 0;
+      let theirs = 0;
+      for (const e of game.entities) {
+        if (!e.alive || e.owner < 0) continue;
+        const dx = e.x - px;
+        const dy = e.y - py;
+        if (dx * dx + dy * dy > r * r) continue;
+        if (e.team === 0) mine++;
+        else if (e.team === 1) theirs++;
+      }
+      contested = theirs > 0;
+      // 상실 판정: 적만 반경 안에 loseSec 초 → 마차 후퇴
+      if (theirs > 0 && mine === 0) escortLoseTicks += dt;
+      else escortLoseTicks = 0;
+      if (escortLoseTicks >= es.loseSec * TICK_HZ) {
+        escortLoseTicks = 0;
+        escortProgressTicks = 0;
+        escortRetreatX = escortFrontier > 0
+          ? Math.floor(pts[escortFrontier - 1]! * FP)
+          : game.map.spawnX[0];
+        campaignAlertText = `⚠ 거점 ${escortFrontier + 1}호를 적이 점거했다 — 마차가 후퇴한다!`;
+        campaignAlertUntil = performance.now() + 4000;
+        audio.play('cast_skill', { volume: 0.9 });
+      }
+      // 점령 진행: 마차가 거점에 서 있고 + 아군 부대가 곁에 있고 + 적이 없을 때만
+      // 오른다 (마차 혼자서는 의식을 지킬 수 없다 / 경합 중엔 멈춤)
+      const cdx = cart.x - px;
+      const cartAt = escortRetreatX < 0 && cdx * cdx <= (2 * FP) * (2 * FP);
+      escortHudNoAllies = cartAt && theirs === 0 && mine === 0;
+      if (cartAt && theirs === 0 && mine > 0) {
+        escortProgressTicks += dt;
+        if (escortProgressTicks >= es.captureSec * TICK_HZ) {
+          escortProgressTicks = 0;
+          escortFrontier++;
+          if (escortFrontier >= pts.length) {
+            game.holdLineX = 0; // 전선 해제 — 총공격
+            campaignAlertText = '🎺 다섯 거점을 모두 확보했다! 전군, 넥서스로 총공격!';
+            // 전 거점 확보 이벤트: 네임드 등장 + 컷신 (13: 슬리피 할로우의 정체)
+            if (es.onCompleteSpawn) {
+              const hxRaw = game.map.nexusX[1] - 5 * FP;
+              const hx = Math.max(0, hxRaw);
+              const named = spawnUnit(game, es.onCompleteSpawn.defId, 1, hx, laneCenterY(game.map, hx));
+              named.hp = DEFS[es.onCompleteSpawn.defId]!.maxHp;
+              campaignAlertText = `${es.onCompleteSpawn.label} — 길 끝을 막아섰다! 넥서스를 파괴하라!`;
+            }
+            if (es.onCompleteDialogue) {
+              setCutscenePause(true);
+              void runDialogue(es.onCompleteDialogue).then(() => setCutscenePause(false));
+            }
+          } else {
+            game.holdLineX = Math.floor(pts[escortFrontier]! * FP) + 3 * FP;
+            campaignAlertText = `🚩 거점 ${escortFrontier}/${pts.length} 확보! 마차가 다음 마디로 나아간다`;
+          }
+          campaignAlertUntil = performance.now() + 4500;
+          audio.play('ui_buy', { volume: 0.9 });
+        }
+      }
+      // 마차 이동: 후퇴 중이면 뒤로, 아니면 목표 거점으로.
+      // 적이 거점을 점거 중이면(아군 없음) 반경 밖에서 멈춰 기다린다.
+      const cartSpeed = Math.max(1, Math.floor((1.6 * FP * dt) / TICK_HZ)); // 1.6타일/초
+      let targetX = escortRetreatX >= 0 ? escortRetreatX : px;
+      if (escortRetreatX < 0 && theirs > 0 && mine === 0) targetX = Math.min(cart.x, px - r - FP);
+      if (dt > 0) {
+        if (cart.x < targetX) cart.x = Math.min(cart.x + cartSpeed, targetX);
+        else if (cart.x > targetX) cart.x = Math.max(cart.x - cartSpeed, targetX);
+        cart.y = laneCenterY(game.map, cart.x);
+        if (escortRetreatX >= 0 && cart.x === escortRetreatX) escortRetreatX = -1;
+      }
+    }
+    // 거점 표시 (렌더러) + HUD
+    renderer.setEscort({
+      pointsX: pts.map((t) => Math.floor(t * FP)),
+      radius: Math.floor(es.radiusTiles * FP),
+      frontier: escortFrontier,
+      progress01: Math.min(1, escortProgressTicks / (es.captureSec * TICK_HZ)),
+      contested,
+    });
+    if (performance.now() >= campaignAlertUntil) {
+      const total = pts.length;
+      if (escortFrontier >= total) {
+        $('#campaign-goal').textContent = `[${campaign.id}. ${campaign.title}] 🎺 전 거점 확보 — 적 넥서스를 파괴하라!`;
+      } else {
+        const secLeft = Math.ceil((es.captureSec * TICK_HZ - escortProgressTicks) / TICK_HZ);
+        const state = escortRetreatX >= 0 ? '↩ 마차 후퇴 중'
+          : contested ? '⚔ 거점 교전 중 — 적을 몰아내라'
+          : escortProgressTicks > 0 ? `⏳ 점령 진행 — ${secLeft}초`
+          : escortHudNoAllies ? '🛡 거점에 아군 부대가 필요하다!'
+          : '🛞 마차 이동 중';
+        $('#campaign-goal').textContent =
+          `[${campaign.id}. ${campaign.title}] 🚩 거점 ${escortFrontier}/${total} — ${state}`;
+      }
+    }
+  }
   // 캠페인: 전투 중 컷신 — 전투를 세우고 대사를 띄운다 (네임드 등장 연출)
   if (campaign && !campaignDone && !game.over && campaign.cutscenes && !cutscenePause) {
     const nowSec = game.tick / TICK_HZ;
@@ -2182,6 +2357,7 @@ function initRotateHint(): void {
  * 로그인하면 닉네임 입력칸을 감추고 구글 계정 이름을 쓴다.
  */
 function refreshAuthUi(): void {
+  if (isLoggedIn()) $('#need-login').classList.add('hidden');
   const nick = $('#nickname') as HTMLInputElement;
   const p = authAvailable() ? profile() : null;
   // 오버레이의 계정 줄은 "로그인했다"는 표시 전용 — 로그인 자체는 타이틀 명패에서.
@@ -2193,19 +2369,7 @@ function refreshAuthUi(): void {
     $('#auth-name').textContent = p.name;
   }
   if (!authAvailable()) return;
-  setTitleAccount(p, () => {
-    logout();
-    refreshAuthUi();
-  });
-  if (!p) {
-    void renderLoginButton(titleLoginHost(), (serverSave) => {
-      refreshAuthUi();
-      void maybeSync(serverSave);
-    }).then(() => setTitleAccount(null, () => {
-      logout();
-      refreshAuthUi();
-    }));
-  }
+  setTitleAccount(p);
 }
 
 /**
@@ -2268,6 +2432,14 @@ function maybeSync(serverSave: SaveData | null): Promise<void> {
 
 function initAuth(): void {
   refreshAuthUi();
+  // 클릭 시점에는 기다릴 틈이 없다 — 구글 스크립트와 토큰 클라이언트를 미리 만든다
+  void prepareLogin((serverSave) => {
+    refreshAuthUi();
+    void maybeSync(serverSave);
+  });
+  // 이미 로그인된 채 접속: 서버에서 테스터 표식을 최신화한다
+  // (화이트리스트 등록 전에 로그인했던 계정도 새로고침만으로 3막이 열리게)
+  if (isLoggedIn()) void fetchSave().then(() => refreshAuthUi());
   ($('#btn-logout') as HTMLButtonElement).onclick = () => {
     logout();
     refreshAuthUi();

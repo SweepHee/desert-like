@@ -132,6 +132,14 @@ export const ASSET_UNITS: Record<string, string | string[]> = {
   nexus_bone: '/assets/units/nexus_bone.png',
   // 마몬의 상점 (캠페인 점령 오브젝트 — 전투 개입 없음, 그림+점령 표시만)
   mercshop: '/assets/units/mercshop.png',
+  // 호위전(13) 소품 — 보급 마차 + 불타는 숲 장애물
+  c_supply_cart: '/assets/units/c_supply_cart.png',
+  // 앨리스의 지원 병력 (13) — 원본 마리오네타 유닛 그림을 그대로 쓴다
+  c_alice_soldier: '/assets/units/m_clockwork_soldier.png',
+  c_alice_teddy: '/assets/units/m_gore_teddy.png',
+  c_burning_tree: '/assets/units/c_burning_tree.png',
+  c_ember_tree: '/assets/units/c_ember_tree.png',
+  c_burning_log: '/assets/units/c_burning_log.png',
   // 둥지 (11스테이지) — nest 맵의 아군 넥서스 스킨
   nexus_nest: '/assets/units/nexus_nest.png',
   // 12스테이지 보스 — 발타르의 선봉장
@@ -177,6 +185,8 @@ const ASSET_ICONS: Record<string, string> = {
   s_sage: '/assets/units/s_sage_icon.png',
   m_plushbear: '/assets/units/m_plushbear_icon.png',
   m_clockwork_soldier: '/assets/units/m_clockwork_soldier_icon.png',
+  c_alice_soldier: '/assets/units/m_clockwork_soldier_icon.png',
+  c_alice_teddy: '/assets/units/m_gore_teddy_icon.png',
   m_button_doll: '/assets/units/m_button_doll_icon.png',
   m_puppet_swordsman: '/assets/units/m_puppet_swordsman_icon.png',
   m_clockwork_spider: '/assets/units/m_clockwork_spider_icon.png',
@@ -285,6 +295,8 @@ const ASSET_ATTACK_ANIMS: Record<string, string[][]> = {
   s_marksman: atk4('s_marksman'),
   s_sage: atk4('s_sage'),
   m_clockwork_soldier: atk4('m_clockwork_soldier'),
+  c_alice_soldier: atk4('m_clockwork_soldier'),
+  c_alice_teddy: atk4('m_gore_teddy'),
   m_puppet_swordsman: atk4('m_puppet_swordsman'),
   m_cursed_doll: atk4('m_cursed_doll'),
   m_button_doll: atk4('m_button_doll'),
@@ -416,6 +428,8 @@ const ASSET_SIZE_MUL: Record<string, number> = {
   c_nest_wyvern: 1.3, c_nest_unicorn: 1.3, c_nest_fairy: 1.3, // 둥지 수호탑 — 타워 위용
   c_wild_blackbird: 1.4, c_wild_grizzly: 1.2, c_wild_direwolf: 1.15,
   c_balthar_general: 1.5, // 12 보스 — 슬리피 할로우급 거구
+  // 호위전 소품: 나무는 반경보다 훨씬 크게 — 숲이 우거진 인상
+  c_burning_tree: 1.35, c_ember_tree: 1.3, c_burning_log: 0.95, c_supply_cart: 1.15,
 };
 
 /**
@@ -527,6 +541,7 @@ const MAP_THEMES: Record<string, readonly string[]> = {
   nest: ['alpine'],
   confluence: ['necro'],
   toybox: ['toy'],
+  ashroad: ['burnt'], // 불탄 숲길 — 평원의 「탄 쪽」 지형을 전체에 깐다
 };
 
 /** 맵 바깥(캔버스 여백) 색. 지형과 이어지는 톤으로. */
@@ -537,6 +552,7 @@ const MAP_BG: Record<string, number> = {
   plains: 0x1d2a19, // 깊은 숲 그늘
   valley: 0x9c7c4e,
   toybox: 0x3a2438, // 장난감 방의 어둑한 자주빛
+  ashroad: 0x1f120c, // 잿불이 스민 검붉은 어둠
 };
 
 /** 액티브 스킬 시전 모션 프레임 (없는 유닛은 공격 모션 재활용). */
@@ -659,6 +675,17 @@ export interface Renderer {
   setMap(m: MapDef): void;
   /** 적(팀1) 건물 스킨 설정 (캠페인). null = 기본/맵 자동. */
   setEnemySkin(skin: 'toy' | 'bone' | null): void;
+  /**
+   * 호위전 거점 표시 (캠페인 13). 매 프레임 상태를 넘겨 받아 링·깃발을 그린다.
+   * null = 표시 끔.
+   */
+  setEscort(cfg: {
+    pointsX: readonly number[]; // FP
+    radius: number; // FP
+    frontier: number;
+    progress01: number;
+    contested: boolean;
+  } | null): void;
   /** 시뮬 스텝 직전에 호출 — 보간용 이전 위치 스냅샷. */
   beforeStep(g: Game): void;
   draw(g: Game, alpha: number): void;
@@ -1327,6 +1354,47 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
       mercShopLabel?.destroy();
       mercShopLabel = null;
     }
+    // ── 호위전 거점 (캠페인 13): 확보 = 초록, 현재 목표 = 금색 펄스 + 진행 호, 미래 = 잿빛 ──
+    if (escortCfg) {
+      const ec = escortCfg;
+      const rr = (ec.radius / FP) * TILE;
+      for (let i = 0; i < ec.pointsX.length; i++) {
+        const px2 = sx(ec.pointsX[i]!);
+        const py2 = sy(laneCenterY(g.map, ec.pointsX[i]!));
+        const captured = i < ec.frontier;
+        const current = i === ec.frontier;
+        const color = captured ? 0x67d76a : current ? (ec.contested ? 0xff6a57 : 0xffd23d) : 0x8a7f6a;
+        const pulse2 = current ? 0.6 + 0.4 * Math.sin(now * 0.01) : 0.7;
+        fx.ellipse(px2, py2, rr, rr * 0.62).fill({ color, alpha: captured ? 0.05 : current ? 0.1 : 0.03 });
+        fx.ellipse(px2, py2, rr, rr * 0.62)
+          .stroke({ color, width: current ? 3.5 : 2, alpha: (current ? 0.9 : 0.5) * pulse2 });
+        if (current && ec.progress01 > 0) {
+          // 점령 진행 호 — 위에서 시계방향으로 차오른다
+          const seg = 40;
+          for (let k = 0; k < Math.floor(seg * ec.progress01); k++) {
+            const ang = -Math.PI / 2 + (k / seg) * Math.PI * 2;
+            fx.circle(px2 + Math.cos(ang) * rr * 1.08, py2 + Math.sin(ang) * rr * 1.08 * 0.62, 2.4)
+              .fill({ color, alpha: 0.95 });
+          }
+        }
+        // 깃발 라벨
+        if (!escortLabels[i]) {
+          const t = new Text({
+            text: '', style: { fontSize: 12, fill: 0xffffff, stroke: { color: 0x000000, width: 3 }, fontWeight: 'bold' },
+          });
+          t.anchor.set(0.5, 1);
+          zoneLayer.addChild(t);
+          escortLabels[i] = t;
+        }
+        const lbl = escortLabels[i]!;
+        lbl.x = px2;
+        lbl.y = py2 - rr * 0.62 - 6;
+        lbl.style.fill = color;
+        lbl.text = captured ? `🚩 거점 ${i + 1} — 확보` : current
+          ? (ec.contested ? `⚔ 거점 ${i + 1} — 교전 중!` : `🏳 거점 ${i + 1} — 점령 목표`)
+          : `거점 ${i + 1}`;
+      }
+    }
     bars.clear();
 
     // ── 장판 ──
@@ -1707,7 +1775,10 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
       // 피격 플래시 > 무적(백금색) > 중독/화상(연녹색) > 혼란(보라) > 자가 버프(금색) > 기본
       const sbSkill = d.actives?.find((a) => a.kind === 'selfbuff');
       const buffedNow = sbSkill !== undefined && g.tick < e.buffUntil;
-      const invulnNow = g.tick < e.invulnUntil;
+      // 영구 무적(불타는 나무·보급 마차 같은 소품)은 「무적 연출」 대상이 아니다 —
+      // 링·틴트·체력바가 다 붙으면 소품이 유닛처럼 보여 화면만 시끄럽다
+      const propInvuln = e.invulnUntil === Number.MAX_SAFE_INTEGER;
+      const invulnNow = g.tick < e.invulnUntil && !propInvuln;
       const confusedNow = g.tick < e.confusedUntil;
       const asleepNow = g.tick < e.sleepUntil;
       const skinnedStructure = skinnedStructures.has(e.id);
@@ -1922,7 +1993,7 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
 
       // 체력바
       const isStruct = d.tier === 'structure';
-      if (e.hp < d.maxHp || isStruct) {
+      if ((e.hp < d.maxHp || isStruct) && !propInvuln) {
         const w = isStruct ? 40 : 18;
         // 업그레이드로 최대 체력이 늘어난 유닛은 유효 정의 기준으로 비율 계산
         const maxHp = e.defOv?.maxHp ?? d.maxHp;
@@ -2055,10 +2126,24 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
   }
 
   let enemySkin: 'toy' | 'bone' | null = null;
+  /** 호위전 거점 상태 (setEscort 로 매 프레임 갱신). */
+  let escortCfg: {
+    pointsX: readonly number[]; radius: number;
+    frontier: number; progress01: number; contested: boolean;
+  } | null = null;
+  /** 거점 깃발 라벨 (거점 수만큼 lazy 생성). */
+  let escortLabels: Text[] = [];
   return {
     app,
     setEnemySkin(skin) {
       enemySkin = skin;
+    },
+    setEscort(cfg) {
+      escortCfg = cfg;
+      if (!cfg && escortLabels.length > 0) {
+        for (const t of escortLabels) t.destroy();
+        escortLabels = [];
+      }
     },
     setMap(m) {
       curMap = m;

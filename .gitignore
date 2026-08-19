@@ -6,3 +6,8 @@ dist/
 .env.local
 
 .vercel
+
+# 구글 OAuth 키 파일 — client_secret 이 들어 있다. 절대 커밋 금지
+desert-like-google-login-keys.json
+*google-login-keys*.json
+client_secret_*.json

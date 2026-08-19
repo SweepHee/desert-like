@@ -1,0 +1,9 @@
+# 서버 배포에 필요 없는 덩치들 — 매번 올리면 업로드가 타임아웃 난다.
+# (서버는 packages/server 만 실행한다. 워크스페이스 해석에 필요한 package.json 은 남긴다)
+packages/client/public/
+packages/client/src/
+packages/client/index.html
+packages/sim/src/cli/
+docs/
+*.png
+*.jpg

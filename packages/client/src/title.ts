@@ -7,9 +7,10 @@
  * 커지든 작아지든 그림 속 버튼과 어긋나지 않는다 — 아트마다 메뉴 상자의
  * 위치·크기가 조금씩 달라서 좌표도 변종별로 따로 잰다.
  *
- * 넷째 칸 「로그인」은 구글 로그인이다. GIS 는 커스텀 버튼에서 팝업을 띄우지
- * 못하게 막아 두었으므로, 진짜 구글 버튼을 그 칸 위에 투명하게 덮어 클릭만
- * 받게 한다. 로그인한 뒤에는 그 칸이 계정 이름 패널로 바뀐다.
+ * 넷째 칸 「로그인」도 나머지와 똑같은 버튼이다. 공식 구글 버튼은 크로스
+ * 오리진 iframe 이라 우리 UI 와 섞이지 않으므로(마우스 이벤트가 안 넘어와
+ * 호버 불이 안 켜졌다), 클릭하면 OAuth2 팝업을 직접 여는 방식으로 바꿨다.
+ * 로그인한 뒤에는 그 칸이 계정 이름 패널로 바뀌고, 누르면 로그아웃한다.
  *
  * 고른 아트는 타이틀에서 끝나지 않고, 이어지는 메뉴 화면의 배경(흐림)과
  * 강조색으로 남는다 — 캠페인·대전으로 넘어가는 흐름을 끊지 않으려고.
@@ -79,68 +80,25 @@ let hots: HTMLElement[] = [];
 let sel = 0;
 /** 「로그인」 칸 (구글 버튼과 계정 패널이 그 안에 들어 있다). */
 let loginHot: HTMLElement | null = null;
-/** 구글 버튼의 크기 변화를 지켜본다 — GIS 가 버튼을 통째로 갈아 끼우기도 한다. */
-let gsiWatch: ResizeObserver | null = null;
-let gsiWatched: HTMLElement | null = null;
 
 /** 이번 접속에 걸린 아트의 종족명 (메뉴 화면 부제용). */
 export function titleSubtitle(): string {
   return variant.sub;
 }
 
-/** 구글 공식 버튼을 심을 자리 — 「로그인」 칸 위에 투명하게 덮인다. */
-export function titleLoginHost(): HTMLElement {
-  return $('#title-gsi');
-}
-
 /**
  * 「로그인」 칸을 계정 상태에 맞춰 바꾼다 (null = 로그아웃 상태).
  * 로그인하면 그림에 그려진 「로그인」 글자를 계정 이름 패널이 덮는다.
  */
-export function setTitleAccount(p: { name: string; picture: string } | null, onLogout: () => void): void {
+export function setTitleAccount(p: { name: string; picture: string } | null): void {
   if (!loginHot) return;
   const me = $('#tl-me');
-  $('#title-gsi').classList.toggle('hidden', !!p);
   me.classList.toggle('hidden', !p);
   loginHot.classList.toggle('me', !!p);
   if (p) {
     ($('#tl-pic') as HTMLImageElement).src = p.picture || '';
     $('#tl-name').textContent = p.name;
   }
-  me.onclick = p ? onLogout : null;
-  fitLoginButton();
-}
-
-/**
- * 구글 버튼은 제 크기대로만 그려지므로, 「로그인」 칸을 정확히 덮도록 늘여 준다
- * (투명이라 눈에 보이는 건 그림 속 버튼, 클릭을 받는 건 구글 버튼).
- */
-function fitLoginButton(): void {
-  if (!loginHot) return; // 칸을 만들기 전(아트 배율 첫 계산)에도 불린다
-  const inner = $('#title-gsi').firstElementChild as HTMLElement | null;
-  if (!inner) return;
-  if (gsiWatched !== inner) {
-    // 구글 버튼은 늦게 그려지고, 나중에 다른 요소로 갈아 끼워지기도 한다 —
-    // 지금 붙어 있는 버튼을 다시 붙잡아 크기가 정해지는 순간 맞춘다
-    // (transform 은 레이아웃 크기를 바꾸지 않으므로 되먹임 루프가 생기지 않는다)
-    gsiWatch?.disconnect();
-    gsiWatch = new ResizeObserver(() => applyLoginFit(inner));
-    gsiWatch.observe(inner);
-    gsiWatched = inner;
-  }
-  applyLoginFit(inner);
-}
-
-function applyLoginFit(inner: HTMLElement): void {
-  if (!loginHot) return;
-  inner.style.transform = '';
-  const bw = inner.offsetWidth;
-  const bh = inner.offsetHeight;
-  if (!bw || !bh) return; // 타이틀이 숨겨진 동안엔 잴 수 없다 — 다시 보일 때 맞춘다
-  // 기준은 칸이 아니라 그보다 조금 큰 덮개(.tl-gsi) — 둥근 모서리를 칸 밖으로 밀어낸다
-  const r = $('#title-gsi').getBoundingClientRect();
-  inner.style.transformOrigin = 'top left';
-  inner.style.transform = `scale(${r.width / bw}, ${r.height / bh})`;
 }
 
 /** 그림이 화면에서 차지한 크기를 재서 --art-scale 로 알린다 (계정 패널 글자 크기용). */
@@ -148,7 +106,6 @@ function syncArtScale(): void {
   const img = document.querySelector('#title-img') as HTMLImageElement | null;
   const w = img?.clientWidth ?? 0;
   if (w > 0) document.documentElement.style.setProperty('--art-scale', (w / ART_W).toFixed(4));
-  fitLoginButton();
 }
 
 /** 직전에 봤던 아트는 빼고 뽑는다 — 같은 그림이 연달아 나오면 랜덤이 아닌 것처럼 보인다. */
@@ -214,67 +171,87 @@ export function initTitle(audio: Audio, onPick: (a: TitleAction) => void): void 
   const m = variant.menu;
   const pct = (v: number): string => `${(v * 100).toFixed(3)}%`;
   hots = ITEMS.map((it, i) => {
-    // 로그인 칸만 <button> 이 아니다 — 구글 버튼을 자식으로 품어야 해서
-    const b = document.createElement(i === LOGIN_I ? 'div' : 'button');
-    if (b instanceof HTMLButtonElement) b.type = 'button';
+    const b = document.createElement('button');
+    b.type = 'button';
     b.className = 'title-hot';
-    b.setAttribute('role', 'button');
     b.setAttribute('aria-label', it.label);
     b.style.left = pct(m.x / ART_W);
     b.style.width = pct(m.w / ART_W);
     b.style.top = pct(m.tops[i]! / ART_H);
     b.style.height = pct(m.hs[i]! / ART_H);
     if (i === LOGIN_I) {
+      // 로그인하면 그림 속 「로그인」 글자를 계정 패널이 덮는다
       b.classList.add('title-login');
-      b.innerHTML = '<div class="tl-gsi" id="title-gsi"></div>'
-        + '<div class="tl-me hidden" id="tl-me">'
+      b.innerHTML = '<span class="tl-me hidden" id="tl-me">'
         + '<img id="tl-pic" alt="" /><span id="tl-name"></span>'
-        + '<span class="tl-out">로그아웃</span></div>';
+        + '<span class="tl-out">로그아웃</span></span>';
       loginHot = b;
-      // 구글 버튼은 우리가 심은 뒤에도 한 박자 늦게 DOM 에 들어온다 —
-      // 들어오는 순간을 지켜보다가 칸에 맞춰 늘인다 (style 변경은 안 건드림)
-      new MutationObserver(() => fitLoginButton())
-        .observe(b, { childList: true, subtree: true });
     }
-    b.addEventListener('pointerenter', () => {
-      if (sel === i) return;
-      sel = i;
-      paint();
-      audio.play('ui_click', { volume: 0.18 });
-    });
     b.addEventListener('click', () => {
       sel = i;
       paint();
-      // 로그인 칸의 클릭은 위에 덮인 구글 버튼(또는 계정 패널)이 직접 처리한다
-      if (i !== LOGIN_I) choose(audio, onPick, it.action);
+      // 로그인은 화면을 넘기지 않는다 — 팝업만 뜨고 타이틀에 그대로 머문다
+      if (i === LOGIN_I) { audio.play('ui_click', { volume: 0.5 }); onPick('login'); return; }
+      choose(audio, onPick, it.action);
     });
     art.appendChild(b);
     return b;
   });
   paint();
 
+  /*
+   * 어느 칸에 불을 켤지는 커서 좌표로 직접 판정한다.
+   *
+   * 칸마다 pointerenter 를 걸면 「로그인」 칸에서는 신뢰할 수 없다 — 그 칸은
+   * 구글 버튼이 통째로 덮고 있어서, 브라우저·GIS 버전에 따라 진입 이벤트가
+   * 우리 칸까지 오지 않는 경우가 있다(위에서 내려올 때만 불이 안 켜지는 증상).
+   * 좌표로 재면 덮개가 무엇이든 상관없다.
+   */
+  const hoverAt = (x: number, y: number): void => {
+    const i = hots.findIndex((h) => {
+      const r = h.getBoundingClientRect();
+      return x >= r.left && x <= r.right && y >= r.top && y <= r.bottom;
+    });
+    if (i === sel) return;
+    // 칸 사이(빈 곳)로 나가면 불을 끈다. 이게 없으면 「로그인」 칸처럼 진입
+    // 이벤트를 놓칠 수 있는 자리에서 직전 칸(대전게임)이 계속 켜진 채로 남는다.
+    sel = i;
+    paint();
+    if (i >= 0) audio.play('ui_click', { volume: 0.18 });
+  };
+  // capture 단계 + document 레벨 — 중간에서 이벤트를 삼켜도 우리에게는 온다
+  document.addEventListener('pointermove', (e) => {
+    if (!visible()) return;
+    hoverAt(e.clientX, e.clientY);
+  }, { capture: true, passive: true });
+  // 덮개(구글 버튼) 위에서는 pointermove 가 안 올 수도 있어, 진입 시점도 함께 본다
+  art.addEventListener('pointerover', (e) => {
+    if (!visible()) return;
+    hoverAt(e.clientX, e.clientY);
+  }, { capture: true, passive: true });
+  // 그림 밖으로 나가면 아무것도 켜 두지 않는다
+  art.addEventListener('pointerleave', () => {
+    if (!visible() || sel < 0) return;
+    sel = -1;
+    paint();
+  });
+
   // 키보드로도 고를 수 있게 (패드처럼 위아래 + Enter)
   window.addEventListener('keydown', (e) => {
     if (!visible()) return;
     if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
-      sel = (sel + (e.key === 'ArrowDown' ? 1 : ITEMS.length - 1)) % ITEMS.length;
+      // 마우스가 칸 밖에 있어 꺼진 상태(-1)면 첫 칸부터 시작한다
+      const from = sel < 0 ? (e.key === 'ArrowDown' ? -1 : 0) : sel;
+      sel = (from + (e.key === 'ArrowDown' ? 1 : ITEMS.length - 1) + ITEMS.length) % ITEMS.length;
       paint();
       audio.play('ui_click', { volume: 0.18 });
       e.preventDefault();
     } else if (e.key === 'Enter' || e.key === ' ') {
-      if (sel === LOGIN_I) clickLogin();
-      else choose(audio, onPick, ITEMS[sel]!.action);
+      if (sel < 0) { sel = 0; paint(); e.preventDefault(); return; }
+      hots[sel]!.click();
       e.preventDefault();
     }
   });
-}
-
-/** 키보드로 「로그인」을 골랐을 때 — 덮여 있는 진짜 버튼을 대신 누른다. */
-function clickLogin(): void {
-  const me = $('#tl-me');
-  if (!me.classList.contains('hidden')) { me.click(); return; }
-  const btn = $('#title-gsi').querySelector('[role="button"]') as HTMLElement | null;
-  btn?.click();
 }
 
 /** 고른 항목을 밝히고 → 화면을 어둡게 걷어낸 다음 → 다음 화면을 연다. */

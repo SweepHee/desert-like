@@ -13,7 +13,7 @@ export function serverUrl(): string | null {
   const override = new URLSearchParams(location.search).get('server');
   if (override) return /^wss?:\/\//.test(override) ? override : `ws://${override}`;
 
-  const configured = import.meta.env.VITE_SERVER_URL;
+  const configured = (import.meta.env.VITE_SERVER_URL as string | undefined)?.trim();
   if (configured) return configured;
 
   if (location.protocol === 'https:') return null;

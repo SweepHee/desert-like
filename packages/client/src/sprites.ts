@@ -319,6 +319,13 @@ const LOOK: Record<string, { shape: string; pal: string; accent?: string }> = {
   c_wild_bear_gray: { shape: 'beast', pal: 'none' },
   c_wild_direwolf: { shape: 'beast', pal: 'none' },
   c_wild_grizzly: { shape: 'beast', pal: 'none' },
+  // 호위전(13) 소품 — PNG 누락 시 임시 형상
+  c_supply_cart: { shape: 'golem', pal: 'none' },
+  c_alice_soldier: { shape: 'archer', pal: 'marionetta' },
+  c_alice_teddy: { shape: 'mammoth', pal: 'marionetta', accent: '#8a3030' },
+  c_burning_tree: { shape: 'tower', pal: 'none' },
+  c_ember_tree: { shape: 'tower', pal: 'none' },
+  c_burning_log: { shape: 'golem', pal: 'none' },
   c_wild_blackbird: { shape: 'wing', pal: 'none' },
   tower: { shape: 'tower', pal: 'none' },
   nexus: { shape: 'nexus', pal: 'none', accent: '#7fe8d8' },

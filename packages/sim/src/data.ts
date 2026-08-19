@@ -171,6 +171,30 @@ export const MAPS: Record<string, MapDef> = {
     towerX: [tiles(40), tiles(74)],
     spawnX: [tiles(12), tiles(86)],
   },
+  ashroad: {
+    id: 'ashroad',
+    // 캠페인 13 「세계수 뿌리 탈환」: 불탄 숲을 굽이도는 보급로.
+    // 위아래로 꺾이는 산길 — 보급 마차가 5개 거점을 차례로 점령하며 전진한다.
+    name: '잿길',
+    length: tiles(128),
+    halfW: tiles(6),
+    center: [
+      [0, 0], [tiles(16), 0],
+      [tiles(26), tiles(-8)], [tiles(38), tiles(-8)],
+      [tiles(50), tiles(7)], [tiles(62), tiles(7)],
+      [tiles(74), tiles(-6)], [tiles(86), tiles(-6)],
+      [tiles(98), tiles(4)], [tiles(110), tiles(4)],
+      [tiles(120), 0], [tiles(128), 0],
+    ],
+    // 불탄 협곡 입구 — 거점 사이가 좁아져 수비·돌파 둘 다 치열해진다
+    chokes: [
+      { x0: tiles(42), x1: tiles(46), halfW: tiles(3) },
+      { x0: tiles(90), x1: tiles(94), halfW: tiles(3) },
+    ],
+    nexusX: [tiles(4), tiles(124)],
+    towerX: [tiles(30), tiles(104)],
+    spawnX: [tiles(12), tiles(118)],
+  },
 };
 
 export const DEFAULT_MAP = 'plains';
@@ -1110,6 +1134,58 @@ reg(D({
 }));
 
 // ── 캠페인 전용 특수 유닛 ──────────────────────────────────────────────────
+
+// ── 호위전(13) 소품: 보급 마차 + 불타는 숲 장애물 ──
+// 마차는 캠페인 레이어가 위치를 직접 움직인다 (speed 0 = 충돌 분리에서 안 밀림).
+// 장애물은 무적(invulnUntil=MAX)으로 스폰돼 아무도 조준하지 않지만,
+// 지상 유닛의 충돌 분리에는 걸려 실제로 길을 막는다. 비행 유닛은 넘어간다.
+// ── 앨리스의 지원 병력 (13 호위전) ──
+// race: null — 어떤 종족 상점에도 안 뜨고, 봇 구매 풀(race 일치 필터)에도 안 들어간다.
+// 캠페인 mercUnits 목록으로만 사람 플레이어가 산다.
+reg(D({
+  id: 'c_alice_soldier', race: null, name: '앨리스의 태엽 병정', tier: 'basic',
+  cost: 60, supply: 1, maxHp: 90, armor: 1, tags: ['plate', 'construct', 'male'], ...GROUND,
+  speed: tilesPerSecond(1.8), radius: tiles(0.3), acquireRange: tiles(6),
+  weapon: { damage: 10, bonus: { leather: 5, bio: 4 }, cooldown: seconds(0.9), range: tiles(4.5), targets: 'both' },
+  actives: [{
+    // 여왕 직속 — 태엽 감기가 처음부터 풀려 있다 (업그레이드 불필요)
+    name: '태엽 감기', desc: '4초간 공속·이속 +40%, 종료 후 1.5초 과열(둔화)', kind: 'selfbuff',
+    cooldown: seconds(15), durTicks: seconds(4), atkSpeedPct: 40, speedPct: 40, overheatSlowTicks: seconds(1.5),
+  }],
+}));
+reg(D({
+  id: 'c_alice_teddy', race: null, name: '앨리스의 고어 테디', tier: 'supreme',
+  cost: 460, supply: 5, maxHp: 1300, armor: 3, tags: ['leather', 'massive', 'construct'], ...GROUND,
+  speed: tilesPerSecond(1.0), radius: tiles(0.65), acquireRange: tiles(5),
+  weapon: { damage: 80, bonus: { plate: 40 }, cooldown: seconds(1.4), range: tiles(0.8), targets: 'ground', splash: tiles(0.9) },
+  // 원본과 달리 가시 봉제(공격 반사)가 없다 — 도발 탱커 역할만
+  actives: [{
+    name: '도발', desc: '주변 적이 5초간 나를 우선 공격 (아군 대신 맞아준다)', kind: 'taunt',
+    cooldown: seconds(18), durTicks: seconds(5), auraRadius: tiles(4.5),
+  }],
+}));
+
+reg(D({
+  id: 'c_supply_cart', race: null, name: '생명수 보급 마차', tier: 'structure', summonOnly: true,
+  cost: 0, supply: 0, maxHp: 1500, armor: 6, tags: ['plate', 'structure'], ...GROUND,
+  speed: 0, radius: tiles(0.55), acquireRange: 0,
+}));
+reg(D({
+  id: 'c_burning_tree', race: null, name: '불타는 나무', tier: 'structure', summonOnly: true,
+  cost: 0, supply: 0, maxHp: 999, armor: 0, tags: ['structure'], ...GROUND,
+  speed: 0, radius: tiles(0.85), acquireRange: 0,
+}));
+reg(D({
+  id: 'c_ember_tree', race: null, name: '잿불 고목', tier: 'structure', summonOnly: true,
+  cost: 0, supply: 0, maxHp: 999, armor: 0, tags: ['structure'], ...GROUND,
+  speed: 0, radius: tiles(0.8), acquireRange: 0,
+}));
+reg(D({
+  id: 'c_burning_log', race: null, name: '불타는 쓰러진 둥치', tier: 'structure', summonOnly: true,
+  cost: 0, supply: 0, maxHp: 999, armor: 0, tags: ['structure'], ...GROUND,
+  speed: 0, radius: tiles(1.0), acquireRange: 0,
+}));
+
 // race: null + summonOnly — 대전 상점에는 절대 진열되지 않는다.
 // 캠페인 스테이지 스크립트가 시간에 맞춰 직접 스폰하는 엘리트·보스.
 reg(D({

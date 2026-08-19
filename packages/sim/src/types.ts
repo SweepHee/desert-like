@@ -492,8 +492,11 @@ export interface Game {
   readonly mercCostPct: number;
   /** 용병 구매에 상점 점령이 필요한가. */
   readonly mercCaptureRequired: boolean;
-  /** 팀 0 진군 상한 x (0 = 제한 없음). */
-  readonly holdLineX: number;
+  /**
+   * 팀 0 진군 상한 x (0 = 제한 없음). mutable — 호위(페이로드) 미션에서
+   * 거점을 점령할 때마다 캠페인 레이어가 전선을 앞으로 민다.
+   */
+  holdLineX: number;
   /** 수비 모드 (팀 0 넥서스 방어 AI). */
   readonly defendNexus: boolean;
   /** 팀 0 전원 동시 출정. */

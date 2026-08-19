@@ -11,6 +11,12 @@ import type { BotDifficulty, RaceId, TeamId } from '@desertlike/sim';
 export interface DialogueLine {
   readonly who: string;   // 화자 이름 (PORTRAITS 키). '' = 내레이션
   readonly text: string;
+  /**
+   * 컷신 그림 — 대화창 위에 시네마틱 장면을 띄운다.
+   * 지정하면 그때부터 그 그림이 유지되고, '' 을 주면 걷어낸다.
+   * (지정 안 한 줄은 직전 그림을 그대로 이어받는다)
+   */
+  readonly img?: string;
 }
 
 export interface CampaignStage {
@@ -32,6 +38,29 @@ export interface CampaignStage {
    * tower   = 적 수호탑만 부수면 승리 (수호자가 깨어나는 순간 클리어 — 초반 스테이지용)
    */
   readonly mission: 'destroy' | 'survive' | 'tower' | 'boss';
+  /**
+   * 전장 장애물 — 무적·부동 소품 (불타는 나무 등). 아무도 조준하지 않지만
+   * 지상 유닛의 충돌 분리에 걸려 실제로 길을 막는다. yOffTile 은 레인 중앙 기준.
+   */
+  readonly obstacles?: readonly { readonly defId: string; readonly xTile: number; readonly yOffTile: number }[];
+  /**
+   * 호위(페이로드) 미션: 보급 마차가 거점을 차례로 점령하며 전진한다.
+   * - 마차가 거점 반경 안 + 적 없음 → 점령 게이지 진행 (captureSec 채우면 확보)
+   * - 적만 반경 안에 loseSec 초 → 거점 상실, 마차는 직전 거점으로 후퇴
+   * - 아군 부대는 현재 목표 거점까지만 진군해 대기 (holdLineX)
+   * - 전 거점 확보 시 전선 해제 → 넥서스 총공격
+   */
+  readonly escort?: {
+    readonly pointsXTile: readonly number[];
+    readonly captureSec: number;
+    readonly loseSec: number;
+    readonly radiusTiles: number;
+    readonly cartDefId: string;
+    /** 전 거점 확보 시 적 넥서스 앞에 등장하는 네임드 (연출 이벤트). */
+    readonly onCompleteSpawn?: { readonly defId: string; readonly label: string };
+    /** 전 거점 확보 시 전투를 멈추고 띄우는 컷신 대화. */
+    readonly onCompleteDialogue?: readonly DialogueLine[];
+  };
   /** boss 미션: 이 유닛을 처치하면 승리. 게임 시작 시 적 진영에 젠 된다. */
   readonly bossDefId?: string;
   /** 적 넥서스 제거 — 파괴 목표가 없는 보스전용 (적 봇 생산은 계속된다). */
@@ -194,16 +223,22 @@ export const SYLVARIN_CAMPAIGN: readonly CampaignStage[] = [
     allowedUnits: U1, enemies: ['pandemonium'], allies: [], botDifficulty: 'easy',
     mission: 'tower', seed: seedOf(1), startMoney: 350, incomeCap: 3, techCap: 2,
     briefing: [
-      { who: '', text: '실바린의 숲 — 세계수의 뿌리가 대지를 지탱하는, 300년간 전쟁을 모르던 땅.' },
-      { who: '', text: '어느 밤, 국경의 봉화가 일제히 타올랐다. 데미리치 「발타르」의 망자 군단이 국경을 넘은 것이다.' },
-      { who: '카엘', text: '봉화가… 셋. 셋이면 전면 침공이잖아.' },
+      { who: '', img: '/assets/cutscenes/cs11_raid.png',
+        text: '실바린의 숲 — 세계수의 뿌리가 대지를 지탱하는, 300년간 전쟁을 모르던 땅.\n그 숲이, 봉화가 오르기도 전에 먼저 불탔다.' },
+      { who: '', text: '검은 말을 탄 기사가 국경 숲을 가로질렀다. 놈이 지나간 자리마다 300년 묵은 거목이 재가 되었다.' },
+      { who: '', img: '/assets/cutscenes/cs11_flee.png',
+        text: '주민들은 등 뒤의 빛이 새벽이 아니라는 것을 알고 있었다. 걷지 못하는 노목들은… 두고 갈 수밖에 없었다.' },
+      { who: '', img: '/assets/cutscenes/cs11_hollow.png',
+        text: '기사에게는 목이 없었다. 타오르는 이음매만이 어둠 속에서 이쪽을 「보고」 있었다.' },
+      { who: '', text: '그 밤, 숲은 이름 하나를 공포로 새겼다 — 슬리피 할로우.\n데미리치 「발타르」의 망자 군단이 국경을 넘은 것이다.' },
+      { who: '카엘', img: '', text: '봉화가… 셋. 셋이면 전면 침공이잖아.' },
       { who: '엘로윈', text: '놈들이 노리는 건 마을이 아니다 — 세계수의 심장이다. 정면으로는 못 이겨. 우리는 시간을 벌며 물러나야 한다.' },
       { who: '엘로윈', text: '300년 만이군. 카엘, 궁수들을 깨워라. 오늘부터 너는 경비병이 아니라 지휘관이다.' },
       { who: '엘로윈', text: '유닛을 사면 부대에 영구 편성된다. 네 차례가 올 때마다 부대 전체가 출격하지. 오늘 임무는 정찰이다 — 적의 수호탑만 무너뜨려라.' },
       { who: '엘로윈', text: '탑이 무너지면 그 자리에 「문지기」가 깨어난다. 그놈과는 싸우지 마라. 아직은.' },
     ],
     outro: [
-      { who: '카엘', text: '탑이 무너지자… 목 없는 기사가 일어났다. 저게 대체 뭐지?' },
+      { who: '카엘', text: '탑이 무너지자… 목 없는 기사가 일어났다. 마을을 태운 게 저놈이야.' },
       { who: '엘로윈', text: '(침묵) …철수한다. 잘 싸웠다, 카엘. 이건 척후일 뿐 — 재 냄새가 바람을 타고 온다.' },
     ],
   },
@@ -457,6 +492,10 @@ export const SYLVARIN_CAMPAIGN: readonly CampaignStage[] = [
     seed: seedOf(11), mapId: 'nest',
     enemySkin: 'bone',
     enemyPreferredUnits: ['p_wraith', 'p_banshee', 'p_demilich'],
+    // 적 편성 상한 (팀 합산). 데미리치는 매 웨이브 최대 14기까지만 편성된다 —
+    // 필드에 동시에 몇 마리 서 있는지가 아니라, 한 턴에 출정하는 수의 상한이다.
+    // (preferred 로 가중돼 있어 상한이 없으면 턴마다 무한정 불어난다)
+    enemyUnitCaps: { p_demilich: 14 },
     // 수비 모드: 부대가 둥지 주변에 대기하다 침입 방향으로 자동 요격한다
     defendNexus: true,
     // 둥지 수호탑: 세 갈래 입구에 하나씩 (평타만 — 타워)
@@ -525,25 +564,75 @@ export const SYLVARIN_CAMPAIGN: readonly CampaignStage[] = [
       { who: '앨리스', text: '내 국경에서 장사하면서 자릿세를 안 냈네? …전부 부숴. (앨리스의 군단이 함께 싸운다!)' },
     ],
     outro: [
-      { who: '앨리스', text: '동맹이야, 숲지기. 조건은 하나 — 발타르의 성에서, 잘린 머리 하나를 찾아줘.' },
-      { who: '엘로윈', text: '(굳은 얼굴) …그 머리의 이름을 물어도 되겠소, 여왕.' },
-      { who: '앨리스', text: '오웬. 내 오빠야.' },
+      { who: '앨리스', text: '동맹이야, 숲지기. 대가는… 나중에 청구할게. 인형은 외상 장부를 안 잊거든.' },
+      { who: '브리아', text: '어머, 동종업계 수법이네. 저런 말 뒤엔 꼭 큰 게 붙어.' },
+      { who: '엘로윈', text: '(작게) …300년을 산 여왕이라. 대체 무엇을 잃었길래.' },
       { who: '', text: '— 2막 끝. 세 종족의 운명이 한 점으로 모이기 시작한다. —' },
     ],
   },
   // ═══ 3막 「자정의 세계수」 ═══
   {
-    id: 13, act: 3, title: '세계수 뿌리 탈환', goal: '첫 반격 — 적 넥서스를 파괴하라',
+    id: 13, act: 3, title: '세계수 뿌리 탈환', goal: '🛞 생명수 마차를 호위하라 — 보급 거점 5개를 차례로 점령',
     allowedUnits: U13, enemies: ['pandemonium', 'pandemonium'], allies: ['sylvarin'], botDifficulty: 'normal',
     allyNote: '🤝 숲의 잔존 병력이 합류했다!',
-    mission: 'destroy', seed: seedOf(13),
-    spawns: [{ defId: 'c_bone_colossus', label: '뼈 거상', everySec: 150 }],
+    mission: 'destroy', seed: seedOf(13), mapId: 'ashroad',
+    enemySkin: 'bone',
+    noTowers: true, // 수호탑 대신 — 전 거점 확보 시 슬리피 할로우가 직접 나타난다
+    // 앨리스의 지원 병력: 사람 플레이어만 살 수 있다 (race: null — 봇 구매 풀 제외)
+    mercUnits: ['c_alice_soldier', 'c_alice_teddy'],
+    // 호위전: 마차가 거점에 서 있는 동안(아군 부대 동반 필수) 점령 게이지가 오른다.
+    // 적이 거점을 되찾으면 마차는 직전 거점으로 후퇴 — 오버워치 화물 밀기.
+    escort: {
+      pointsXTile: [28, 48, 68, 88, 106],
+      captureSec: 60,
+      loseSec: 12,
+      radiusTiles: 4.5,
+      cartDefId: 'c_supply_cart',
+      onCompleteSpawn: { defId: 'hollow', label: '⚔ 슬리피 할로우' },
+      onCompleteDialogue: [
+        { who: '', text: '다섯 번째 마디에 생명수가 스며든 순간 — 길 끝의 어둠에서, 태엽 감기는 소리가 들려왔다.' },
+        { who: '슬리피 할로우', text: '…….' },
+        { who: '앨리스', text: '저 걸음걸이… 저 검. 잠깐. 잠깐만.' },
+        { who: '앨리스', text: '오빠…? 오웬?! 나야, 알리시아야! 왜 네가 저놈들 편에— 아니, 어떻게 살아서—' },
+        { who: '엘로윈', text: '(창백해진다) 오웬. …300년 전, 세계수 앞에서 스러진 초대 숲의 기사다. 시신은 끝내 찾지 못했지. 발타르가… 그를 주워다 문지기로 세웠구나.' },
+        { who: '카엘', text: '우리가 넘어야 할 상대가… 아군이었던 사람이라고?' },
+        { who: '슬리피 할로우', text: '(태엽 소리가 어긋난다) ……알, 리…' },
+        { who: '앨리스', text: '숲지기, 계획 변경이야. 저 애를 부수지 마. — 되찾아 줘.' },
+      ],
+    },
+    // 불타는 숲 장애물 — 길 위에 실제로 서서 진로를 비튼다 (비행 유닛은 넘어간다)
+    obstacles: [
+      { defId: 'c_burning_tree', xTile: 22, yOffTile: -3 },
+      { defId: 'c_ember_tree', xTile: 24, yOffTile: 3.5 },
+      { defId: 'c_burning_log', xTile: 33, yOffTile: 0.5 },
+      { defId: 'c_ember_tree', xTile: 41, yOffTile: -2.2 },
+      { defId: 'c_burning_tree', xTile: 44, yOffTile: 2.3 },
+      { defId: 'c_burning_log', xTile: 55, yOffTile: -3.5 },
+      { defId: 'c_burning_tree', xTile: 58, yOffTile: 2 },
+      { defId: 'c_ember_tree', xTile: 64, yOffTile: -1.5 },
+      { defId: 'c_burning_log', xTile: 72, yOffTile: 3 },
+      { defId: 'c_burning_tree', xTile: 78, yOffTile: -3 },
+      { defId: 'c_ember_tree', xTile: 82, yOffTile: 1.5 },
+      { defId: 'c_burning_log', xTile: 91, yOffTile: -2.4 },
+      { defId: 'c_burning_tree', xTile: 93, yOffTile: 2.4 },
+      { defId: 'c_ember_tree', xTile: 100, yOffTile: -2 },
+      { defId: 'c_burning_tree', xTile: 102, yOffTile: 3 },
+    ],
+    spawns: [{ defId: 'c_bone_colossus', label: '뼈 거상', everySec: 170 }],
     briefing: [
-      { who: '엘로윈', text: '300년 전, 초대 숲의 기사 오웬은 세계수 앞에서 전사했다. 시신은 끝내 찾지 못했지.' },
-      { who: '엘로윈', text: '…이제 알겠구나. 발타르가 그를 세워서 문지기로 쓰고 있다.' },
-      { who: '카엘', text: '우리가 매번 싸우던 그 목 없는 기사가… 아군이었던 사람이라고?' },
+      { who: '', text: '세계수의 뿌리는 불탄 국경 숲 — 카엘이 지키던 바로 그 길 밑을 지난다.\n뿌리가 마르면 심장도 마른다. 숲은 이제 도망치지 않는다.' },
+      { who: '엘로윈', text: '생명수를 실은 마차다. 뿌리 마디마다 부어 오염을 씻어야 한다 — 다섯 군데, 하나도 거를 수 없다.' },
+      { who: '티아', text: '마차가 마디에 서 있는 동안 제가 의식을 올릴게요. 1분이면 돼요. 근처에 부대가 함께 있어야 해요!' },
+      { who: '브리아', text: '불타는 숲길에서 마차 호위라. 할증이야. …농담이고, 저 나무들 사이는 좁아. 진형 조심해.' },
+      { who: '앨리스', text: '잠깐, 숲지기. …선물이야. 내 태엽 병정이랑 테디 몇, 마차에 실어 뒀어. 상점에서 꺼내 쓰면 돼.' },
+      { who: '카엘', text: '웬일로 공짜를…?' },
+      { who: '앨리스', text: '공짜 아니야, 투자야. 이 길 끝에… 내 물건이 있거든. 부서뜨리지 말고 데려와.' },
+      { who: '엘로윈', text: '적이 마디를 되찾으면 마차는 물러설 수밖에 없다. 서두르지 마라 — 한 마디씩, 확실하게.' },
     ],
     outro: [
+      { who: '앨리스', text: '…물러갔어. 부서진 몸을 태엽으로 끌면서. 오빠가— 저게 정말 오빠라면, 300년 동안 저기 있었다는 거잖아.' },
+      { who: '앨리스', text: '발타르의 성에 오빠의 머리가 있어. 그게 오빠의 기억이야. 숲지기 — 이게 아까 말한 「내 물건」이야. 찾아와 줘.' },
+      { who: '티아', text: '…발밑에서, 심장 뛰는 소리가 들렸어요. 뿌리가 살아났어요.' },
       { who: '사도', text: '(땅에서 일어나며) 뿌리가 기억한다. 아이야, 세계수가 너를 부른다. (숲의 명궁·나무지기 합류!)' },
     ],
   },
@@ -793,10 +882,16 @@ export function runDialogue(lines: readonly DialogueLine[]): Promise<void> {
     const portrait = box.querySelector('.dlg-portrait') as HTMLImageElement;
     const nameEl = box.querySelector('.dlg-name') as HTMLElement;
     const textEl = box.querySelector('.dlg-text') as HTMLElement;
+    const scene = box.querySelector('.dlg-scene') as HTMLImageElement;
     let i = 0;
+    let sceneUrl = ''; // 현재 걸려 있는 컷신 그림 (줄을 넘겨도 유지)
 
     const show = (): void => {
       const line = lines[i]!;
+      if (line.img !== undefined) sceneUrl = line.img;
+      scene.classList.toggle('hidden', !sceneUrl);
+      if (sceneUrl && scene.src !== sceneUrl) scene.src = sceneUrl;
+      box.classList.toggle('dlg-cine', !!sceneUrl);
       const url = PORTRAITS[line.who];
       portrait.style.display = url ? '' : 'none';
       if (url) portrait.src = url;
@@ -830,6 +925,8 @@ export function runDialogue(lines: readonly DialogueLine[]): Promise<void> {
     };
     const cleanup = (): void => {
       box.classList.add('hidden');
+      scene.classList.add('hidden');
+      box.classList.remove('dlg-cine');
       box.removeEventListener('click', onClick);
       window.removeEventListener('keydown', onKey);
     };

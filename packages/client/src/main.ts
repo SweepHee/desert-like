@@ -547,6 +547,8 @@ let escortCartId = -1;
 let escortRetreatX = -1;
 /** 진행량 계산용 직전 게임 틱 (프레임당 dt 를 구한다). */
 let escortPrevTick = 0;
+/** 최전방(캠프 1)까지 뚫렸는가 — true 면 적 진군 하한이 풀린다 (넥서스 러시). */
+let escortEnemyBreak = false;
 let campaignCutsceneDone: boolean[] = [];
 let campaignGrowthWave: number[] = []; // 규칙별 마지막으로 편입한 웨이브 번호
 let campaignGrowthAnnounced: boolean[] = [];
@@ -813,6 +815,7 @@ async function startCampaignStage(st: CampaignStage): Promise<void> {
   escortCartId = -1;
   escortRetreatX = -1;
   escortPrevTick = 0;
+  escortEnemyBreak = false;
   renderer?.setEscort(null);
   campaignCutsceneDone = (st.cutscenes ?? []).map(() => false);
   campaignGrowthWave = (st.growth ?? []).map(() => 0);
@@ -1675,10 +1678,16 @@ function tick(deltaMS: number): void {
       if (escortLoseTicks >= es.loseSec * TICK_HZ) {
         escortLoseTicks = 0;
         escortProgressTicks = 0;
-        campaignAlertText = `⚠ 캠프 ${escortFrontier + 1}호를 적에게 빼앗겼다 — 전선이 밀려난다!`;
         // 밀고 밀리는 전선: 적이 거점을 점거하면 확보 수가 하나 줄고,
-        // 적은 그 다음(우리 쪽) 거점으로 계속 밀고 내려온다
-        if (escortFrontier > 0) escortFrontier--;
+        // 적은 그 다음(우리 쪽) 거점으로 계속 밀고 내려온다.
+        // 최후방(캠프 1)까지 뚫리면 적 진군 하한이 풀려 넥서스로 쏟아진다.
+        if (escortFrontier > 0) {
+          escortFrontier--;
+          campaignAlertText = `⚠ 캠프 ${escortFrontier + 2}호를 적에게 빼앗겼다 — 전선이 밀려난다!`;
+        } else {
+          escortEnemyBreak = true;
+          campaignAlertText = '🚨 최전방 캠프가 무너졌다 — 적이 넥서스로 쏟아진다! 캠프 1을 되찾아라!';
+        }
         escortRetreatX = escortFrontier > 0
           ? Math.floor(pts[escortFrontier - 1]! * FP)
           : game.map.spawnX[0];
@@ -1696,6 +1705,7 @@ function tick(deltaMS: number): void {
         if (escortProgressTicks >= es.captureSec * TICK_HZ) {
           escortProgressTicks = 0;
           escortFrontier++;
+          escortEnemyBreak = false; // 캠프를 되찾았다 — 적은 다시 전선에서 멈춘다
           if (escortFrontier >= pts.length) {
             game.holdLineX = 0; // 전선 해제 — 총공격
             campaignAlertText = '🎺 다섯 캠프를 모두 확보했다! 전군, 넥서스로 총공격!';
@@ -1733,7 +1743,7 @@ function tick(deltaMS: number): void {
     }
     // 적 진군 하한: 적 부대는 현재 다툼 중인 거점에 멈춰 서서 점거를 시도한다
     // (그냥 지나쳐 우리 기지로 달려가지 않도록). 전 거점 확보 후엔 해제 — 총공세.
-    game.enemyHoldLineX = escortFrontier < pts.length
+    game.enemyHoldLineX = escortFrontier < pts.length && !escortEnemyBreak
       ? Math.floor(pts[escortFrontier]! * FP) - 2 * FP
       : 0;
     // 거점 표시 (렌더러) + HUD

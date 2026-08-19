@@ -359,10 +359,12 @@ export const SYLVARIN_CAMPAIGN: readonly CampaignStage[] = [
     enemyGuardian: 'teddy_guardian',
     spawns: [{ defId: 'c_mad_ballerina', label: '미친 발레리나', everySec: 150 }],
     briefing: [
-      { who: '', text: '숲은 불탔다. 재의 함락에서 대피 시간을 번 피난 행렬은 살아남은 이들을 이끌고 남쪽으로 달아났다.' },
-      { who: '', text: '발타르의 추격을 피해 지도에도 없는 국경을 넘은 순간 — 태엽 감기는 소리가 들려왔다. 인형들의 왕국, 마리오네타.' },
+      { who: '', img: '/assets/cutscenes/cs21_retreat.png',
+        text: '숲은 불탔다. 재의 함락에서 대피 시간을 번 피난 행렬은 살아남은 이들을 이끌고 남쪽으로 달아났다.\n등 뒤로 재가 내렸다. 아무도 뒤를 돌아보지 않았다.' },
+      { who: '', img: '/assets/cutscenes/cs21_gate.png',
+        text: '발타르의 추격을 피해 지도에도 없는 국경을 넘은 순간 — 태엽 감기는 소리가 들려왔다.\n부서진 장난감이 나뒹구는 골목, 인형들의 왕국 마리오네타.' },
       { who: '카엘', text: '남쪽 산맥을 넘어 발타르의 성을 우회한다. 이 나라를 지나가야만 해.' },
-      { who: '티아', text: '여긴… 장난감 마을? 근데 왜 전부 이쪽을 보고 있죠?' },
+      { who: '티아', img: '/assets/cutscenes/cs21_dolls.png', text: '여긴… 장난감 마을? 근데 왜 전부 이쪽을 보고 있죠?' },
       { who: '광대 인형', text: '침・입・자. 여왕님의 골목. 통과 금지. 껴안아 주기. 터질 때까지.' },
     ],
     outro: [
@@ -588,18 +590,18 @@ export const SYLVARIN_CAMPAIGN: readonly CampaignStage[] = [
     enemyUnitCaps: { p_mammon: 30, p_demilich: 20 },
     // 아군 봇의 세이지 금지 — 마법 화력은 엘로윈(스폰 이벤트) 단 한 명뿐
     allyUnitCaps: { s_sage: 0 },
-    // 거점 = 실바린의 캠프. 캠프마다 좌우에 숲의 망루(무적 포탑, 현자의 비전 화살)
+    // 숲의 망루(무적 포탑, 현자의 비전 화살): 캠프에 하나씩 + 사잇길에 외딴 망루 —
+    // 옛 국경 감시선이 길을 따라 띄엄띄엄 남아 있는 그림
     nestGuards: [
-      { defId: 'c_sage_watchtower', xTile: 26.5, yOffTile: -3.2 },
-      { defId: 'c_sage_watchtower', xTile: 29.5, yOffTile: 3.2 },
-      { defId: 'c_sage_watchtower', xTile: 46.5, yOffTile: -3.2 },
-      { defId: 'c_sage_watchtower', xTile: 49.5, yOffTile: 3.2 },
-      { defId: 'c_sage_watchtower', xTile: 66.5, yOffTile: -3.2 },
-      { defId: 'c_sage_watchtower', xTile: 69.5, yOffTile: 3.2 },
-      { defId: 'c_sage_watchtower', xTile: 86.5, yOffTile: -3.2 },
-      { defId: 'c_sage_watchtower', xTile: 89.5, yOffTile: 3.2 },
-      { defId: 'c_sage_watchtower', xTile: 104.5, yOffTile: -3.2 },
-      { defId: 'c_sage_watchtower', xTile: 107.5, yOffTile: 3.2 },
+      { defId: 'c_sage_watchtower', xTile: 20, yOffTile: -2.5 },
+      { defId: 'c_sage_watchtower', xTile: 27.5, yOffTile: 3 },
+      { defId: 'c_sage_watchtower', xTile: 36, yOffTile: -3 },
+      { defId: 'c_sage_watchtower', xTile: 47, yOffTile: -3 },
+      { defId: 'c_sage_watchtower', xTile: 56, yOffTile: 2.8 },
+      { defId: 'c_sage_watchtower', xTile: 67.5, yOffTile: 3 },
+      { defId: 'c_sage_watchtower', xTile: 76, yOffTile: -2.8 },
+      { defId: 'c_sage_watchtower', xTile: 87.5, yOffTile: -3.2 },
+      { defId: 'c_sage_watchtower', xTile: 105.5, yOffTile: 3 },
     ],
     // 엘로윈 참전: 4분에 등장(대사와 함께), 쓰러지면 잠시 후 다시 온다 (동시 1명)
     cutscenes: [{
@@ -647,17 +649,30 @@ export const SYLVARIN_CAMPAIGN: readonly CampaignStage[] = [
       { defId: 'c_burning_tree', xTile: 93, yOffTile: 2.4 },
       { defId: 'c_ember_tree', xTile: 100, yOffTile: -2 },
       { defId: 'c_burning_tree', xTile: 102, yOffTile: 3 },
-      // 실바린 캠프 천막 — 거점마다 가장자리에 세워 캠프 분위기를 낸다 (중앙 통행로는 비움)
-      { defId: 'c_sylvarin_tent', xTile: 27, yOffTile: 4.2 },
-      { defId: 'c_sylvarin_tent', xTile: 29.5, yOffTile: -4.2 },
-      { defId: 'c_sylvarin_tent', xTile: 47, yOffTile: 4.2 },
-      { defId: 'c_sylvarin_tent', xTile: 49.5, yOffTile: -4.2 },
-      { defId: 'c_sylvarin_tent', xTile: 67, yOffTile: 4.2 },
+      // 실바린 캠프 — 캠프마다 성격이 다르다 (가장자리 배치, 중앙 통행로는 비움)
+      // 캠프 1 (28): 살림 많은 본진 캠프 — 천막·모닥불·보급 상자·군기
+      { defId: 'c_sylvarin_tent', xTile: 26.6, yOffTile: 4.3 },
+      { defId: 'c_camp_fire', xTile: 28.5, yOffTile: 3.4 },
+      { defId: 'c_camp_crates', xTile: 30, yOffTile: 4.4 },
+      { defId: 'c_sylvarin_banner', xTile: 25.6, yOffTile: -4 },
+      // 캠프 2 (48): 지휘소 — 큰 지휘 천막과 군기
+      { defId: 'c_sylvarin_tent2', xTile: 49.5, yOffTile: -4.3 },
+      { defId: 'c_sylvarin_banner', xTile: 46, yOffTile: -3.8 },
+      { defId: 'c_camp_fire', xTile: 47.2, yOffTile: 4.2 },
+      // 캠프 3 (68): 보급 캠프 — 상자 더미가 쌓여 있다
+      { defId: 'c_camp_crates', xTile: 66, yOffTile: 4.2 },
+      { defId: 'c_camp_crates', xTile: 67.6, yOffTile: 4.5 },
       { defId: 'c_sylvarin_tent', xTile: 69.5, yOffTile: -4.2 },
-      { defId: 'c_sylvarin_tent', xTile: 87, yOffTile: 4.2 },
-      { defId: 'c_sylvarin_tent', xTile: 89.5, yOffTile: -4.2 },
-      { defId: 'c_sylvarin_tent', xTile: 105, yOffTile: 4.2 },
-      { defId: 'c_sylvarin_tent', xTile: 107.5, yOffTile: -4.2 },
+      { defId: 'c_camp_fire', xTile: 66.8, yOffTile: -3.6 },
+      // 캠프 4 (88): 전선 캠프 — 지휘 천막과 모닥불
+      { defId: 'c_sylvarin_tent2', xTile: 86.5, yOffTile: 4.3 },
+      { defId: 'c_camp_fire', xTile: 88.6, yOffTile: 3.5 },
+      { defId: 'c_sylvarin_banner', xTile: 90, yOffTile: -3.8 },
+      // 캠프 5 (106): 최전방 전초 — 군기가 먼저 보이고 살림은 단출하다
+      { defId: 'c_sylvarin_banner', xTile: 104.4, yOffTile: 4 },
+      { defId: 'c_camp_crates', xTile: 106, yOffTile: -4.2 },
+      { defId: 'c_camp_fire', xTile: 107.5, yOffTile: -3.4 },
+      { defId: 'c_sylvarin_tent', xTile: 108.5, yOffTile: 4.3 },
     ],
     spawns: [
       { defId: 'c_bone_colossus', label: '뼈 거상', everySec: 170 },

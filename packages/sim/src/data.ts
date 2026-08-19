@@ -1206,6 +1206,26 @@ reg(D({
   speed: 0, radius: tiles(0.55), acquireRange: 0, ghost: true,
 }));
 reg(D({
+  id: 'c_sylvarin_tent2', race: null, name: '실바린 지휘 천막', tier: 'structure', summonOnly: true,
+  cost: 0, supply: 0, maxHp: 999, armor: 0, tags: ['structure'], ...GROUND,
+  speed: 0, radius: tiles(0.85), acquireRange: 0,
+}));
+reg(D({
+  id: 'c_camp_fire', race: null, name: '모닥불', tier: 'structure', summonOnly: true,
+  cost: 0, supply: 0, maxHp: 999, armor: 0, tags: ['structure'], ...GROUND,
+  speed: 0, radius: tiles(0.4), acquireRange: 0,
+}));
+reg(D({
+  id: 'c_camp_crates', race: null, name: '보급 상자', tier: 'structure', summonOnly: true,
+  cost: 0, supply: 0, maxHp: 999, armor: 0, tags: ['structure'], ...GROUND,
+  speed: 0, radius: tiles(0.5), acquireRange: 0,
+}));
+reg(D({
+  id: 'c_sylvarin_banner', race: null, name: '실바린 군기', tier: 'structure', summonOnly: true,
+  cost: 0, supply: 0, maxHp: 999, armor: 0, tags: ['structure'], ...GROUND,
+  speed: 0, radius: tiles(0.28), acquireRange: 0,
+}));
+reg(D({
   id: 'c_sylvarin_tent', race: null, name: '실바린 캠프 천막', tier: 'structure', summonOnly: true,
   cost: 0, supply: 0, maxHp: 999, armor: 0, tags: ['structure'], ...GROUND,
   speed: 0, radius: tiles(0.7), acquireRange: 0,

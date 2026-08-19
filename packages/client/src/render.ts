@@ -145,6 +145,10 @@ export const ASSET_UNITS: Record<string, string | string[]> = {
   c_elowyn: '/assets/units/s_sage.png',
   c_sage_watchtower: '/assets/units/c_sage_watchtower.png',
   c_sylvarin_tent: '/assets/units/c_sylvarin_tent.png',
+  c_sylvarin_tent2: '/assets/units/c_sylvarin_tent2.png',
+  c_camp_fire: '/assets/units/c_camp_fire.png',
+  c_camp_crates: '/assets/units/c_camp_crates.png',
+  c_sylvarin_banner: '/assets/units/c_sylvarin_banner.png',
   c_burning_tree: '/assets/units/c_burning_tree.png',
   c_ember_tree: '/assets/units/c_ember_tree.png',
   c_burning_log: '/assets/units/c_burning_log.png',
@@ -439,6 +443,7 @@ const ASSET_SIZE_MUL: Record<string, number> = {
   // 호위전 소품: 나무는 반경보다 훨씬 크게 — 숲이 우거진 인상
   c_burning_tree: 1.35, c_ember_tree: 1.3, c_burning_log: 0.95, c_supply_cart: 1.15,
   c_sage_watchtower: 1.5, c_sylvarin_tent: 1.2, c_elowyn: 1.25,
+  c_sylvarin_tent2: 1.25, c_camp_fire: 1.1, c_camp_crates: 1.1, c_sylvarin_banner: 1.6,
 };
 
 /**
@@ -1386,6 +1391,11 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
         const current = i === ec.frontier;
         const color = captured ? 0x67d76a : current ? (ec.contested ? 0xff6a57 : 0xffd23d) : 0x8a7f6a;
         const pulse2 = current ? 0.6 + 0.4 * Math.sin(now * 0.01) : 0.7;
+        // 캠프 바닥: 다져진 흙 마당 — 사각 타일을 섞지 않고 부드러운 타원 데칼로
+        // "사람이 지내는 자리" 느낌만 얹는다 (외곽으로 갈수록 옅어지는 3겹)
+        fx.ellipse(px2, py2, rr * 1.12, rr * 0.62 * 1.12).fill({ color: 0x594636, alpha: 0.16 });
+        fx.ellipse(px2, py2, rr * 0.86, rr * 0.62 * 0.86).fill({ color: 0x64503c, alpha: 0.16 });
+        fx.ellipse(px2, py2, rr * 0.55, rr * 0.62 * 0.55).fill({ color: 0x705a42, alpha: 0.14 });
         fx.ellipse(px2, py2, rr, rr * 0.62).fill({ color, alpha: captured ? 0.05 : current ? 0.1 : 0.03 });
         fx.ellipse(px2, py2, rr, rr * 0.62)
           .stroke({ color, width: current ? 3.5 : 2, alpha: (current ? 0.9 : 0.5) * pulse2 });

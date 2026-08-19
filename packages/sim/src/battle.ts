@@ -287,6 +287,8 @@ function separatePass(g: Game): void {
       const b = es[j]!;
       if (!b.alive) continue;
       const db = def(b);
+      // 유령 통행(보급 마차): 누구와도 몸싸움하지 않는다
+      if (da.ghost || db.ghost) continue;
       // 지상화(리버스그라비티)된 공중 유닛은 지상 레이어에서 몸싸움한다
       if (isFlying(g, a) !== isFlying(g, b)) continue;
       const minDist = da.radius + db.radius;

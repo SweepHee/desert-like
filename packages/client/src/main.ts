@@ -1923,7 +1923,9 @@ function updateHud(g: Game): void {
     const d = DEFS[s.defId]!;
     const isMerc = g.mercUnits.includes(s.defId);
     const price = isMerc ? Math.floor((d.cost * g.mercCostPct) / 100) : d.cost;
-    const locked = !isMerc && techOfUnit(d) > me.techLevel; // 용병은 테크 무관 — 돈이 곧 자격
+    // 타종족 용병은 테크 무관, 전속 지원군(race: null — 앨리스 병력)은 테크 필요
+    const mercTechFree = isMerc && d.race !== null;
+    const locked = !mercTechFree && techOfUnit(d) > me.techLevel;
     const mercLocked = isMerc && g.mercCaptureRequired && g.mercOwner !== 0;
     s.btn.disabled = locked || mercLocked || me.money < price;
     const n = me.comp[s.defId] ?? 0;

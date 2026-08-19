@@ -1168,7 +1168,7 @@ reg(D({
 reg(D({
   id: 'c_supply_cart', race: null, name: '생명수 보급 마차', tier: 'structure', summonOnly: true,
   cost: 0, supply: 0, maxHp: 1500, armor: 6, tags: ['plate', 'structure'], ...GROUND,
-  speed: 0, radius: tiles(0.55), acquireRange: 0,
+  speed: 0, radius: tiles(0.55), acquireRange: 0, ghost: true,
 }));
 reg(D({
   id: 'c_burning_tree', race: null, name: '불타는 나무', tier: 'structure', summonOnly: true,

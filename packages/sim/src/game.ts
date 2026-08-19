@@ -153,7 +153,10 @@ export function buyUnit(g: Game, playerIdx: number, defId: string): boolean {
   const isMerc = p.team === 0 && !p.isBot && isMercItem;
   if (g.mercCaptureRequired && isMercItem && g.mercOwner !== p.team) return false;
   if (d.race !== p.race && !isMerc) return false;
-  if (!isMercItem && techOfUnit(d) > p.techLevel) return false; // 테크 미달 (용병은 테크 무관 — 돈이 곧 자격)
+  // 테크 미달. 타종족 용병(마몬의 장사)은 테크 무관 — 돈이 곧 자격.
+  // 전속 지원군(race: null 용병 — 앨리스 병력)은 자기 티어의 테크를 따른다.
+  const mercTechFree = isMercItem && d.race !== null;
+  if (!mercTechFree && techOfUnit(d) > p.techLevel) return false;
   // 캠페인 해금 제한: "사람 플레이어"만 화이트리스트 적용 (용병은 별도 허가).
   // 아군 봇(앨리스 군단 등)은 다른 종족이라 화이트리스트를 적용하면 아무것도 못 산다.
   if (!isMerc && p.team === 0 && !p.isBot && g.allowedUnits.length > 0 && !g.allowedUnits.includes(defId)) return false;

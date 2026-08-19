@@ -1684,6 +1684,19 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
       const shadowY = py;
       let rot = 0;
 
+      // 보급 마차: 구르는 모션 — 이동 방향으로 몸을 틀고 덜컹이며 구른다
+      // (def speed 0 이라 걷기 바운스를 못 받으니 전용 모션. 좌우는 반전,
+      //  위아래 경사는 좌우 그림 그대로 굴린다 — 전용 상하 그림이 없다)
+      if (e.defId === 'c_supply_cart') {
+        if (vfx.moving) {
+          const mdx = e.x - pv.x;
+          if (mdx !== 0) vfx.faceDir = mdx >= 0 ? 'e' : 'w';
+          vfx.walkPhase += 0.5;
+          py -= Math.abs(Math.sin(vfx.walkPhase)) * 1.6; // 바퀴 덜컹임
+          rot = Math.sin(vfx.walkPhase * 0.5) * 0.05; // 짐칸이 좌우로 흔들린다
+        }
+        sp.scale.x = Math.abs(vfx.baseScaleX) * (vfx.faceDir === 'w' ? -1 : 1);
+      }
       // 걷기 바운스 (지상 유닛만)
       if (!d.flying && vfx.moving && d.speed > 0) {
         vfx.walkPhase += 0.35;

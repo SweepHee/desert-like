@@ -217,6 +217,11 @@ export interface EntityDef {
 
   /** FP/틱. 0 = 이동 불가(구조물). */
   readonly speed: number;
+  /**
+   * 유령 통행: 충돌 분리에서 완전히 제외 — 아무도 밀지 않고 밀리지도 않는다.
+   * (보급 마차 — 나무·부대 사이에 끼지 않고 제 길을 간다. 레인 경계는 그대로)
+   */
+  readonly ghost?: boolean;
   /** FP 충돌 반지름. */
   readonly radius: number;
   /** FP 적 탐지 거리. */

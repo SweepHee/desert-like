@@ -996,6 +996,46 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
   const corpseLayer = new Container();
   const units = new Container();
   units.sortableChildren = true;
+  /** 맵 경계 장식 (렌더 전용 — 심 엔티티가 아니라 밸런스 영향 없음). */
+  let mapDecos: Sprite[] = [];
+
+  /**
+   * 잿길(ashroad): 걷는 길과 바깥 지형의 경계를 따라 불탄 나무를 촘촘히 심는다.
+   * 유닛이 다니지 않는 경계 바깥이라 게임엔 영향이 없고, 불타는 숲의 분위기만
+   * 만든다. 결정론이 필요 없는 순수 그림이지만 배치는 고정 시드로 뽑아
+   * 접속할 때마다 같은 숲이 보이게 한다.
+   */
+  function buildMapDecos(): void {
+    for (const d of mapDecos) d.destroy();
+    mapDecos = [];
+    if (curMap.id !== 'ashroad') return;
+    const kinds = ['c_burning_tree', 'c_ember_tree', 'c_ember_tree', 'c_burning_log'];
+    let seed = 20260819;
+    const rnd = (): number => {
+      seed = (seed * 1664525 + 1013904223) >>> 0;
+      return seed / 4294967296;
+    };
+    for (const side of [-1, 1]) {
+      for (let t = 4; t < 126; t += 1.8 + rnd() * 2.6) {
+        const xFP = Math.floor(t * FP);
+        const half = laneHalfWAt(curMap, xFP);
+        const yFP = laneCenterY(curMap, xFP) + side * (half + Math.floor((300 + rnd() * 1500)));
+        const kind = kinds[Math.floor(rnd() * kinds.length)]!;
+        const tex = assetTex.get(kind)?.[0];
+        if (!tex) continue;
+        const sp = new Sprite(tex);
+        sp.anchor.set(0.5, 1);
+        const w = TILE * (kind === 'c_burning_log' ? 2.4 : 2.2 + rnd() * 1.3);
+        sp.scale.set(w / tex.width);
+        if (rnd() < 0.5) sp.scale.x = -sp.scale.x;
+        sp.x = sx(xFP);
+        sp.y = sy(yFP);
+        sp.zIndex = sp.y;
+        units.addChild(sp);
+        mapDecos.push(sp);
+      }
+    }
+  }
   const fx = new Graphics();
   const projLayer = new Container(); // 투사체 스프라이트 (유닛 위, 체력바 아래)
   const bars = new Graphics();
@@ -2200,6 +2240,7 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
       app.renderer.background.color = MAP_BG[m.id] ?? 0x9c7c4e;
       buildGroundTiles();
       drawGround(ground, tiled());
+      buildMapDecos();
       rebuildClouds();
       // 합류점 맵: 위 갈래 끝에 앨리스의 성(장난감 넥서스 그림)을 세워 둔다
       if (allyBaseSp) { allyBaseSp.destroy(); allyBaseSp = null; }

@@ -636,21 +636,21 @@ export const SYLVARIN_CAMPAIGN: readonly CampaignStage[] = [
     // 불타는 숲 장애물 — 길 가장자리에 붙여 세운다. 중앙 통행로는 열어 두되
     // 어깨가 좁아져 진형이 자연스럽게 눌린다 (비행 유닛은 넘어간다)
     obstacles: [
-      { defId: 'c_burning_tree', xTile: 22, yOffTile: -4.5 },
+      { defId: 'c_ember_tree2', xTile: 22, yOffTile: -4.5 },
       { defId: 'c_ember_tree', xTile: 24, yOffTile: 4.5 },
       { defId: 'c_burning_log', xTile: 33, yOffTile: -4.2 },
       { defId: 'c_ember_tree', xTile: 41, yOffTile: -2.6 },
-      { defId: 'c_burning_tree', xTile: 44, yOffTile: 2.6 },
+      { defId: 'c_ember_tree2', xTile: 44, yOffTile: 2.6 },
       { defId: 'c_burning_log', xTile: 55, yOffTile: -4.5 },
-      { defId: 'c_burning_tree', xTile: 58, yOffTile: 4.3 },
+      { defId: 'c_ember_tree2', xTile: 58, yOffTile: 4.3 },
       { defId: 'c_ember_tree', xTile: 64, yOffTile: -4.4 },
       { defId: 'c_burning_log', xTile: 72, yOffTile: 4.4 },
-      { defId: 'c_burning_tree', xTile: 78, yOffTile: -4.5 },
+      { defId: 'c_ember_tree2', xTile: 78, yOffTile: -4.5 },
       { defId: 'c_ember_tree', xTile: 82, yOffTile: 4.2 },
       { defId: 'c_burning_log', xTile: 91, yOffTile: -2.7 },
-      { defId: 'c_burning_tree', xTile: 93, yOffTile: 2.7 },
+      { defId: 'c_ember_tree', xTile: 93, yOffTile: 2.7 },
       { defId: 'c_ember_tree', xTile: 100, yOffTile: -4.4 },
-      { defId: 'c_burning_tree', xTile: 102, yOffTile: 4.4 },
+      { defId: 'c_ember_tree2', xTile: 102, yOffTile: 4.4 },
       // 실바린 캠프 — 천막은 캠프 마당(링 안쪽)에 띄엄띄엄, 서로 붙지 않게.
       // 가장자리는 망루 전용이다.
       // 캠프 1 (28): 살림 많은 본진 캠프 — 천막 3동·모닥불·보급 상자·군기

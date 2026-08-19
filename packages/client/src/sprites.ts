@@ -324,6 +324,7 @@ const LOOK: Record<string, { shape: string; pal: string; accent?: string }> = {
   c_alice_soldier: { shape: 'archer', pal: 'marionetta' },
   c_elowyn: { shape: 'mage', pal: 'sylvarin' },
   c_sage_watchtower: { shape: 'tower', pal: 'sylvarin' },
+  c_ember_tree2: { shape: 'tower', pal: 'none' },
   c_sylvarin_tent: { shape: 'golem', pal: 'sylvarin' },
   c_sylvarin_tent2: { shape: 'golem', pal: 'sylvarin' },
   c_camp_fire: { shape: 'golem', pal: 'none' },

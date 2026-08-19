@@ -1010,7 +1010,7 @@ function unlockSage(g: Game, sage: Entity): void {
   const packed = eff9('s_gouto', { su_gouto_pack: true })!;
   ok(packed.maxHp === Math.floor(D2.s_gouto!.maxHp * 1.4) && packed.armor === D2.s_gouto!.armor + 1, 'BOON 해금형: 업그레이드 구매 시 적용');
   const bark = applyBoons(D2.s_druid!, ['b_druid_bark']);
-  ok((bark.regenPerSec ?? 0) === 6, 'BOON 재생 부여');
+  ok((bark.heal?.multi ?? 1) === 2, 'BOON 이중 개화: 동시 회복 대상 2');
   const dodge = applyBoons(D2.s_vine_hunter!, ['b_vine_swift']);
   ok((dodge.dodgePct ?? 0) === 30, 'BOON 회피 부여 (30%)');
   const balm = applyBoons(D2.s_mushroom_bomber!, ['b_mush_balm']);
@@ -1018,15 +1018,18 @@ function unlockSage(g: Game, sage: Entity): void {
 }
 
 {
-  // BOON 재생이 전투에서 실제로 체력을 회복시키는지
+  // BOON 이중 개화: 다친 아군 2명이 실제로 함께 회복되는지 (기본은 1명만)
   const g = newArena();
   const mid = tiles(30);
   const dr = spawnUnit(g, 's_druid', 0, mid, 0);
   const { applyBoons: ab, DEFS: D3 } = await import('../data.ts');
   dr.defOv = ab(D3.s_druid!, ['b_druid_bark']);
-  dr.hp = 10;
-  for (let t = 0; t < 20 * 5; t++) { g.tick++; stepCombat(g); }
-  ok(dr.hp >= 10 + 6 * 4, `BOON 재생 실동작 (5초간 ${dr.hp - 10} 회복)`);
+  const w1 = spawnUnit(g, 's_gouto', 0, mid + tiles(1), tiles(1));
+  const w2 = spawnUnit(g, 's_gouto', 0, mid - tiles(1), -tiles(1));
+  w1.hp = 50;
+  w2.hp = 60;
+  for (let t = 0; t < 20; t++) { g.tick++; stepCombat(g); }
+  ok(w1.hp > 50 && w2.hp > 60, `BOON 이중 개화 실동작 (${w1.hp - 50}/${w2.hp - 60} 동시 회복)`);
 }
 
 {

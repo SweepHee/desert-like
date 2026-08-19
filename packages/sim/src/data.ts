@@ -545,8 +545,8 @@ reg(D({
   weapon: { damage: 24, cooldown: seconds(1.3), range: tiles(4.0), targets: 'both' },
   actives: [
     {
-      name: '가호', desc: '주변 아군 전체 방어력 +1 (12초)', kind: 'allyarmor',
-      cooldown: seconds(20), durTicks: seconds(12), armorAdd: 1, auraRadius: tiles(5.5),
+      name: '가호', desc: '주변 아군 전체 방어력 +6 (12초)', kind: 'allyarmor',
+      cooldown: seconds(20), durTicks: seconds(12), armorAdd: 6, auraRadius: tiles(5.5),
     },
     {
       name: '날개짓', desc: '주변 적에게 약화 — 공격력 10% 감소 (6초)', kind: 'weaken',
@@ -1237,6 +1237,11 @@ reg(D({
 }));
 reg(D({
   id: 'c_ember_tree', race: null, name: '잿불 고목', tier: 'structure', summonOnly: true,
+  cost: 0, supply: 0, maxHp: 999, armor: 0, tags: ['structure'], ...GROUND,
+  speed: 0, radius: tiles(0.8), acquireRange: 0,
+}));
+reg(D({
+  id: 'c_ember_tree2', race: null, name: '뒤틀린 잿불 고목', tier: 'structure', summonOnly: true,
   cost: 0, supply: 0, maxHp: 999, armor: 0, tags: ['structure'], ...GROUND,
   speed: 0, radius: tiles(0.8), acquireRange: 0,
 }));

@@ -151,6 +151,7 @@ export const ASSET_UNITS: Record<string, string | string[]> = {
   c_sylvarin_banner: '/assets/units/c_sylvarin_banner.png',
   c_burning_tree: '/assets/units/c_burning_tree.png',
   c_ember_tree: '/assets/units/c_ember_tree.png',
+  c_ember_tree2: '/assets/units/c_ember_tree2.png',
   c_burning_log: '/assets/units/c_burning_log.png',
   // 둥지 (11스테이지) — nest 맵의 아군 넥서스 스킨
   nexus_nest: '/assets/units/nexus_nest.png',
@@ -441,7 +442,7 @@ const ASSET_SIZE_MUL: Record<string, number> = {
   c_wild_blackbird: 1.4, c_wild_grizzly: 1.2, c_wild_direwolf: 1.15,
   c_balthar_general: 1.5, // 12 보스 — 슬리피 할로우급 거구
   // 호위전 소품: 나무는 반경보다 훨씬 크게 — 숲이 우거진 인상
-  c_burning_tree: 1.35, c_ember_tree: 1.3, c_burning_log: 0.95, c_supply_cart: 1.15,
+  c_burning_tree: 1.35, c_ember_tree: 1.3, c_ember_tree2: 1.35, c_burning_log: 0.95, c_supply_cart: 1.15,
   c_sage_watchtower: 1.5, c_sylvarin_tent: 1.2, c_elowyn: 1.25,
   c_sylvarin_tent2: 1.25, c_camp_fire: 1.1, c_camp_crates: 1.1, c_sylvarin_banner: 1.6,
 };
@@ -1009,30 +1010,50 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
     for (const d of mapDecos) d.destroy();
     mapDecos = [];
     if (curMap.id !== 'ashroad') return;
-    const kinds = ['c_burning_tree', 'c_ember_tree', 'c_ember_tree', 'c_burning_log'];
     let seed = 20260819;
     const rnd = (): number => {
       seed = (seed * 1664525 + 1013904223) >>> 0;
       return seed / 4294967296;
     };
+    /** 종류 뽑기 — 잿불 고목 2종 도배 + 가끔 쓰러진 둥치. */
+    const pickKind = (): string => {
+      const r = rnd();
+      if (r < 0.46) return 'c_ember_tree';
+      if (r < 0.9) return 'c_ember_tree2';
+      return 'c_burning_log';
+    };
+    const put = (xFP: number, yFP: number, deep: boolean): void => {
+      const kind = pickKind();
+      const tex = assetTex.get(kind)?.[0];
+      if (!tex) return;
+      const sp = new Sprite(tex);
+      sp.anchor.set(0.5, 1);
+      const w = TILE * (kind === 'c_burning_log' ? 2.2 : 1.9 + rnd() * 1.4);
+      sp.scale.set(w / tex.width);
+      if (rnd() < 0.5) sp.scale.x = -sp.scale.x;
+      // 깊은 숲일수록 살짝 어둡게 — 원근감
+      if (deep) sp.tint = rnd() < 0.5 ? 0xb8aca4 : 0xcabfb6;
+      sp.x = sx(xFP);
+      sp.y = sy(yFP);
+      sp.zIndex = sp.y;
+      units.addChild(sp);
+      mapDecos.push(sp);
+    };
+    // 바깥 지형 전체를 불탄 숲으로 도배: 경계선부터 화면 끝까지 줄줄이 심는다
+    const limit = renderHalfH() - Math.floor(0.6 * FP);
     for (const side of [-1, 1]) {
-      for (let t = 4; t < 126; t += 1.8 + rnd() * 2.6) {
+      for (let t = 2; t < 127; t += 1.6 + rnd() * 1.5) {
         const xFP = Math.floor(t * FP);
         const half = laneHalfWAt(curMap, xFP);
-        const yFP = laneCenterY(curMap, xFP) + side * (half + Math.floor((300 + rnd() * 1500)));
-        const kind = kinds[Math.floor(rnd() * kinds.length)]!;
-        const tex = assetTex.get(kind)?.[0];
-        if (!tex) continue;
-        const sp = new Sprite(tex);
-        sp.anchor.set(0.5, 1);
-        const w = TILE * (kind === 'c_burning_log' ? 2.4 : 2.2 + rnd() * 1.3);
-        sp.scale.set(w / tex.width);
-        if (rnd() < 0.5) sp.scale.x = -sp.scale.x;
-        sp.x = sx(xFP);
-        sp.y = sy(yFP);
-        sp.zIndex = sp.y;
-        units.addChild(sp);
-        mapDecos.push(sp);
+        const edge = laneCenterY(curMap, xFP) + side * (half + Math.floor(500 + rnd() * 900));
+        // 경계에서 바깥으로 한 줄씩 — 줄 간격·좌우를 흔들어 자연스러운 숲으로
+        let off = 0;
+        let deep = false;
+        for (let yFP = edge; Math.abs(yFP) < limit; yFP += side * Math.floor((1500 + rnd() * 1300))) {
+          put(xFP + Math.floor((rnd() - 0.5) * 1400), yFP + off, deep);
+          off = Math.floor((rnd() - 0.5) * 600);
+          deep = true; // 두 번째 줄부터는 깊은 숲
+        }
       }
     }
   }

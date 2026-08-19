@@ -730,7 +730,7 @@ export function stepCombat(g: Game): void {
     // 전투형 힐러(사도)는 아군을 쫓지 않고 진군한다 — 숲을 몰고 전진하는 컨셉
     if (d.heal && !d.advancesWhileHealing) {
       // 힐러: 다친 아군을 따라다닌다. 없으면 진군 대열을 따른다.
-      const wounded = findWoundedAlly(g, e, d, tiles(8));
+      const wounded = findWoundedAllies(g, e, d, tiles(8), 1)[0];
       if (wounded) {
         const dd = dist2(e.x, e.y, wounded.x, wounded.y);
         const r = d.heal.range + d.radius;
@@ -1310,20 +1310,24 @@ export function stepCombat(g: Game): void {
       continue;
     }
     if (g.tick < e.confusedUntil || g.tick < e.fearedUntil || isIncapacitated(g, e)) continue; // 혼란·공포·기절·수면: 치유 불가
-    const ally = findWoundedAlly(g, e, d, d.heal.range + d.radius);
-    if (ally) {
+    // 동시 회복(multi): 체력 비율이 낮은 순으로 여럿을 한 번에 돌본다 (기본 1명)
+    const allies = findWoundedAllies(g, e, d, d.heal.range + d.radius, d.heal.multi ?? 1);
+    let healedAny = false;
+    for (const ally of allies) {
       // 중복힐 상한: 같은 대상에게 1초 안에 최대 3회 — 힐러가 몰려도 무한 탱킹 방지
       if (g.tick - ally.healWindowStart >= 20) {
         ally.healWindowStart = g.tick;
         ally.healsInWindow = 0;
       }
-      if (ally.healsInWindow >= 3) continue; // 쿨 소모 없이 다음 틱에 재판정
+      if (ally.healsInWindow >= 3) continue;
       ally.healsInWindow++;
       ally.hp += d.heal.amount;
       const max = def(ally).maxHp;
       if (ally.hp > max) ally.hp = max;
-      e.healCooldown = d.heal.cooldown;
+      healedAny = true;
     }
+    // 전원 상한에 걸렸으면 쿨 소모 없이 다음 틱에 재판정
+    if (healedAny) e.healCooldown = d.heal.cooldown;
   }
 
   // 부활 대기 처리: 시간이 되면 되살아난다
@@ -1383,9 +1387,12 @@ export function stepCombat(g: Game): void {
   }
 }
 
-function findWoundedAlly(g: Game, healer: Entity, d: EntityDef, range: number): Entity | null {
-  let best: Entity | null = null;
-  let bestRatio = 1_000_000;
+/**
+ * 사거리 안에서 체력 비율이 낮은 순으로 최대 count 명의 다친 아군을 고른다.
+ * 결정론 규칙: 삽입 정렬 + 동률(strict <)은 배열 앞쪽이 이긴다.
+ */
+function findWoundedAllies(g: Game, healer: Entity, d: EntityDef, range: number, count: number): Entity[] {
+  const picks: { t: Entity; ratio: number }[] = [];
   for (const t of g.entities) {
     if (!t.alive || t.team !== healer.team || t.id === healer.id) continue;
     const td = def(t);
@@ -1397,12 +1404,12 @@ function findWoundedAlly(g: Game, healer: Entity, d: EntityDef, range: number): 
     // 수리 불가 대상 (예: 재봉사는 언데드를 수리할 수 없다)
     if (d.heal!.excludeTags?.some((tag) => td.tags.includes(tag))) continue;
     if (dist2(healer.x, healer.y, t.x, t.y) > range * range) continue;
-    // 체력 비율(1000분율)이 가장 낮은 아군.
+    // 체력 비율(1000분율)이 낮은 순으로 상위 count 명 유지
     const ratio = idiv(t.hp * 1000, td.maxHp);
-    if (ratio < bestRatio) {
-      bestRatio = ratio;
-      best = t;
-    }
+    let at = picks.length;
+    while (at > 0 && ratio < picks[at - 1]!.ratio) at--;
+    picks.splice(at, 0, { t, ratio });
+    if (picks.length > count) picks.pop();
   }
-  return best;
+  return picks.map((p) => p.t);
 }

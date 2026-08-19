@@ -1352,6 +1352,8 @@ export interface UpgradeMods {
   readonly slowTicksAdd?: number; // 틱 (기존 둔화에 가산, 없으면 신설)
   readonly bonusAdd?: Partial<Record<BonusKey, number>>;
   readonly healAmountPct?: number;
+  /** 동시 회복 대상 수 지정 (드루이드 「이중 개화」 = 2). */
+  readonly healMultiSet?: number;
   /** 지속피해 부여 (독/화상). 기존 dot 이 있으면 dps 가산. */
   readonly dotSet?: { readonly dps: number; readonly ticks: number; readonly chance?: number };
   /** 속박 부여 (없던 유닛에 신설). */
@@ -1529,8 +1531,8 @@ export const BOONS: readonly UnitBoon[] = [
   // 드루이드 (160원 힐러, 힐 14 / 쿨 1초)
   { id: 'b_druid_spring', unit: 's_druid', kind: 'stat', name: '생명의 원천',
     desc: '회복량 +50%, 회복 사거리 +1', mods: { healAmountPct: 50, rangeAdd: tiles(1) } },
-  { id: 'b_druid_bark', unit: 's_druid', kind: 'passive', name: '나무껍질 축복',
-    desc: '체력 +60%, 초당 6 재생', mods: { maxHpPct: 60, regenPerSec: 6 } },
+  { id: 'b_druid_bark', unit: 's_druid', kind: 'passive', name: '이중 개화',
+    desc: '가장 다친 아군 2명을 동시에 회복한다', mods: { healMultiSet: 2 } },
   { id: 'b_druid_bloom', unit: 's_druid', kind: 'active', name: '개화',
     desc: '전투 중 14초마다 주변 아군 방어력 +2 (10초)',
     mods: { addActive: { name: '개화', desc: '아군 방어 +2 (10초)', kind: 'allyarmor',
@@ -1657,6 +1659,7 @@ function applyMods(base: EntityDef, modList: readonly UpgradeMods[]): EntityDef 
     if (m.armorAdd) armor += m.armorAdd;
     if (m.speedPct) speed = idiv(speed * (100 + m.speedPct), 100);
     if (m.healAmountPct && heal) heal = { ...heal, amount: idiv(heal.amount * (100 + m.healAmountPct), 100) };
+    if (m.healMultiSet && heal) heal = { ...heal, multi: m.healMultiSet };
     if (weapon) {
       let w = { ...weapon } as {
         damage: number; bonus?: Partial<Record<BonusKey, number>>; cooldown: number;

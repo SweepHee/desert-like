@@ -196,6 +196,8 @@ export interface HealAbility {
   readonly range: number;
   /** 이 태그를 가진 아군은 치료 불가 (예: 재봉사는 undead 수리 불가). */
   readonly excludeTags?: readonly Tag[];
+  /** 동시 회복 대상 수 (기본 1). 체력 비율이 낮은 순으로 여럿을 한 번에 돌본다. */
+  readonly multi?: number;
 }
 
 export interface EntityDef {

@@ -593,15 +593,16 @@ export const SYLVARIN_CAMPAIGN: readonly CampaignStage[] = [
     // 숲의 망루(무적 포탑, 현자의 비전 화살): 캠프에 하나씩 + 사잇길에 외딴 망루 —
     // 옛 국경 감시선이 길을 따라 띄엄띄엄 남아 있는 그림
     nestGuards: [
+      // 가장자리 전용 + 캠프 천막 무리에서 몇 타일 떨어뜨려 세운다
       { defId: 'c_sage_watchtower', xTile: 20, yOffTile: -4.3 },
-      { defId: 'c_sage_watchtower', xTile: 27.5, yOffTile: 4.5 },
+      { defId: 'c_sage_watchtower', xTile: 24.5, yOffTile: 4.4 },
       { defId: 'c_sage_watchtower', xTile: 36, yOffTile: -4.4 },
-      { defId: 'c_sage_watchtower', xTile: 47, yOffTile: -4.5 },
+      { defId: 'c_sage_watchtower', xTile: 51, yOffTile: -4.5 },
       { defId: 'c_sage_watchtower', xTile: 56, yOffTile: 4.3 },
-      { defId: 'c_sage_watchtower', xTile: 67.5, yOffTile: 4.5 },
+      { defId: 'c_sage_watchtower', xTile: 70.8, yOffTile: 4.4 },
       { defId: 'c_sage_watchtower', xTile: 76, yOffTile: -4.3 },
-      { defId: 'c_sage_watchtower', xTile: 87.5, yOffTile: -4.5 },
-      { defId: 'c_sage_watchtower', xTile: 105.5, yOffTile: 4.4 },
+      { defId: 'c_sage_watchtower', xTile: 84.6, yOffTile: -4.4 },
+      { defId: 'c_sage_watchtower', xTile: 103.2, yOffTile: 4.4 },
     ],
     // 엘로윈 참전: 4분에 등장(대사와 함께), 쓰러지면 잠시 후 다시 온다 (동시 1명)
     cutscenes: [{
@@ -650,38 +651,39 @@ export const SYLVARIN_CAMPAIGN: readonly CampaignStage[] = [
       { defId: 'c_burning_tree', xTile: 93, yOffTile: 2.7 },
       { defId: 'c_ember_tree', xTile: 100, yOffTile: -4.4 },
       { defId: 'c_burning_tree', xTile: 102, yOffTile: 4.4 },
-      // 실바린 캠프 — 천막 2~3동씩 (진짜 사람이 지내는 캠프처럼), 가장자리 배치
+      // 실바린 캠프 — 천막은 캠프 마당(링 안쪽)에 띄엄띄엄, 서로 붙지 않게.
+      // 가장자리는 망루 전용이다.
       // 캠프 1 (28): 살림 많은 본진 캠프 — 천막 3동·모닥불·보급 상자·군기
-      { defId: 'c_sylvarin_tent', xTile: 26.6, yOffTile: 4.3 },
-      { defId: 'c_sylvarin_tent', xTile: 28.8, yOffTile: 4.6 },
-      { defId: 'c_sylvarin_tent2', xTile: 30.6, yOffTile: -4.4 },
-      { defId: 'c_camp_fire', xTile: 28.5, yOffTile: 3.4 },
-      { defId: 'c_camp_crates', xTile: 27.4, yOffTile: -4.1 },
-      { defId: 'c_sylvarin_banner', xTile: 25.6, yOffTile: -4 },
+      { defId: 'c_sylvarin_tent', xTile: 26.4, yOffTile: 3.0 },
+      { defId: 'c_sylvarin_tent', xTile: 29.6, yOffTile: 3.4 },
+      { defId: 'c_sylvarin_tent2', xTile: 30.6, yOffTile: -2.8 },
+      { defId: 'c_camp_fire', xTile: 28.2, yOffTile: 2.0 },
+      { defId: 'c_camp_crates', xTile: 27.2, yOffTile: -3.2 },
+      { defId: 'c_sylvarin_banner', xTile: 25.4, yOffTile: -2.6 },
       // 캠프 2 (48): 지휘소 — 지휘 천막 + 부속 천막 2동, 군기
-      { defId: 'c_sylvarin_tent2', xTile: 49.5, yOffTile: -4.3 },
-      { defId: 'c_sylvarin_tent', xTile: 47.4, yOffTile: -4.6 },
-      { defId: 'c_sylvarin_tent', xTile: 50.6, yOffTile: 4.4 },
-      { defId: 'c_sylvarin_banner', xTile: 46, yOffTile: -3.8 },
-      { defId: 'c_camp_fire', xTile: 47.2, yOffTile: 4.2 },
+      { defId: 'c_sylvarin_tent2', xTile: 49.6, yOffTile: -2.8 },
+      { defId: 'c_sylvarin_tent', xTile: 46.8, yOffTile: -3.2 },
+      { defId: 'c_sylvarin_tent', xTile: 48.4, yOffTile: 3.0 },
+      { defId: 'c_sylvarin_banner', xTile: 46, yOffTile: 2.6 },
+      { defId: 'c_camp_fire', xTile: 47.8, yOffTile: -1.6 },
       // 캠프 3 (68): 보급 캠프 — 상자 더미 사이 천막 2동
-      { defId: 'c_camp_crates', xTile: 66, yOffTile: 4.2 },
-      { defId: 'c_camp_crates', xTile: 67.6, yOffTile: 4.5 },
-      { defId: 'c_sylvarin_tent', xTile: 69.5, yOffTile: -4.2 },
-      { defId: 'c_sylvarin_tent', xTile: 66.4, yOffTile: -4.5 },
-      { defId: 'c_camp_fire', xTile: 68, yOffTile: -3.6 },
+      { defId: 'c_camp_crates', xTile: 66.2, yOffTile: 2.8 },
+      { defId: 'c_camp_crates', xTile: 67.8, yOffTile: 3.3 },
+      { defId: 'c_sylvarin_tent', xTile: 69.4, yOffTile: -2.6 },
+      { defId: 'c_sylvarin_tent', xTile: 66.4, yOffTile: -3.0 },
+      { defId: 'c_camp_fire', xTile: 68, yOffTile: -1.6 },
       // 캠프 4 (88): 전선 캠프 — 지휘 천막 + 천막 2동, 모닥불
-      { defId: 'c_sylvarin_tent2', xTile: 86.5, yOffTile: 4.3 },
-      { defId: 'c_sylvarin_tent', xTile: 89.2, yOffTile: 4.5 },
-      { defId: 'c_sylvarin_tent', xTile: 87, yOffTile: -4.5 },
-      { defId: 'c_camp_fire', xTile: 88.6, yOffTile: 3.5 },
-      { defId: 'c_sylvarin_banner', xTile: 90.2, yOffTile: -3.9 },
+      { defId: 'c_sylvarin_tent2', xTile: 86.6, yOffTile: 2.8 },
+      { defId: 'c_sylvarin_tent', xTile: 89.2, yOffTile: 3.2 },
+      { defId: 'c_sylvarin_tent', xTile: 87.2, yOffTile: -3.0 },
+      { defId: 'c_camp_fire', xTile: 88.4, yOffTile: 1.8 },
+      { defId: 'c_sylvarin_banner', xTile: 90.2, yOffTile: -2.6 },
       // 캠프 5 (106): 최전방 전초 — 천막 2동, 군기가 먼저 보인다
-      { defId: 'c_sylvarin_banner', xTile: 104.4, yOffTile: 4 },
-      { defId: 'c_sylvarin_tent', xTile: 108.5, yOffTile: 4.3 },
-      { defId: 'c_sylvarin_tent', xTile: 105.2, yOffTile: -4.5 },
-      { defId: 'c_camp_crates', xTile: 106.4, yOffTile: -4.2 },
-      { defId: 'c_camp_fire', xTile: 107.5, yOffTile: -3.4 },
+      { defId: 'c_sylvarin_banner', xTile: 104.6, yOffTile: 2.6 },
+      { defId: 'c_sylvarin_tent', xTile: 108.2, yOffTile: 3.0 },
+      { defId: 'c_sylvarin_tent', xTile: 105.4, yOffTile: -3.0 },
+      { defId: 'c_camp_crates', xTile: 106.6, yOffTile: -3.4 },
+      { defId: 'c_camp_fire', xTile: 107.4, yOffTile: -1.8 },
     ],
     spawns: [
       { defId: 'c_bone_colossus', label: '뼈 거상', everySec: 170 },

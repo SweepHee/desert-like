@@ -1448,18 +1448,19 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
               .fill({ color, alpha: 0.95 });
           }
         }
-        // 깃발 라벨
+        // 깃발 라벨 — 나무·망루에 가리지 않게 유닛 레이어 맨 위에 얹는다
         if (!escortLabels[i]) {
           const t = new Text({
             text: '', style: { fontSize: 12, fill: 0xffffff, stroke: { color: 0x000000, width: 3 }, fontWeight: 'bold' },
           });
           t.anchor.set(0.5, 1);
-          zoneLayer.addChild(t);
+          t.zIndex = Number.MAX_SAFE_INTEGER; // 항상 오브젝트 위
+          units.addChild(t);
           escortLabels[i] = t;
         }
         const lbl = escortLabels[i]!;
         lbl.x = px2;
-        lbl.y = py2 - rr * 0.62 - 6;
+        lbl.y = py2 - rr * 0.62 - 46; // 캠프 오브젝트(나무·망루) 키를 넘겨서
         lbl.style.fill = color;
         lbl.text = captured ? `🚩 실바린 캠프 ${i + 1} — 확보` : current
           ? (ec.contested ? `⚔ 캠프 ${i + 1} — 교전 중!` : `🏳 캠프 ${i + 1} — 점령 목표`)

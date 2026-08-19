@@ -371,7 +371,8 @@
       }
       #economy #money { font-size: 17px; }
       #economy #income { font-size: 11px; }
-      #btn-income, #btn-tech { flex: 1 1 40%; font-size: 11px; padding: 4px; }
+      /* 인컴/테크: 길쭉한 바 대신 내용만큼만 차지하는 알약 버튼 */
+      #btn-income, #btn-tech { flex: 0 1 auto; font-size: 11px; padding: 4px 8px; white-space: nowrap; }
       #bottombar { flex-direction: column; max-height: 40vh; }
       #shop { gap: 5px; justify-content: center; }
       .unitbtn { width: 72px; }
@@ -381,7 +382,8 @@
       #tooltip, #unit-info { max-width: 74vw; font-size: 11px; }
       #upg-panel { max-width: 84vw; }
       /* 캠페인 배너: 세로폰에서 topbar 가 두 줄이라 그 아래로 내린다 */
-      #campaign-goal { top: 92px; font-size: 11px; max-width: 92vw; }
+      /* 캠페인 배너(목표·출현 알림): 배속 버튼과 겹치지 않게 topbar 두 줄 아래로 */
+      #campaign-goal { top: 118px; font-size: 11px; max-width: 92vw; }
       #overlay h1 { font-size: 24px; letter-spacing: 2px; }
       #overlay p { font-size: 12px; padding: 0 12px; }
       #races { flex-direction: column; gap: 8px; }

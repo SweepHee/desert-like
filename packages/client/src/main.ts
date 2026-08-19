@@ -785,6 +785,7 @@ async function startCampaignStage(st: CampaignStage): Promise<void> {
     ...(st.techCap !== undefined ? { techCap: st.techCap } : {}),
     ...(st.enemyPreferredUnits ? { enemyPreferredUnits: st.enemyPreferredUnits } : {}),
     ...(st.enemyUnitCaps ? { enemyUnitCaps: st.enemyUnitCaps } : {}),
+    ...(st.allyUnitCaps ? { allyUnitCaps: st.allyUnitCaps } : {}),
     ...(st.enemyUnitMinWave ? { enemyUnitMinWave: st.enemyUnitMinWave } : {}),
     ...(st.enemyCapsUntilWave !== undefined ? { enemyCapsUntilWave: st.enemyCapsUntilWave } : {}),
     ...(st.enemyBotStyle ? { enemyBotStyle: st.enemyBotStyle } : {}),
@@ -1156,8 +1157,8 @@ function buildShop(race: RaceId): void {
 
     // 마우스: 호버로 정보, 우클릭으로 업그레이드.
     // 업그레이드가 없는 유닛도 브라우저 기본 메뉴는 막고 상세 정보를 띄운다.
-    btn.addEventListener('mouseenter', showTip);
-    btn.addEventListener('mouseleave', hideTip);
+    btn.addEventListener('pointerenter', (e) => { if (e.pointerType === 'mouse') showTip(); });
+    btn.addEventListener('pointerleave', (e) => { if (e.pointerType === 'mouse') hideTip(); });
     btn.addEventListener('contextmenu', (e) => {
       e.preventDefault();
       if (nUps > 0) toggleUpgradePanel(d.id, btn);
@@ -1167,25 +1168,30 @@ function buildShop(race: RaceId): void {
       }
     });
 
-    // 터치: 호버도 우클릭도 없으므로 "누르는 동안 정보 → 길게 누르면 업그레이드"
-    let holdTimer: number | undefined;
+    // 터치: 짧은 탭 = 구매만 (정보창 없음 — 매번 떠서 거슬린다는 피드백).
+    // 꾹 1초 = 설명창, 꾹 2초 = 업그레이드창.
+    let holdTip: number | undefined;
+    let holdUpg: number | undefined;
     let heldOpened = false;
     btn.addEventListener('pointerdown', (e) => {
       if (e.pointerType === 'mouse') return;
       heldOpened = false;
-      showTip();
+      holdTip = window.setTimeout(() => {
+        heldOpened = true; // 설명창을 연 순간부터 손을 떼도 구매되지 않는다
+        showTip();
+      }, 1000);
       if (nUps > 0) {
-        holdTimer = window.setTimeout(() => {
-          heldOpened = true;
+        holdUpg = window.setTimeout(() => {
           hideTip();
           toggleUpgradePanel(d.id, btn);
-        }, 450);
+        }, 2000);
       }
     });
     const endHold = (e: PointerEvent): void => {
       if (e.pointerType === 'mouse') return;
-      clearTimeout(holdTimer);
-      if (!heldOpened) hideTip();
+      clearTimeout(holdTip);
+      clearTimeout(holdUpg);
+      hideTip();
     };
     btn.addEventListener('pointerup', endHold);
     btn.addEventListener('pointercancel', endHold);
@@ -1213,7 +1219,7 @@ function buildShop(race: RaceId): void {
     btn.innerHTML =
       `<img src="${assetIconUrl(d.id) ?? fallbackIcon}" onerror="this.onerror=null;this.src='${fallbackIcon}'" alt=""/>` +
       `<span class="nm">${d.name}</span>` +
-      `<span class="tier">💰 용병</span>` +
+      `<span class="tier">${d.id.startsWith('c_alice') ? '🎀 지원' : '💰 용병'}</span>` +
       `<span class="cost">${cost}</span>` +
       `<span class="cnt"></span>` +
       `<span class="upg"></span>`;
@@ -1222,7 +1228,9 @@ function buildShop(race: RaceId): void {
       if (openUpgradeUnit !== null) return;
       const tip = $('#tooltip');
       tip.innerHTML =
-        '<div class="ui-dim"><span class="ui-bonus">💰 마몬의 용병 — 언데드는 드루이드 치유를 받지 못한다</span></div>' +
+        `<div class="ui-dim"><span class="ui-bonus">${d.id.startsWith('c_alice')
+          ? '🎀 앨리스의 지원 병력 — 여왕이 빌려준 왕실 인형'
+          : '💰 마몬의 용병 — 언데드는 드루이드 치유를 받지 못한다'}</span></div>` +
         unitInfoHtml(d);
       tip.classList.remove('hidden');
       const r = btn.getBoundingClientRect();
@@ -1230,8 +1238,35 @@ function buildShop(race: RaceId): void {
       tip.style.bottom = `${window.innerHeight - r.top + 6}px`;
       tip.style.top = 'auto';
     };
-    btn.addEventListener('mouseenter', showTip);
-    btn.addEventListener('mouseleave', () => $('#tooltip').classList.add('hidden'));
+    btn.addEventListener('pointerenter', (e) => { if (e.pointerType === 'mouse') showTip(); });
+    btn.addEventListener('pointerleave', (e) => {
+      if (e.pointerType === 'mouse') $('#tooltip').classList.add('hidden');
+    });
+    {
+      // 터치: 꾹 1초 = 설명창 (놓으면 닫힘), 짧은 탭 = 구매만
+      let mercHold: number | undefined;
+      let mercHeld = false;
+      btn.addEventListener('pointerdown', (e) => {
+        if (e.pointerType === 'mouse') return;
+        mercHeld = false;
+        mercHold = window.setTimeout(() => { mercHeld = true; showTip(); }, 1000);
+      });
+      const mercEnd = (e: PointerEvent): void => {
+        if (e.pointerType === 'mouse') return;
+        clearTimeout(mercHold);
+        $('#tooltip').classList.add('hidden');
+      };
+      btn.addEventListener('pointerup', mercEnd);
+      btn.addEventListener('pointercancel', mercEnd);
+      btn.addEventListener('pointerleave', mercEnd);
+      btn.addEventListener('click', (e) => {
+        if (mercHeld) {
+          e.preventDefault();
+          e.stopImmediatePropagation();
+          mercHeld = false;
+        }
+      }, true);
+    }
     shop.appendChild(btn);
     shopButtons.push({ defId: d.id, btn, cnt: btn.querySelector('.cnt')!, upg: btn.querySelector('.upg')! });
   }
@@ -1640,10 +1675,14 @@ function tick(deltaMS: number): void {
       if (escortLoseTicks >= es.loseSec * TICK_HZ) {
         escortLoseTicks = 0;
         escortProgressTicks = 0;
+        campaignAlertText = `⚠ 캠프 ${escortFrontier + 1}호를 적에게 빼앗겼다 — 전선이 밀려난다!`;
+        // 밀고 밀리는 전선: 적이 거점을 점거하면 확보 수가 하나 줄고,
+        // 적은 그 다음(우리 쪽) 거점으로 계속 밀고 내려온다
+        if (escortFrontier > 0) escortFrontier--;
         escortRetreatX = escortFrontier > 0
           ? Math.floor(pts[escortFrontier - 1]! * FP)
           : game.map.spawnX[0];
-        campaignAlertText = `⚠ 거점 ${escortFrontier + 1}호를 적이 점거했다 — 마차가 후퇴한다!`;
+        game.holdLineX = Math.floor(pts[escortFrontier]! * FP) + 3 * FP;
         campaignAlertUntil = performance.now() + 4000;
         audio.play('cast_skill', { volume: 0.9 });
       }
@@ -1659,7 +1698,7 @@ function tick(deltaMS: number): void {
           escortFrontier++;
           if (escortFrontier >= pts.length) {
             game.holdLineX = 0; // 전선 해제 — 총공격
-            campaignAlertText = '🎺 다섯 거점을 모두 확보했다! 전군, 넥서스로 총공격!';
+            campaignAlertText = '🎺 다섯 캠프를 모두 확보했다! 전군, 넥서스로 총공격!';
             // 전 거점 확보 이벤트: 네임드 등장 + 컷신 (13: 슬리피 할로우의 정체)
             if (es.onCompleteSpawn) {
               const hxRaw = game.map.nexusX[1] - 5 * FP;
@@ -1674,7 +1713,7 @@ function tick(deltaMS: number): void {
             }
           } else {
             game.holdLineX = Math.floor(pts[escortFrontier]! * FP) + 3 * FP;
-            campaignAlertText = `🚩 거점 ${escortFrontier}/${pts.length} 확보! 마차가 다음 마디로 나아간다`;
+            campaignAlertText = `🚩 캠프 ${escortFrontier}/${pts.length} 확보! 마차가 다음 마디로 나아간다`;
           }
           campaignAlertUntil = performance.now() + 4500;
           audio.play('ui_buy', { volume: 0.9 });
@@ -1692,6 +1731,11 @@ function tick(deltaMS: number): void {
         if (escortRetreatX >= 0 && cart.x === escortRetreatX) escortRetreatX = -1;
       }
     }
+    // 적 진군 하한: 적 부대는 현재 다툼 중인 거점에 멈춰 서서 점거를 시도한다
+    // (그냥 지나쳐 우리 기지로 달려가지 않도록). 전 거점 확보 후엔 해제 — 총공세.
+    game.enemyHoldLineX = escortFrontier < pts.length
+      ? Math.floor(pts[escortFrontier]! * FP) - 2 * FP
+      : 0;
     // 거점 표시 (렌더러) + HUD
     renderer.setEscort({
       pointsX: pts.map((t) => Math.floor(t * FP)),
@@ -1703,16 +1747,16 @@ function tick(deltaMS: number): void {
     if (performance.now() >= campaignAlertUntil) {
       const total = pts.length;
       if (escortFrontier >= total) {
-        $('#campaign-goal').textContent = `[${campaign.id}. ${campaign.title}] 🎺 전 거점 확보 — 적 넥서스를 파괴하라!`;
+        $('#campaign-goal').textContent = `[${campaign.id}. ${campaign.title}] 🎺 전 캠프 확보 — 적 넥서스를 파괴하라!`;
       } else {
         const secLeft = Math.ceil((es.captureSec * TICK_HZ - escortProgressTicks) / TICK_HZ);
         const state = escortRetreatX >= 0 ? '↩ 마차 후퇴 중'
-          : contested ? '⚔ 거점 교전 중 — 적을 몰아내라'
+          : contested ? '⚔ 캠프 교전 중 — 적을 몰아내라'
           : escortProgressTicks > 0 ? `⏳ 점령 진행 — ${secLeft}초`
-          : escortHudNoAllies ? '🛡 거점에 아군 부대가 필요하다!'
+          : escortHudNoAllies ? '🛡 캠프에 아군 부대가 필요하다!'
           : '🛞 마차 이동 중';
         $('#campaign-goal').textContent =
-          `[${campaign.id}. ${campaign.title}] 🚩 거점 ${escortFrontier}/${total} — ${state}`;
+          `[${campaign.id}. ${campaign.title}] 🚩 캠프 ${escortFrontier}/${total} — ${state}`;
       }
     }
   }
@@ -1755,7 +1799,7 @@ function tick(deltaMS: number): void {
       const yBase = laneCenterY(game.map, sx0) + Math.floor((rule.yOffTile ?? 0) * FP);
       for (let k = 0; k < n; k++) {
         // 야생 무리(neutral)는 제3팀(2) — 자기들끼리는 한 편, 플레이어·적 모두와 적대
-        spawnUnit(game, rule.defId, rule.neutral ? 2 : 1, sx0, yBase + (k - (n - 1) / 2) * 600);
+        spawnUnit(game, rule.defId, rule.friendly ? 0 : rule.neutral ? 2 : 1, sx0, yBase + (k - (n - 1) / 2) * 600);
       }
       campaignSpawnNext[i] = rule.everySec !== undefined ? campaignSpawnNext[i]! + rule.everySec : Infinity;
       campaignAlertText = `⚠ ${rule.label} 출현!`;
@@ -1891,31 +1935,33 @@ function updateHud(g: Game): void {
   const me = g.players[myIdx]!;
   $('#money').textContent = String(me.money);
   $('#income').textContent = `+${MAP.INCOME_BASE + MAP.INCOME_PER_LEVEL * me.incomeLevel} / 5초 (Lv${me.incomeLevel}/${g.incomeCap})`;
+  // 좁은 화면(모바일 세로)에서는 버튼 글귀를 짧게 — 길쭉한 버튼이 상점을 밀어낸다
+  const narrow = window.innerWidth <= 700;
   const incBtn = $<HTMLButtonElement>('#btn-income');
   if (me.incomeLevel >= g.incomeCap) {
-    incBtn.textContent = '인컴 최대';
+    incBtn.textContent = narrow ? '💰 최대' : '인컴 최대';
     incBtn.disabled = true;
   } else if (g.tick < me.incomeCooldownUntil) {
     const cdSec = Math.ceil((me.incomeCooldownUntil - g.tick) / TICK_HZ);
-    incBtn.textContent = `인컴 대기 ${cdSec}초`;
+    incBtn.textContent = narrow ? `💰 ${cdSec}초` : `인컴 대기 ${cdSec}초`;
     incBtn.disabled = true;
   } else {
     const incCost = incomeUpgradeCost(me.incomeLevel);
-    incBtn.textContent = `인컴 업그레이드 (${incCost})`;
+    incBtn.textContent = narrow ? `💰 인컴↑ ${incCost}` : `인컴 업그레이드 (${incCost})`;
     incBtn.disabled = me.money < incCost;
   }
 
   const techBtn = $<HTMLButtonElement>('#btn-tech');
   if (me.techLevel >= g.techCap) {
-    techBtn.textContent = `테크 ${me.techLevel} (최대)`;
+    techBtn.textContent = narrow ? `🔬 T${me.techLevel} 최대` : `테크 ${me.techLevel} (최대)`;
     techBtn.disabled = true;
   } else if (me.techPendingUntil >= 0) {
     const sec2 = Math.ceil((me.techPendingUntil - g.tick) / TICK_HZ);
-    techBtn.textContent = `테크 ${me.techLevel + 1} 연구 중… ${sec2}초`;
+    techBtn.textContent = narrow ? `🔬 연구 ${sec2}초` : `테크 ${me.techLevel + 1} 연구 중… ${sec2}초`;
     techBtn.disabled = true;
   } else {
     const tCost = techUpCost(me.techLevel)!;
-    techBtn.textContent = `테크 ${me.techLevel + 1} 연구 (${tCost})`;
+    techBtn.textContent = narrow ? `🔬 테크${me.techLevel + 1} ${tCost}` : `테크 ${me.techLevel + 1} 연구 (${tCost})`;
     techBtn.disabled = me.money < tCost;
   }
 

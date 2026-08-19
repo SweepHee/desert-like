@@ -79,6 +79,8 @@ export interface CampaignStage {
   readonly enemyPreferredUnits?: readonly string[];
   /** 적 유닛별 보유 상한 (팀 합산) — 최상급 유닛의 조기 물량화 방지. */
   readonly enemyUnitCaps?: Readonly<Record<string, number>>;
+  /** 아군(팀0) 봇 유닛 수량 상한 (팀 합산) — 아군 물량 폭주 방지. */
+  readonly allyUnitCaps?: Readonly<Record<string, number>>;
   /** 적 유닛별 최소 등장 웨이브 (이 턴 전엔 구매 불가). */
   readonly enemyUnitMinWave?: Readonly<Record<string, number>>;
   /** 이 웨이브부터 적 유닛 상한 전부 해제 (후반 총력전). */
@@ -133,6 +135,8 @@ export interface CampaignStage {
     readonly yOffTile?: number;
     /** 야생 무리: 제3팀(2)으로 스폰 — 자기들끼리 한 편, 나머지 모두와 적대. */
     readonly neutral?: boolean;
+    /** 아군 스폰: 팀 0으로 등장 (엘로윈 참전 등). 생략 시 적(팀1). */
+    readonly friendly?: boolean;
     /**
      * 필드에 동시에 살아 있을 수 있는 최대 수. 이미 그만큼 있으면 이번 차례는 거른다.
      * "죽으면 다시 채워지는 상주 위협"을 만든다 (검은새).
@@ -580,6 +584,32 @@ export const SYLVARIN_CAMPAIGN: readonly CampaignStage[] = [
     noTowers: true, // 수호탑 대신 — 전 거점 확보 시 슬리피 할로우가 직접 나타난다
     // 앨리스의 지원 병력: 사람 플레이어만 살 수 있다 (race: null — 봇 구매 풀 제외)
     mercUnits: ['c_alice_soldier', 'c_alice_teddy'],
+    // 물량 상한 — 마몬·데미리치가 무한히 쌓여 후반이 벽이 되는 것 방지
+    enemyUnitCaps: { p_mammon: 30, p_demilich: 20 },
+    // 아군 봇의 세이지 금지 — 마법 화력은 엘로윈(스폰 이벤트) 단 한 명뿐
+    allyUnitCaps: { s_sage: 0 },
+    // 거점 = 실바린의 캠프. 캠프마다 좌우에 숲의 망루(무적 포탑, 현자의 비전 화살)
+    nestGuards: [
+      { defId: 'c_sage_watchtower', xTile: 26.5, yOffTile: -3.2 },
+      { defId: 'c_sage_watchtower', xTile: 29.5, yOffTile: 3.2 },
+      { defId: 'c_sage_watchtower', xTile: 46.5, yOffTile: -3.2 },
+      { defId: 'c_sage_watchtower', xTile: 49.5, yOffTile: 3.2 },
+      { defId: 'c_sage_watchtower', xTile: 66.5, yOffTile: -3.2 },
+      { defId: 'c_sage_watchtower', xTile: 69.5, yOffTile: 3.2 },
+      { defId: 'c_sage_watchtower', xTile: 86.5, yOffTile: -3.2 },
+      { defId: 'c_sage_watchtower', xTile: 89.5, yOffTile: 3.2 },
+      { defId: 'c_sage_watchtower', xTile: 104.5, yOffTile: -3.2 },
+      { defId: 'c_sage_watchtower', xTile: 107.5, yOffTile: 3.2 },
+    ],
+    // 엘로윈 참전: 4분에 등장(대사와 함께), 쓰러지면 잠시 후 다시 온다 (동시 1명)
+    cutscenes: [{
+      atSec: 240,
+      lines: [
+        { who: '엘로윈', text: '(지팡이 끝이 빛난다) 이 길은 300년 전에도 내가 걸었다. …늙은이가 앞장서마.' },
+        { who: '티아', text: '스승님?! 전선에 직접 나오시는 건 처음 봐요!' },
+        { who: '엘로윈', text: '뿌리가 마르는데 서재에 앉아 있을 수는 없지. 카엘 — 마법은 내가 맡는다.' },
+      ],
+    }],
     // 호위전: 마차가 거점에 서 있는 동안(아군 부대 동반 필수) 점령 게이지가 오른다.
     // 적이 거점을 되찾으면 마차는 직전 거점으로 후퇴 — 오버워치 화물 밀기.
     escort: {
@@ -617,8 +647,23 @@ export const SYLVARIN_CAMPAIGN: readonly CampaignStage[] = [
       { defId: 'c_burning_tree', xTile: 93, yOffTile: 2.4 },
       { defId: 'c_ember_tree', xTile: 100, yOffTile: -2 },
       { defId: 'c_burning_tree', xTile: 102, yOffTile: 3 },
+      // 실바린 캠프 천막 — 거점마다 가장자리에 세워 캠프 분위기를 낸다 (중앙 통행로는 비움)
+      { defId: 'c_sylvarin_tent', xTile: 27, yOffTile: 4.2 },
+      { defId: 'c_sylvarin_tent', xTile: 29.5, yOffTile: -4.2 },
+      { defId: 'c_sylvarin_tent', xTile: 47, yOffTile: 4.2 },
+      { defId: 'c_sylvarin_tent', xTile: 49.5, yOffTile: -4.2 },
+      { defId: 'c_sylvarin_tent', xTile: 67, yOffTile: 4.2 },
+      { defId: 'c_sylvarin_tent', xTile: 69.5, yOffTile: -4.2 },
+      { defId: 'c_sylvarin_tent', xTile: 87, yOffTile: 4.2 },
+      { defId: 'c_sylvarin_tent', xTile: 89.5, yOffTile: -4.2 },
+      { defId: 'c_sylvarin_tent', xTile: 105, yOffTile: 4.2 },
+      { defId: 'c_sylvarin_tent', xTile: 107.5, yOffTile: -4.2 },
     ],
-    spawns: [{ defId: 'c_bone_colossus', label: '뼈 거상', everySec: 170 }],
+    spawns: [
+      { defId: 'c_bone_colossus', label: '뼈 거상', everySec: 170 },
+      // 엘로윈: 아군 진영에서 등장해 부대와 함께 전진. 항상 1명 (쓰러지면 재등장)
+      { defId: 'c_elowyn', label: '🧙 세이지 엘로윈 참전!', everySec: 240, concurrentCap: 1, atXTile: 14, friendly: true },
+    ],
     briefing: [
       { who: '', text: '세계수의 뿌리는 불탄 국경 숲 — 카엘이 지키던 바로 그 길 밑을 지난다.\n뿌리가 마르면 심장도 마른다. 숲은 이제 도망치지 않는다.' },
       { who: '엘로윈', text: '생명수를 실은 마차다. 뿌리 마디마다 부어 오염을 씻어야 한다 — 다섯 군데, 하나도 거를 수 없다.' },

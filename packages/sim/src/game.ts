@@ -79,6 +79,7 @@ export function createGame(cfg: GameConfig): Game {
     techCap: Math.min(MAP.TECH_MAX, cfg.techCap ?? MAP.TECH_MAX),
     enemyPreferredUnits: cfg.enemyPreferredUnits ?? [],
     enemyUnitCaps: cfg.enemyUnitCaps ?? {},
+    allyUnitCaps: cfg.allyUnitCaps ?? {},
     enemyUnitMinWave: cfg.enemyUnitMinWave ?? {},
     enemyCapsUntilWave: cfg.enemyCapsUntilWave ?? Infinity,
     enemyGuardian: cfg.enemyGuardian ?? null,
@@ -88,6 +89,7 @@ export function createGame(cfg: GameConfig): Game {
     mercCostPct: cfg.mercCostPct ?? 100,
     mercCaptureRequired: cfg.mercCaptureRequired ?? false,
     holdLineX: cfg.holdLineX ?? 0,
+    enemyHoldLineX: 0,
     defendNexus: cfg.defendNexus ?? false,
     jointDeploy: cfg.jointDeploy ?? false,
     allyDeploy: cfg.allyDeploy ?? null,
@@ -167,6 +169,13 @@ export function buyUnit(g: Game, playerIdx: number, defId: string): boolean {
     let owned = 0;
     for (const q of g.players) if (q.team === 1) owned += q.comp[defId] ?? 0;
     if (owned >= cap) return false;
+  }
+  // 캠페인: 아군(팀0) 봇 수량 상한 — 사람 플레이어는 제한 없음
+  const allyCap = p.team === 0 && p.isBot ? g.allyUnitCaps[defId] : undefined;
+  if (allyCap !== undefined) {
+    let owned = 0;
+    for (const q of g.players) if (q.team === 0 && q.isBot) owned += q.comp[defId] ?? 0;
+    if (owned >= allyCap) return false;
   }
   // 캠페인: 최소 등장 웨이브 — 이 턴 전엔 네임드급 유닛이 나오지 않는다
   const minWave = p.team === 1 ? g.enemyUnitMinWave[defId] : undefined;
@@ -427,6 +436,15 @@ function botDecide(g: Game, p: PlayerState): void {
       let owned = 0;
       for (const q of g.players) if (q.team === 1) owned += q.comp[d.id] ?? 0;
       return owned < cap;
+    });
+  }
+  if (p.team === 0 && p.isBot) {
+    pool = pool.filter((d) => {
+      const capA = g.allyUnitCaps[d.id];
+      if (capA === undefined) return true;
+      let owned = 0;
+      for (const q of g.players) if (q.team === 0 && q.isBot) owned += q.comp[d.id] ?? 0;
+      return owned < capA;
     });
   }
   if (p.botStyle === 'finalOnly' && p.techLevel >= g.techCap) {

@@ -179,6 +179,8 @@ function nearestFoeWithin(
   let bestD2 = -1;
   for (const t of g.entities) {
     if (!t.alive || t.team === e.team || isShielded(g, t)) continue;
+    // 영구 무적 소품(불타는 나무 등)은 스킬 조준 대상이 아니다 — 허공에 낭비 방지
+    if (t.invulnUntil >= Number.MAX_SAFE_INTEGER) continue;
     if (!filter(t)) continue;
     const reach = range + d.radius + def(t).radius;
     const d2 = dist2(e.x, e.y, t.x, t.y);
@@ -770,6 +772,10 @@ export function stepCombat(g: Game): void {
     // 디펜스전 (둥지 방어): 팀 0 부대는 수비선 너머로 진격하지 않는다
     if (g.holdLineX > 0 && e.team === 0) {
       nexusX = Math.min(nexusX, g.holdLineX);
+    }
+    // 호위전: 적(팀1)은 현재 다툼 중인 거점에 멈춰 서서 점거한다
+    if (g.enemyHoldLineX > 0 && e.team === 1) {
+      nexusX = Math.max(nexusX, g.enemyHoldLineX);
     }
     // 수비 모드: 진군 대신 — 위협이 있으면 그 위치로 마중, 없으면 둥지 주변 대기
     if (g.defendNexus && e.team === 0) {

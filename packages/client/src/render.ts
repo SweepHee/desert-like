@@ -45,6 +45,11 @@ export function worldYOf(yFP: number): number {
   return ((yFP + renderHalfH()) / FP) * TILE * Y_SQUASH + PAD_TOP;
 }
 
+/** worldYOf 의 역변환: 월드 픽셀 y → FP y (미니맵 뷰포트 표시용). */
+export function worldYToFP(wy: number): number {
+  return Math.floor(((wy - PAD_TOP) / (TILE * Y_SQUASH)) * FP) - renderHalfH();
+}
+
 /** 월드 픽셀 크기 (줌 적용 전, 현재 맵 기준). */
 export function worldW(): number {
   return (curMap.length / FP) * TILE;
@@ -137,6 +142,9 @@ export const ASSET_UNITS: Record<string, string | string[]> = {
   // 앨리스의 지원 병력 (13) — 원본 마리오네타 유닛 그림을 그대로 쓴다
   c_alice_soldier: '/assets/units/m_clockwork_soldier.png',
   c_alice_teddy: '/assets/units/m_gore_teddy.png',
+  c_elowyn: '/assets/units/s_sage.png',
+  c_sage_watchtower: '/assets/units/c_sage_watchtower.png',
+  c_sylvarin_tent: '/assets/units/c_sylvarin_tent.png',
   c_burning_tree: '/assets/units/c_burning_tree.png',
   c_ember_tree: '/assets/units/c_ember_tree.png',
   c_burning_log: '/assets/units/c_burning_log.png',
@@ -430,6 +438,7 @@ const ASSET_SIZE_MUL: Record<string, number> = {
   c_balthar_general: 1.5, // 12 보스 — 슬리피 할로우급 거구
   // 호위전 소품: 나무는 반경보다 훨씬 크게 — 숲이 우거진 인상
   c_burning_tree: 1.35, c_ember_tree: 1.3, c_burning_log: 0.95, c_supply_cart: 1.15,
+  c_sage_watchtower: 1.5, c_sylvarin_tent: 1.2, c_elowyn: 1.25,
 };
 
 /**
@@ -692,7 +701,7 @@ export interface Renderer {
   panBy(dxScreenPx: number, dyScreenPx?: number): void;
   centerOn(xWorldPx: number, yWorldPx?: number): void;
   zoomBy(factor: number, anchorX?: number, anchorY?: number): void;
-  view(): { x0: number; x1: number };
+  view(): { x0: number; x1: number; y0: number; y1: number };
   /** 화면 좌표에서 가장 가까운 유닛 id (없으면 null). 클릭 선택용. */
   pick(g: Game, screenX: number, screenY: number): number | null;
   /** 선택 표시 링을 그릴 유닛 id (null = 해제). */
@@ -712,6 +721,16 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
   });
   app.canvas.id = 'gamecanvas'; // CSS 가 미니맵 캔버스와 구분해서 잡도록
   mount.appendChild(app.canvas);
+
+  // 모바일 화면 회전: 버퍼를 즉시 새 크기로 — 안 하면 세로 버퍼가 가로 CSS 로
+  // 늘어나 전장이 찌그러져 보인다. 회전 직후엔 크기가 늦게 잡히는 브라우저가
+  // 있어 한 박자 뒤 한 번 더 맞춘다.
+  const onViewportChange = (): void => {
+    app.resize();
+    setTimeout(() => app.resize(), 280);
+  };
+  window.addEventListener('resize', onViewportChange);
+  window.addEventListener('orientationchange', onViewportChange);
 
   // 외부 에셋 로드 (실패하면 절차 생성으로 폴백)
   const assetTex = new Map<string, Texture[]>();
@@ -1159,6 +1178,8 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
   const charmedIds = new Set<number>();
   const zoneSprites = new Map<number, { sp: Sprite; born: number }>();
   const prevPos = new Map<number, { x: number; y: number }>();
+  /** 보급 마차 이동 추적 (캠페인 레이어가 심 밖에서 움직여서 별도 추적). */
+  const cartMotion = new Map<number, { x: number; until: number }>();
   const unitFx = new Map<number, UnitFx>();
   const projectiles: Projectile[] = [];
   const projPool: Sprite[] = []; // 투사체 스프라이트 재사용 풀
@@ -1390,9 +1411,9 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
         lbl.x = px2;
         lbl.y = py2 - rr * 0.62 - 6;
         lbl.style.fill = color;
-        lbl.text = captured ? `🚩 거점 ${i + 1} — 확보` : current
-          ? (ec.contested ? `⚔ 거점 ${i + 1} — 교전 중!` : `🏳 거점 ${i + 1} — 점령 목표`)
-          : `거점 ${i + 1}`;
+        lbl.text = captured ? `🚩 실바린 캠프 ${i + 1} — 확보` : current
+          ? (ec.contested ? `⚔ 캠프 ${i + 1} — 교전 중!` : `🏳 캠프 ${i + 1} — 점령 목표`)
+          : `캠프 ${i + 1}`;
       }
     }
     bars.clear();
@@ -1684,13 +1705,19 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
       const shadowY = py;
       let rot = 0;
 
-      // 보급 마차: 구르는 모션 — 이동 방향으로 몸을 틀고 덜컹이며 구른다
-      // (def speed 0 이라 걷기 바운스를 못 받으니 전용 모션. 좌우는 반전,
-      //  위아래 경사는 좌우 그림 그대로 굴린다 — 전용 상하 그림이 없다)
+      // 보급 마차: 구르는 모션 — 이동 방향으로 몸을 틀고 덜컹이며 구른다.
+      // 마차는 캠페인 레이어가 심 스텝 밖에서 움직이므로 prevPos 비교(movedNow)에
+      // 안 잡힌다 — x 변화를 직접 추적하고, 프레임 사이 깜빡임은 여운(220ms)으로 잇는다.
+      // 좌우는 반전, 위아래 경사는 좌우 그림 그대로 굴린다 (전용 상하 그림이 없다).
       if (e.defId === 'c_supply_cart') {
-        if (vfx.moving) {
-          const mdx = e.x - pv.x;
-          if (mdx !== 0) vfx.faceDir = mdx >= 0 ? 'e' : 'w';
+        const cm = cartMotion.get(e.id) ?? { x: e.x, until: 0 };
+        if (e.x !== cm.x) {
+          vfx.faceDir = e.x > cm.x ? 'e' : 'w';
+          cm.until = now + 220;
+          cm.x = e.x;
+        }
+        cartMotion.set(e.id, cm);
+        if (now < cm.until) {
           vfx.walkPhase += 0.5;
           py -= Math.abs(Math.sin(vfx.walkPhase)) * 1.6; // 바퀴 덜컹임
           rot = Math.sin(vfx.walkPhase * 0.5) * 0.05; // 짐칸이 좌우로 흔들린다
@@ -2213,7 +2240,7 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
       clampCam();
     },
     view() {
-      return { x0: camX, x1: camX + visibleW() };
+      return { x0: camX, x1: camX + visibleW(), y0: camY, y1: camY + visibleH() };
     },
     pick(g, screenX, screenY) {
       // 화면 → 월드 px 역변환 후 발밑 기준 최근접 탐색

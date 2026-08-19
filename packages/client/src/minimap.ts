@@ -6,7 +6,7 @@
  * - 흰 사각형 = 현재 카메라 뷰포트. 클릭·드래그로 카메라 이동.
  */
 import { DEFS, FP, MAPS, DEFAULT_MAP, laneCenterY, laneHalfWAt, mapHalfH, type Game, type MapDef } from '@desertlike/sim';
-import { worldW, worldYOf, type Renderer } from './render.ts';
+import { worldW, worldYOf, worldYToFP, type Renderer } from './render.ts';
 
 const MINI_W = 280;
 const TEAM_COLOR = ['#57a0ff', '#ff6a57'] as const;
@@ -112,9 +112,13 @@ export function createMinimap(canvas: HTMLCanvasElement, renderer: Renderer): Mi
     const v = renderer.view();
     const vx0 = (v.x0 / worldW()) * MINI_W;
     const vx1 = (v.x1 / worldW()) * MINI_W;
+    // 세로도 실제 카메라가 보는 만큼만 — 항상 세로 100% 로 그리면
+    // Y자 맵(둥지)에서 내가 어느 높이를 보고 있는지 알 수 없다
+    const vy0 = Math.max(1, ty(worldYToFP(v.y0)));
+    const vy1 = Math.min(MINI_H - 1, ty(worldYToFP(v.y1)));
     ctx.strokeStyle = 'rgba(255,255,255,0.9)';
     ctx.lineWidth = 1.5;
-    ctx.strokeRect(vx0, 1, Math.max(6, vx1 - vx0), MINI_H - 2);
+    ctx.strokeRect(vx0, vy0, Math.max(6, vx1 - vx0), Math.max(6, vy1 - vy0));
   }
 
   return { setMap, draw };

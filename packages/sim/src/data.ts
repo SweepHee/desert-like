@@ -1139,6 +1139,41 @@ reg(D({
 // 마차는 캠페인 레이어가 위치를 직접 움직인다 (speed 0 = 충돌 분리에서 안 밀림).
 // 장애물은 무적(invulnUntil=MAX)으로 스폰돼 아무도 조준하지 않지만,
 // 지상 유닛의 충돌 분리에는 걸려 실제로 길을 막는다. 비행 유닛은 넘어간다.
+// ── 엘로윈 (13 호위전 참전) — 세이지 사본, 마법 4종 전부 해금 상태 ──
+reg(D({
+  id: 'c_elowyn', race: null, name: '세이지 엘로윈', tier: 'final', summonOnly: true,
+  cost: 0, supply: 0, maxHp: 720, armor: 1, tags: ['cloth', 'bio', 'male'], ...GROUND,
+  speed: tilesPerSecond(1.3), radius: tiles(0.42), acquireRange: tiles(12),
+  weapon: { damage: 24, cooldown: seconds(1.4), range: tiles(12), targets: 'both' },
+  actives: [
+    {
+      name: '리버스그라비티', desc: '넓은 범위의 공중 유닛을 지상으로 떨어뜨림 — 12초간 지상 판정', kind: 'ground',
+      cooldown: seconds(25), durTicks: seconds(12), castRange: tiles(11), splash: tiles(3),
+    },
+    {
+      name: '블레이즈', desc: '대상 구역을 10초간 불구덩이로 만든다 (초당 34)', kind: 'zone', targets: 'ground',
+      cooldown: seconds(30), zoneAtTarget: true, castRange: tiles(11),
+      zone: { kind: 'blaze', radius: tiles(1.8), ticks: seconds(10) },
+    },
+    {
+      name: '어스퀘이크', desc: '넓은 지역에 지진 — 적 전원 10초 둔화', kind: 'slowfield',
+      cooldown: seconds(30), durTicks: seconds(10), castRange: tiles(11), splash: tiles(3.5),
+    },
+    {
+      name: '블리자드', desc: '대상 지역의 적을 6초간 빙결 — 판금·거대·구조물 면역', kind: 'freeze',
+      cooldown: seconds(60), durTicks: seconds(6), castRange: tiles(11), splash: tiles(2.6),
+    },
+  ],
+}));
+// ── 세이지 망루 (13 캠프 방어 포탑) — 영구 무적으로 스폰돼 조준·마법·끌림 전부 제외 ──
+reg(D({
+  id: 'c_sage_watchtower', race: null, name: '숲의 망루', tier: 'structure', summonOnly: true,
+  cost: 0, supply: 0, maxHp: 999, armor: 0, tags: ['structure'], ...GROUND,
+  speed: 0, radius: tiles(0.6), acquireRange: tiles(7),
+  // 망루 위 현자의 비전 화살 — 수호탑보다 약한 견제 포탑
+  weapon: { damage: 26, cooldown: seconds(1.1), range: tiles(7), targets: 'both' },
+}));
+
 // ── 앨리스의 지원 병력 (13 호위전) ──
 // race: null — 어떤 종족 상점에도 안 뜨고, 봇 구매 풀(race 일치 필터)에도 안 들어간다.
 // 캠페인 mercUnits 목록으로만 사람 플레이어가 산다.
@@ -1169,6 +1204,11 @@ reg(D({
   id: 'c_supply_cart', race: null, name: '생명수 보급 마차', tier: 'structure', summonOnly: true,
   cost: 0, supply: 0, maxHp: 1500, armor: 6, tags: ['plate', 'structure'], ...GROUND,
   speed: 0, radius: tiles(0.55), acquireRange: 0, ghost: true,
+}));
+reg(D({
+  id: 'c_sylvarin_tent', race: null, name: '실바린 캠프 천막', tier: 'structure', summonOnly: true,
+  cost: 0, supply: 0, maxHp: 999, armor: 0, tags: ['structure'], ...GROUND,
+  speed: 0, radius: tiles(0.7), acquireRange: 0,
 }));
 reg(D({
   id: 'c_burning_tree', race: null, name: '불타는 나무', tier: 'structure', summonOnly: true,

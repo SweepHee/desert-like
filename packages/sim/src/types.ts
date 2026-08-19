@@ -384,6 +384,8 @@ export interface GameConfig {
    * 이른 스테이지에 쏟아지는 것을 막는다. 예: { m_gore_teddy: 1 }.
    */
   readonly enemyUnitCaps?: Readonly<Record<string, number>>;
+  /** 아군(팀0) 봇 유닛 수량 상한 (팀 합산) — 캠페인에서 아군 물량 폭주 방지. */
+  readonly allyUnitCaps?: Readonly<Record<string, number>>;
   /** 팀 2 유닛별 최소 등장 웨이브 — 이 턴이 되기 전엔 봇이 구매할 수 없다. */
   readonly enemyUnitMinWave?: Readonly<Record<string, number>>;
   /** 이 웨이브부터 enemyUnitCaps 가 전부 해제된다 (후반 총력전). 생략 시 영구. */
@@ -481,6 +483,7 @@ export interface Game {
   readonly enemyPreferredUnits: readonly string[];
   /** 팀 2 유닛별 수량 상한 (팀 합산). 빈 객체 = 무제한. */
   readonly enemyUnitCaps: Readonly<Record<string, number>>;
+  readonly allyUnitCaps: Readonly<Record<string, number>>;
   /** 팀 2 유닛별 최소 등장 웨이브. 빈 객체 = 제한 없음. */
   readonly enemyUnitMinWave: Readonly<Record<string, number>>;
   /** 이 웨이브부터 수량 상한 해제. Infinity = 영구 적용. */
@@ -502,6 +505,11 @@ export interface Game {
    * 거점을 점령할 때마다 캠페인 레이어가 전선을 앞으로 민다.
    */
   holdLineX: number;
+  /**
+   * 팀 1 진군 하한 x (0 = 제한 없음). mutable — 호위전에서 적이 현재 다툼 중인
+   * 거점에 멈춰 서서 점거하게 한다 (그냥 지나쳐 우리 기지로 달려가지 않도록).
+   */
+  enemyHoldLineX: number;
   /** 수비 모드 (팀 0 넥서스 방어 AI). */
   readonly defendNexus: boolean;
   /** 팀 0 전원 동시 출정. */

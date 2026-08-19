@@ -322,6 +322,9 @@ const LOOK: Record<string, { shape: string; pal: string; accent?: string }> = {
   // 호위전(13) 소품 — PNG 누락 시 임시 형상
   c_supply_cart: { shape: 'golem', pal: 'none' },
   c_alice_soldier: { shape: 'archer', pal: 'marionetta' },
+  c_elowyn: { shape: 'mage', pal: 'sylvarin' },
+  c_sage_watchtower: { shape: 'tower', pal: 'sylvarin' },
+  c_sylvarin_tent: { shape: 'golem', pal: 'sylvarin' },
   c_alice_teddy: { shape: 'mammoth', pal: 'marionetta', accent: '#8a3030' },
   c_burning_tree: { shape: 'tower', pal: 'none' },
   c_ember_tree: { shape: 'tower', pal: 'none' },

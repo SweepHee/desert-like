@@ -507,16 +507,21 @@ export const SYLVARIN_CAMPAIGN: readonly CampaignStage[] = [
     // ② 12시 (능선 위): 잡졸 무리가 둥지 바로 위 능선에서 쉬지 않고 내려온다
     // ③ 8시 (왼쪽 골짜기): 야생 무리 — 반은 이쪽 반은 저쪽, 아무나 문다
     spawns: [
-      // 12시: 수직 가지 길 꼭대기(-36타일)에서 능선을 타고 내려온다
-      { defId: 'p_minion_ghoul', label: '⬆ 능선의 망자 무리', everySec: 12, count: 2, atXTile: 47, yOffTile: -36 },
-      { defId: 'p_minion_undead', label: '⬆ 능선의 망자 무리', everySec: 17, count: 2, atXTile: 49, yOffTile: -36 },
-      { defId: 'p_minion_skeleton', label: '⬆ 능선의 망자 무리', everySec: 14, count: 2, atXTile: 48, yOffTile: -34 },
-      { defId: 'p_minion_rat', label: '⬆ 능선의 망자 무리', everySec: 9, count: 3, atXTile: 48, yOffTile: -32 },
-      // 능선의 망령: 2분부터 하늘로도 꾸준히 내려온다 — 인컴 그리디의 천적
-      { defId: 'p_wraith', label: '⬆ 능선의 망령', atSec: 120, everySec: 50, count: 2, atXTile: 47, yOffTile: -34 },
-      // 8시: V자 왼쪽 끝 골짜기에서 올라온다 (중립: 시간이 갈수록 사나워진다)
-      { defId: 'c_wild_wolf_gray', label: '⬋ 야생 늑대 무리', everySec: 25, count: 4, atXTile: 8, yOffTile: 0, neutral: true },
-      { defId: 'c_wild_snake', label: '⬋ 독사 떼', everySec: 30, count: 3, atXTile: 5, yOffTile: 0, neutral: true },
+      // ── 12시: 수직 가지 길 꼭대기(-36타일)에서 능선을 타고 쉼 없이 내려온다.
+      // 초반부터 물량이 확 몰려와야 "아무것도 안 뽑는 풀인컴"이 응징된다.
+      { defId: 'p_minion_ghoul', label: '⬆ 능선의 망자 무리', everySec: 8, count: 3, atXTile: 47, yOffTile: -36 },
+      { defId: 'p_minion_undead', label: '⬆ 능선의 망자 무리', everySec: 12, count: 3, atXTile: 49, yOffTile: -36 },
+      { defId: 'p_minion_skeleton', label: '⬆ 능선의 망자 무리', everySec: 10, count: 3, atXTile: 48, yOffTile: -34 },
+      { defId: 'p_minion_rat', label: '⬆ 능선의 망자 무리', everySec: 7, count: 4, atXTile: 48, yOffTile: -32 },
+      // 능선의 망령: 1분부터 하늘로도 꾸준히 내려온다 — 인컴 그리디의 천적
+      { defId: 'p_wraith', label: '⬆ 능선의 망령', atSec: 60, everySec: 40, count: 2, atXTile: 47, yOffTile: -34 },
+      // ── 4시(적 진영 앞): 정규 봇 웨이브 사이를 잡졸이 메꾼다 — 오른쪽도 쉴 틈 없이
+      { defId: 'p_minion_ghoul', label: '⬊ 망자 선발대', everySec: 11, count: 3 },
+      { defId: 'p_minion_skeleton', label: '⬊ 망자 선발대', everySec: 13, count: 3 },
+      { defId: 'p_bone_thrower', label: '⬊ 해골 투척병', atSec: 75, everySec: 45, count: 2 },
+      // ── 8시: V자 왼쪽 끝 골짜기에서 올라온다 (중립: 시간이 갈수록 사나워진다)
+      { defId: 'c_wild_wolf_gray', label: '⬋ 야생 늑대 무리', everySec: 16, count: 5, atXTile: 8, yOffTile: 0, neutral: true },
+      { defId: 'c_wild_snake', label: '⬋ 독사 떼', everySec: 20, count: 4, atXTile: 5, yOffTile: 0, neutral: true },
       { defId: 'c_wild_wolf_black', label: '⬋ 검은늑대 무리', atSec: 120, everySec: 40, count: 3, atXTile: 8, yOffTile: 0, neutral: true },
       { defId: 'c_wild_tarantula', label: '⬋ 타란튤라', atSec: 180, everySec: 50, count: 2, atXTile: 6, yOffTile: 0, neutral: true },
       // 황조롱이는 1분 반부터 — 공중 조합에도 초반부터 성가신 손님이 있어야 한다

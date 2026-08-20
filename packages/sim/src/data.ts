@@ -1049,19 +1049,22 @@ reg(D({
 reg(D({
   // 하늘의 왕 — 둥지 방어전의 준보스. 한 번은 반드시 되살아난다.
   id: 'c_wild_blackbird', race: null, name: '검은새', tier: 'supreme', summonOnly: true,
-  cost: 0, supply: 0, maxHp: 3200, armor: 4, tags: ['leather', 'massive', 'bio'], flying: true,
+  cost: 0, supply: 0, maxHp: 4200, armor: 5, tags: ['leather', 'massive', 'bio'], flying: true,
   speed: tilesPerSecond(2.6), radius: tiles(0.8), acquireRange: tiles(7.5),
-  // 하늘의 왕: 공중엔 넓고 강력한 광역, 지상엔 단타뿐 — 지상 물량으로 잡아야 한다
+  // 하늘의 왕이자 「필드 청소부」: 30턴 버티기에서 양쪽에 쌓인 물량을
+  // 한 번씩 리셋하는 역할. 검은 폭풍이 지상·공중을 가리지 않고 쓸어버린다.
   weapon: { damage: 85, cooldown: seconds(1.2), range: tiles(1.5), targets: 'both', splash: tiles(2.5), splashAirOnly: true },
   rebirth: { delayTicks: seconds(3), hpPct: 60 },
   actives: [
     {
       name: '강철 깃털', desc: '깃털을 곤두세워 8초간 방어력이 50이 된다', kind: 'selfbuff',
-      cooldown: seconds(22), durTicks: seconds(8), armorAdd: 46,
+      cooldown: seconds(22), durTicks: seconds(8), armorAdd: 45,
     },
     {
-      name: '깃털 폭풍', desc: '깃털을 흩뿌려 공중 적을 광역 타격 (지상엔 안 통함)', kind: 'nuke',
-      cooldown: seconds(9), damage: 45, splash: tiles(2.2), castRange: tiles(5), targets: 'air',
+      // 필드 리셋기 — 반경 6타일의 모든 것(지상·공중)을 갈아버린다.
+      // 잡졸은 즉사, 중급도 두 방이면 위태롭다. 검은새를 안 잡으면 군세를 못 쌓는다.
+      name: '검은 폭풍', desc: '날개를 내리쳐 반경 6타일의 지상·공중 전체에 폭풍 (150)', kind: 'nuke',
+      cooldown: seconds(24), damage: 150, splash: tiles(6), castRange: tiles(6), fxZone: 'gravity',
     },
     {
       name: '암흑 구체', desc: '검은 거대 구체 — 공중의 가장 튼튼한 적을 노린다 (지상엔 안 통함)', kind: 'nuke',

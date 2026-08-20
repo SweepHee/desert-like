@@ -296,32 +296,8 @@ export const SYLVARIN_CAMPAIGN: readonly CampaignStage[] = [
     id: 5, act: 1, title: '올빼미 성채', goal: '적 넥서스를 파괴하라 — 하늘을 조심할 것',
     allowedUnits: U5, enemies: ['pandemonium'], allies: [], botDifficulty: 'easy',
     mission: 'destroy', seed: seedOf(5), noTowers: true,
-    // ── 2단계 구성: 22턴까지는 하늘이 정답, 23턴부터는 지상이 없으면 못 버틴다 ──
-    // 1단계 주력은 전부 "지상 전용"(공중을 아예 못 때림) — 공중 조합은 안전하게 학살하고,
-    // 지상으로 막으면 타나토스 광역·골렘·마몬에 갈린다.
-    // 23턴에 대공진이 해금되면서 데미리치 대공광역이 공중을 쓸어버린다 → 마멋·궁수 전환 필수.
-    // preferred 는 데미리치 하나만 — 지상 유닛을 넣으면 ×8 가중으로 폭주한다
-    // (실측: 타나토스가 47기까지 불어나 둥지가 4초 만에 무너짐. 8스테이지 테디와 같은 함정)
-    // 22턴까지는 minWave 로 대공이 막혀 있어 자연 구매만으로도 지상 위주가 된다.
-    enemyPreferredUnits: ['p_demilich'],
-    enemyUnitMinWave: {
-      // 데미리치는 봇 구매를 막고 growth 로만 나온다 (9턴부터 매 턴 +1 — 정확한 스케줄)
-      p_demilich: 99,
-      // 2차 대공진은 23턴에 열린다 (망령·투척병만 예외로 조금 일찍)
-      p_banshee: 23, p_lich: 23, p_corpsecaller: 23,
-      p_wraith: 12,
-    },
-    enemyUnitCaps: {
-      // 1단계 대공은 "찔끔" — 공중 조합에 위협은 안 되되 무풍지대는 아니게
-      p_bone_thrower: 5, p_wraith: 5,
-      // 2단계 대공진 (23턴~). 캡 없으면 23턴에 37~47기까지 불어난다 (봇 경제 실측)
-      p_demilich: 8, p_banshee: 8, p_lich: 6, p_corpsecaller: 4,
-      // 1단계 지상 주력 — 둥지(방어 28)를 실제로 깎는 고화력만 조인다.
-      // 저가 잡졸(망자병 13·스켈레톤 16)은 둥지에 1뎀뿐이라 캡 없이 물량 압박만 담당.
-      p_thanatos: 8, p_corpse_golem: 10, p_headless_knight: 12, p_mammon: 2,
-    },
-    // 9턴부터 매 턴 +1 → 16턴에 8기. 하늘이 서서히 좁아지고, 16턴엔 지상 전환이 강제된다.
-    growth: [{ defId: 'p_demilich', label: '💀 데미리치 — 하늘이 좁아진다', fromWave: 9 }],
+    // 첫 공중전 학습 스테이지 (easy) — 망령·밴시 편대 위주
+    enemyPreferredUnits: ['p_wraith', 'p_banshee', 'p_demilich'],
     spawns: [{ defId: 'c_dread_gargoyle', label: '공포의 가고일', everySec: 120 }],
     briefing: [
       { who: '실피', text: '…하늘.' },
@@ -497,11 +473,25 @@ export const SYLVARIN_CAMPAIGN: readonly CampaignStage[] = [
     mission: 'survive', surviveSec: 1800, noTowers: true,
     seed: seedOf(11), mapId: 'nest',
     enemySkin: 'bone',
-    enemyPreferredUnits: ['p_wraith', 'p_banshee', 'p_demilich'],
-    // 적 편성 상한 (팀 합산). 데미리치는 매 웨이브 최대 14기까지만 편성된다 —
-    // 필드에 동시에 몇 마리 서 있는지가 아니라, 한 턴에 출정하는 수의 상한이다.
-    // (preferred 로 가중돼 있어 상한이 없으면 턴마다 무한정 불어난다)
-    enemyUnitCaps: { p_demilich: 14 },
+    // ── 11 = 판데 중상급의 무대: 시체 골렘·타나토스·밴시가 주역 ──
+    // 데미리치·마몬(끝판급)은 아직 이르다 — 25턴부터, 그것도 소수 정예(캡 3)만.
+    // preferred ×8 가중은 폭주 함정이라 반드시 캡과 함께 쓴다 (타나토스 47기 실측).
+    enemyPreferredUnits: ['p_corpse_golem', 'p_thanatos', 'p_banshee'],
+    enemyUnitMinWave: {
+      // 끝판 유닛은 25턴에야 모습을 드러낸다
+      p_demilich: 25, p_mammon: 25,
+      // 주역 3종도 초반 몇 턴은 잡졸이 먼저 (테크 진행 느낌)
+      p_corpse_golem: 5, p_thanatos: 7, p_banshee: 9,
+    },
+    enemyUnitCaps: {
+      // 주역 3종 — 물량감은 있되 무한 누적은 금지 (팀 합산 편성 상한)
+      p_corpse_golem: 12, p_thanatos: 10, p_banshee: 10,
+      // 조연 — 소수만
+      p_bone_thrower: 6, p_wraith: 6, p_headless_knight: 12,
+      p_lich: 4, p_corpsecaller: 4,
+      // 25턴부터의 끝판 손님은 딱 3기씩
+      p_demilich: 3, p_mammon: 3,
+    },
     // 수비 모드: 부대가 둥지 주변에 대기하다 침입 방향으로 자동 요격한다
     defendNexus: true,
     // 둥지 수호탑: 세 갈래 입구에 하나씩 (평타만 — 타워)

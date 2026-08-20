@@ -1941,7 +1941,22 @@ function setBar(id: string, hp: number, max: number, label: string): void {
   span.textContent = `${label} ${Math.ceil(Math.max(0, hp))}`;
 }
 
+/** 캠페인 배너(#campaign-goal)가 topbar 를 가리지 않게 — 실제 높이 아래로. */
+let lastGoalTop = -1;
+function positionCampaignGoal(): void {
+  // 세로폰에서는 topbar 가 두세 줄로 접혀 높이가 유동적이다 — 고정 px 로는
+  // 배속·나가기·일시정지 버튼을 가리게 된다. 실측해서 그 아래에 붙인다.
+  const bar = document.querySelector('#topbar');
+  if (!bar) return;
+  const top = Math.ceil(bar.getBoundingClientRect().bottom) + 6;
+  if (top !== lastGoalTop) {
+    lastGoalTop = top;
+    ($('#campaign-goal') as HTMLElement).style.top = `${top}px`;
+  }
+}
+
 function updateHud(g: Game): void {
+  positionCampaignGoal();
   const me = g.players[myIdx]!;
   $('#money').textContent = String(me.money);
   $('#income').textContent = `+${MAP.INCOME_BASE + MAP.INCOME_PER_LEVEL * me.incomeLevel} / 5초 (Lv${me.incomeLevel}/${g.incomeCap})`;

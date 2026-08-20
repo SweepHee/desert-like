@@ -443,6 +443,8 @@ const ASSET_SIZE_MUL: Record<string, number> = {
   c_balthar_general: 1.5, // 12 보스 — 슬리피 할로우급 거구
   // 호위전 소품: 나무는 반경보다 훨씬 크게 — 숲이 우거진 인상
   c_burning_tree: 1.35, c_ember_tree: 1.3, c_ember_tree2: 1.35, c_burning_log: 0.95, c_supply_cart: 1.15,
+  s_fairy: 1.9, // 거대 나비(radius 0.42)보다 커 보이게 — 요정 여왕의 위용
+
   c_sage_watchtower: 1.5, c_sylvarin_tent: 1.2, c_elowyn: 1.25,
   c_sylvarin_tent2: 1.25, c_camp_fire: 1.1, c_camp_crates: 1.1, c_sylvarin_banner: 1.6,
 };

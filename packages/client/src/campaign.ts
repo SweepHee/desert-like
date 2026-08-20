@@ -476,18 +476,20 @@ export const SYLVARIN_CAMPAIGN: readonly CampaignStage[] = [
     // ── 11 = 판데 중상급의 무대: 시체 골렘·타나토스·밴시가 주역 ──
     // 데미리치·마몬(끝판급)은 아직 이르다 — 25턴부터, 그것도 소수 정예(캡 3)만.
     // preferred ×8 가중은 폭주 함정이라 반드시 캡과 함께 쓴다 (타나토스 47기 실측).
-    enemyPreferredUnits: ['p_corpse_golem', 'p_thanatos', 'p_banshee'],
+    // 망령을 앞에 세워 "인컴+테크 그리디"를 초반부터 응징한다 — 공중 위협이
+    // 1~2턴부터 꾸준해야 방어에 돈을 쓰게 된다 (밴시는 테크3 즉시 합류)
+    enemyPreferredUnits: ['p_wraith', 'p_corpse_golem', 'p_thanatos', 'p_banshee'],
     enemyUnitMinWave: {
       // 끝판 유닛은 25턴에야 모습을 드러낸다
       p_demilich: 25, p_mammon: 25,
-      // 주역 3종도 초반 몇 턴은 잡졸이 먼저 (테크 진행 느낌)
-      p_corpse_golem: 5, p_thanatos: 7, p_banshee: 9,
+      // 주역 지상 2종은 초반 몇 턴은 잡졸이 먼저 (테크 진행 느낌)
+      p_corpse_golem: 5, p_thanatos: 7, p_banshee: 5,
     },
     enemyUnitCaps: {
-      // 주역 3종 — 물량감은 있되 무한 누적은 금지 (팀 합산 편성 상한)
-      p_corpse_golem: 12, p_thanatos: 10, p_banshee: 10,
+      // 주역 — 물량감은 있되 무한 누적은 금지 (팀 합산 편성 상한)
+      p_corpse_golem: 12, p_thanatos: 10, p_banshee: 10, p_wraith: 8,
       // 조연 — 소수만
-      p_bone_thrower: 6, p_wraith: 6, p_headless_knight: 12,
+      p_bone_thrower: 6, p_headless_knight: 12,
       p_lich: 4, p_corpsecaller: 4,
       // 25턴부터의 끝판 손님은 딱 3기씩
       p_demilich: 3, p_mammon: 3,
@@ -510,12 +512,15 @@ export const SYLVARIN_CAMPAIGN: readonly CampaignStage[] = [
       { defId: 'p_minion_undead', label: '⬆ 능선의 망자 무리', everySec: 17, count: 2, atXTile: 49, yOffTile: -36 },
       { defId: 'p_minion_skeleton', label: '⬆ 능선의 망자 무리', everySec: 14, count: 2, atXTile: 48, yOffTile: -34 },
       { defId: 'p_minion_rat', label: '⬆ 능선의 망자 무리', everySec: 9, count: 3, atXTile: 48, yOffTile: -32 },
+      // 능선의 망령: 2분부터 하늘로도 꾸준히 내려온다 — 인컴 그리디의 천적
+      { defId: 'p_wraith', label: '⬆ 능선의 망령', atSec: 120, everySec: 50, count: 2, atXTile: 47, yOffTile: -34 },
       // 8시: V자 왼쪽 끝 골짜기에서 올라온다 (중립: 시간이 갈수록 사나워진다)
       { defId: 'c_wild_wolf_gray', label: '⬋ 야생 늑대 무리', everySec: 25, count: 4, atXTile: 8, yOffTile: 0, neutral: true },
       { defId: 'c_wild_snake', label: '⬋ 독사 떼', everySec: 30, count: 3, atXTile: 5, yOffTile: 0, neutral: true },
-      { defId: 'c_wild_wolf_black', label: '⬋ 검은늑대 무리', atSec: 180, everySec: 40, count: 3, atXTile: 8, yOffTile: 0, neutral: true },
-      { defId: 'c_wild_tarantula', label: '⬋ 타란튤라', atSec: 240, everySec: 50, count: 2, atXTile: 6, yOffTile: 0, neutral: true },
-      { defId: 'c_wild_kestrel', label: '⬋ 황조롱이 떼', atSec: 300, everySec: 45, count: 3, atXTile: 10, yOffTile: -1, neutral: true },
+      { defId: 'c_wild_wolf_black', label: '⬋ 검은늑대 무리', atSec: 120, everySec: 40, count: 3, atXTile: 8, yOffTile: 0, neutral: true },
+      { defId: 'c_wild_tarantula', label: '⬋ 타란튤라', atSec: 180, everySec: 50, count: 2, atXTile: 6, yOffTile: 0, neutral: true },
+      // 황조롱이는 1분 반부터 — 공중 조합에도 초반부터 성가신 손님이 있어야 한다
+      { defId: 'c_wild_kestrel', label: '⬋ 황조롱이 떼', atSec: 90, everySec: 35, count: 3, atXTile: 10, yOffTile: -1, neutral: true },
       { defId: 'c_wild_bear_gray', label: '⬋ 회색곰', atSec: 360, everySec: 70, count: 2, atXTile: 6, yOffTile: 0, neutral: true },
       { defId: 'c_wild_direwolf', label: '⬋ 다이어울프 무리', atSec: 540, everySec: 60, count: 3, atXTile: 8, yOffTile: 0, neutral: true },
       { defId: 'c_wild_grizzly', label: '⬋ 그리즐리베어', atSec: 600, everySec: 80, count: 2, atXTile: 6, yOffTile: 0, neutral: true },

@@ -515,10 +515,7 @@ export const SYLVARIN_CAMPAIGN: readonly CampaignStage[] = [
       { defId: 'p_minion_rat', label: '⬆ 능선의 망자 무리', everySec: 7, count: 4, atXTile: 48, yOffTile: -32 },
       // 능선의 망령: 1분부터 하늘로도 꾸준히 내려온다 — 인컴 그리디의 천적
       { defId: 'p_wraith', label: '⬆ 능선의 망령', atSec: 60, everySec: 40, count: 2, atXTile: 47, yOffTile: -34 },
-      // ── 4시(적 진영 앞): 정규 봇 웨이브 사이를 잡졸이 메꾼다 — 오른쪽도 쉴 틈 없이
-      { defId: 'p_minion_ghoul', label: '⬊ 망자 선발대', everySec: 11, count: 3 },
-      { defId: 'p_minion_skeleton', label: '⬊ 망자 선발대', everySec: 13, count: 3 },
-      { defId: 'p_bone_thrower', label: '⬊ 해골 투척병', atSec: 75, everySec: 45, count: 2 },
+      // ── 4시(적 진영): 스폰 없음 — 정규 봇 생산 웨이브만 온다
       // ── 8시: V자 왼쪽 끝 골짜기에서 올라온다 (중립: 시간이 갈수록 사나워진다)
       { defId: 'c_wild_wolf_gray', label: '⬋ 야생 늑대 무리', everySec: 16, count: 5, atXTile: 8, yOffTile: 0, neutral: true },
       { defId: 'c_wild_snake', label: '⬋ 독사 떼', everySec: 20, count: 4, atXTile: 5, yOffTile: 0, neutral: true },

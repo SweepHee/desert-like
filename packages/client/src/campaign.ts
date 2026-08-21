@@ -213,8 +213,8 @@ const U3 = [...U2, 's_marmot'];
 const U4 = [...U3, 's_druid', 's_mushroom_bomber'];
 const U5 = [...U4, 's_owl', 's_butterfly'];
 const U8 = [...U5, 's_thorn_witch'];
-const U11 = [...U8, 's_wyvern', 's_unicorn', 's_fairy'];
-const U13 = [...U11, 's_marksman', 's_treekeeper'];
+const U11 = [...U8, 's_treekeeper', 's_wyvern', 's_unicorn', 's_fairy'];
+const U13 = [...U11, 's_marksman'];
 const U14 = [...U13, 's_apostle', 's_treant'];
 const U17 = [...U14, 's_sage'];
 
@@ -531,7 +531,7 @@ export const SYLVARIN_CAMPAIGN: readonly CampaignStage[] = [
     ],
     briefing: [
       { who: '엘로윈', text: '높은 봉우리의 옛 맹약을 깨울 때다. 와이번은 긍지가 높다 — 명령하지 말고 부탁해라.' },
-      { who: '카엘', text: '(와이번에게) …함께 날아 주겠어? (와이번·유니콘·페어리 합류!)' },
+      { who: '카엘', text: '(와이번에게) …함께 날아 주겠어? (나무지기·와이번·유니콘·페어리 합류!)' },
       { who: '티아', text: '둥지 입구에 수호수들이 자리를 잡았어요! 하지만 냄새를 맡고 온 게… 망자만이 아니에요.' },
       { who: '엘로윈', text: '세 갈래다. 능선의 망자, 골짜기의 야수, 그리고 발타르의 선발대. 알이 깨어날 때까지 — 둥지를 지켜라.' },
     ],
@@ -720,7 +720,7 @@ export const SYLVARIN_CAMPAIGN: readonly CampaignStage[] = [
       { who: '앨리스', text: '…물러갔어. 부서진 몸을 태엽으로 끌면서. 오빠가— 저게 정말 오빠라면, 300년 동안 저기 있었다는 거잖아.' },
       { who: '앨리스', text: '발타르의 성에 오빠의 머리가 있어. 그게 오빠의 기억이야. 숲지기 — 이게 아까 말한 「내 물건」이야. 찾아와 줘.' },
       { who: '티아', text: '…발밑에서, 심장 뛰는 소리가 들렸어요. 뿌리가 살아났어요.' },
-      { who: '사도', text: '(땅에서 일어나며) 뿌리가 기억한다. 아이야, 세계수가 너를 부른다. (숲의 명궁·나무지기 합류!)' },
+      { who: '사도', text: '(땅에서 일어나며) 뿌리가 기억한다. 아이야, 세계수가 너를 부른다. (숲의 명궁 합류!)' },
     ],
   },
   {

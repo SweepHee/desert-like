@@ -430,7 +430,8 @@ reg(D({
   weapon: { damage: 10, bonus: { plate: 8 }, cooldown: seconds(1.3), range: tiles(4), targets: 'both' },
 }));
 reg(D({
-  id: 's_treekeeper', race: 'sylvarin', name: '나무지기', tier: 'high',
+  // 전열 탱커는 중반부터 필요하다 — high 티어지만 테크 2에 연다
+  id: 's_treekeeper', race: 'sylvarin', name: '나무지기', tier: 'high', techReq: 2,
   cost: 280, supply: 3, maxHp: 800, armor: 3, tags: ['plate', 'bio'], ...GROUND,
   speed: tilesPerSecond(1.2), radius: tiles(0.5), acquireRange: tiles(4.5),
   // 충격 (가지 강타): 판금 카운터

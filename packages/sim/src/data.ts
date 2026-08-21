@@ -770,10 +770,6 @@ reg(D({
   speed: tilesPerSecond(2.4), radius: tiles(0.62), acquireRange: tiles(6),
   // 뼈 브레스: 소범위 광역 + 입힌 피해의 30% 흡혈
   weapon: { damage: 40, cooldown: seconds(1.3), range: tiles(1.4), targets: 'both', splash: tiles(1.1), lifestealPct: 25 },
-  actives: [{
-    name: '사령의 날개', desc: '주변 아군 방어력 +2 (12초)', kind: 'allyarmor',
-    cooldown: seconds(22), durTicks: seconds(12), armorAdd: 2, auraRadius: tiles(4.5),
-  }],
 }));
 reg(D({
   // 후방 암살자: 힐러·원거리에게 관짝째 도약해 달려든다 (도약 중 무적)
@@ -819,7 +815,8 @@ reg(D({
   id: 'p_incubus', race: 'pandemonium', name: '인큐버스', tier: 'final',
   cost: 1500, supply: 8, maxHp: 950, armor: 3, tags: ['leather', 'undead', 'male'], ...GROUND,
   speed: tilesPerSecond(2.0), radius: tiles(0.45), acquireRange: tiles(6),
-  weapon: { damage: 95, cooldown: seconds(0.9), range: tiles(0.7), targets: 'ground' },
+  // 검기가 하늘까지 닿는다 — 공중도 벤다
+  weapon: { damage: 95, cooldown: seconds(0.9), range: tiles(0.7), targets: 'both' },
   actives: [
     {
       name: '은신', desc: '6초간 완전히 사라진다 — 조준·피해 불가 (쿨 18초)', kind: 'stealth',

@@ -562,7 +562,12 @@ export const SYLVARIN_CAMPAIGN: readonly CampaignStage[] = [
       { defId: 'p_demilich', label: '데미리치 친위대', fromWave: 8 },
       { defId: 'p_mammon', label: '💰 배신자 마몬', fromWave: 10 },
     ],
-    enemyUnitCaps: { p_headless_knight: 12, p_demilich: 6, p_mammon: 3 },
+    // 밴시 도배 — 유니콘·페어리·와이번 공중 3종이 모이면 다 녹이던 것의 카운터.
+    // preferred x8 가중으로 테크3 이후 하늘이 밴시로 뒤덮인다 (상한 20)
+    enemyPreferredUnits: ['p_banshee'],
+    enemyUnitCaps: { p_headless_knight: 12, p_demilich: 6, p_mammon: 3, p_banshee: 20 },
+    // 아군 봇의 인형사 앨리스는 1기뿐 — 여왕은 한 명이다 (아군 과강화 방지)
+    allyUnitCaps: { m_alice: 1 },
     // 웨이브 사이를 메꾸는 확정 증원 — 숨 돌릴 틈을 주지 않는다
     spawns: [
       { defId: 'c_bone_colossus', label: '뼈 거상', everySec: 150 },

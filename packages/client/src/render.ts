@@ -354,6 +354,7 @@ const ASSET_ATTACK_ANIMS: Record<string, string[][]> = {
   // 수호자 (중간보스)
   dragon: atk4('dragon'),
   hollow: atk4('hollow'),
+  p_bone_dragon: atk4('p_bone_dragon'),
   p_coffin_bearer: atk4('p_coffin_bearer'),
   p_succubus: atk4('p_succubus'),
   p_incubus: atk4('p_incubus'),

@@ -1303,22 +1303,21 @@ export function stepCombat(g: Game): void {
             }
             break;
           }
-          case 'sacrifice': { // 「제물 흡수」(인큐버스 해금) 주변 아군을 삼켜 강해진다
-            // 7초마다: 아군이 있으면 흡수 +1스택, 없으면 -1스택 (스킬 쿨 = 판정 주기)
+          case 'sacrifice': { // 「제물 흡수」(인큐버스 해금) 내 1티어 유닛을 삼켜 강해진다
+            // 7초마다: 제물이 있으면 흡수 +1스택, 없으면 -1스택 (스킬 쿨 = 판정 주기).
+            // 제물 조건: 같은 소유자(내 유닛만 — 팀원 것은 안 됨) + 1티어(basic/novice)
+            // — 스켈레톤 소환사가 소환한 잡유닛(minion, basic)도 제물이 된다.
             const rr = a.auraRadius ?? tiles(3);
             let victim: Entity | undefined;
-            let victimRank = 999;
             for (const ally of g.entities) {
               if (!ally.alive || ally.team !== e.team || ally.id === e.id) continue;
+              if (ally.owner !== e.owner) continue; // 내 유닛만
               const ad = def(ally);
-              if (ad.tier === 'structure' || ad.tier === 'guardian') continue;
+              if (ad.tier !== 'basic' && ad.tier !== 'novice') continue; // 1티어만
               if (ally.invulnUntil >= Number.MAX_SAFE_INTEGER) continue;
               if (dist2(e.x, e.y, ally.x, ally.y) > rr * rr) continue;
-              const rank = TIER_RANK[ad.tier] ?? 0;
-              if (rank < victimRank) { // 낮은 티어 우선 (동률은 배열 앞쪽)
-                victimRank = rank;
-                victim = ally;
-              }
+              victim = ally; // 배열 앞쪽 우선 — 결정론
+              break;
             }
             if (victim) {
               victim.alive = false; // 제물은 조용히 사라진다

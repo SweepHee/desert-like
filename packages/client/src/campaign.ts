@@ -81,6 +81,12 @@ export interface CampaignStage {
   readonly enemyUnitCaps?: Readonly<Record<string, number>>;
   /** 아군(팀0) 봇 유닛 수량 상한 (팀 합산) — 아군 물량 폭주 방지. */
   readonly allyUnitCaps?: Readonly<Record<string, number>>;
+  /** 적(팀1) 봇 구매 화이트리스트 — 지정 시 이 목록만 생산. */
+  readonly enemyAllowedUnits?: readonly string[];
+  /** 적(팀1) 봇 시작 자금. */
+  readonly enemyStartMoney?: number;
+  /** 적(팀1) 봇 인컴 배율 % (난이도 인컴 보너스 대체). */
+  readonly enemyIncomePct?: number;
   /** 적 유닛별 최소 등장 웨이브 (이 턴 전엔 구매 불가). */
   readonly enemyUnitMinWave?: Readonly<Record<string, number>>;
   /** 이 웨이브부터 적 유닛 상한 전부 해제 (후반 총력전). */
@@ -555,23 +561,24 @@ export const SYLVARIN_CAMPAIGN: readonly CampaignStage[] = [
     deadlineWave: 28,
     // 앨리스 군단(아군 봇)은 위 갈래 끝에서 출정해 합류점으로 내려온다
     allyDeployTile: { x: 30, y: -13 },
-    // 적 물량은 봇 생산 + 확정 증원 — 보스만 잡는 게 아니라 물량전을 버티며 뚫는다.
-    // 배신자 마몬도 10턴부터 직접 전장에 선다 (스토리 정합)
-    growth: [
-      { defId: 'p_headless_knight', label: '사령 기사단', fromWave: 4 },
-      { defId: 'p_demilich', label: '데미리치 친위대', fromWave: 8 },
-      { defId: 'p_mammon', label: '💰 배신자 마몬', fromWave: 10 },
+    // ── 적 구성: 중상급 정예군만 생산한다 (잡졸·끝판 유닛은 생산 목록에서 제외)
+    // 데미리치가 growth 로 일찍부터 확정 편입되던 것 폐지 — 끝판 유닛은 「출현!」로만
+    enemyAllowedUnits: [
+      'p_hound', 'p_bone_thrower', 'p_headless_knight', 'p_corpsecaller',
+      'p_lich', 'p_corpse_golem', 'p_thanatos', 'p_wraith', 'p_banshee',
     ],
-    // 밴시 도배 — 유니콘·페어리·와이번 공중 3종이 모이면 다 녹이던 것의 카운터.
-    // preferred x8 가중 + 상한 없음: 테크3 이후 하늘이 밴시로 끝없이 뒤덮인다
-    enemyPreferredUnits: ['p_banshee'],
-    enemyUnitCaps: { p_headless_knight: 12, p_demilich: 6, p_mammon: 3 },
+    // 리치·타나토스·시체 골렘·밴시가 주력으로 쏟아진다 (x8 가중, 상한 없음)
+    enemyPreferredUnits: ['p_banshee', 'p_lich', 'p_thanatos', 'p_corpse_golem'],
+    // 적 경제: 시작 1000원 + 인컴 52부터 (기본 30의 174% — 인컴업도 비례로 오른다)
+    enemyStartMoney: 1000,
+    enemyIncomePct: 174,
     // 아군 봇의 인형사 앨리스는 1기뿐 — 여왕은 한 명이다 (아군 과강화 방지)
     allyUnitCaps: { m_alice: 1 },
-    // 웨이브 사이를 메꾸는 확정 증원 — 숨 돌릴 틈을 주지 않는다
+    // 끝판 유닛은 「출현!」 이벤트로 한 번씩 — 데미리치·마몬·뼈 거상
     spawns: [
       { defId: 'c_bone_colossus', label: '뼈 거상', everySec: 150 },
-      { defId: 'c_dread_gargoyle', label: '공포의 가고일', atSec: 180, everySec: 170 },
+      { defId: 'p_demilich', label: '💀 데미리치', atSec: 300, everySec: 210 },
+      { defId: 'p_mammon', label: '💰 배신자 마몬', atSec: 420, everySec: 300 },
     ],
     briefing: [
       { who: '마몬', text: '배신? 아니지, 더 좋은 조건이 왔을 뿐! 발타르 님이 너희 숲을 통째로 주신다더군!' },

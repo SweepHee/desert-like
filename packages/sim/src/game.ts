@@ -80,6 +80,8 @@ export function createGame(cfg: GameConfig): Game {
     enemyPreferredUnits: cfg.enemyPreferredUnits ?? [],
     enemyUnitCaps: cfg.enemyUnitCaps ?? {},
     allyUnitCaps: cfg.allyUnitCaps ?? {},
+    enemyAllowedUnits: cfg.enemyAllowedUnits ?? [],
+    enemyIncomePct: cfg.enemyIncomePct ?? 0,
     enemyUnitMinWave: cfg.enemyUnitMinWave ?? {},
     enemyCapsUntilWave: cfg.enemyCapsUntilWave ?? Infinity,
     enemyGuardian: cfg.enemyGuardian ?? null,
@@ -139,6 +141,9 @@ export function createGame(cfg: GameConfig): Game {
   // 영웅 특성: 시작 자금 (사람 플레이어에게만)
   if (g.heroPerks) {
     for (const p of g.players) if (!p.isBot) p.money += g.heroPerks.startMoney;
+  if (cfg.enemyStartMoney !== undefined) {
+    for (const p of g.players) if (p.team === 1 && p.isBot) p.money = cfg.enemyStartMoney;
+  }
   }
   return g;
 }
@@ -162,6 +167,8 @@ export function buyUnit(g: Game, playerIdx: number, defId: string): boolean {
   // 캠페인 해금 제한: "사람 플레이어"만 화이트리스트 적용 (용병은 별도 허가).
   // 아군 봇(앨리스 군단 등)은 다른 종족이라 화이트리스트를 적용하면 아무것도 못 산다.
   if (!isMerc && p.team === 0 && !p.isBot && g.allowedUnits.length > 0 && !g.allowedUnits.includes(defId)) return false;
+  // 캠페인: 적팀 화이트리스트 — 지정 시 목록 밖 유닛은 생산 불가
+  if (p.team === 1 && g.enemyAllowedUnits.length > 0 && !g.enemyAllowedUnits.includes(defId)) return false;
   // 캠페인: 적팀 유닛 수량 상한 (팀 합산) — 최상급 유닛의 조기 물량화 방지.
   // enemyCapsUntilWave 이후엔 전부 해제 (후반 총력전).
   const cap = p.team === 1 && g.waveIndex < g.enemyCapsUntilWave ? g.enemyUnitCaps[defId] : undefined;
@@ -426,6 +433,9 @@ function botDecide(g: Game, p: PlayerState): void {
   if (p.team === 0 && !p.isBot && g.allowedUnits.length > 0) {
     pool = pool.filter((d) => g.allowedUnits.includes(d.id));
   }
+  if (p.team === 1 && g.enemyAllowedUnits.length > 0) {
+    pool = pool.filter((d) => g.enemyAllowedUnits.includes(d.id));
+  }
   if (p.team === 1) {
     pool = pool.filter((d) => {
       const minWave = g.enemyUnitMinWave[d.id];
@@ -518,11 +528,14 @@ export function stepGame(g: Game): void {
   // 경제 틱
   if (g.tick > 0 && g.tick % MAP.INCOME_INTERVAL === 0) {
     for (const p of g.players) {
-      p.money += MAP.INCOME_BASE + MAP.INCOME_PER_LEVEL * p.incomeLevel;
+      const baseIncome = MAP.INCOME_BASE + MAP.INCOME_PER_LEVEL * p.incomeLevel;
+      // 캠페인: 적 인컴 배율 — 지정 시 난이도 인컴 보너스를 대체한다
+      const scaled = p.isBot && p.team === 1 && g.enemyIncomePct > 0;
+      p.money += scaled ? idiv(baseIncome * g.enemyIncomePct, 100) : baseIncome;
       // 영웅 특성: 계절의 흐름 (사람 플레이어 추가 수입)
       if (!p.isBot && g.heroPerks) p.money += g.heroPerks.incomeAdd;
       // 중간 난이도: 봇은 인컴이 유저보다 12원 더 많다 (인컴업마다 +12씩 — 12, 24, 36…)
-      if (p.isBot && g.botDifficulty === 'normal') p.money += 12 * (p.incomeLevel + 1);
+      if (p.isBot && g.botDifficulty === 'normal' && !scaled) p.money += 12 * (p.incomeLevel + 1);
       if (p.isBot) botDecide(g, p);
     }
   }

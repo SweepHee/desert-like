@@ -386,6 +386,15 @@ export interface GameConfig {
    * 이른 스테이지에 쏟아지는 것을 막는다. 예: { m_gore_teddy: 1 }.
    */
   readonly enemyUnitCaps?: Readonly<Record<string, number>>;
+  /** 적(팀1) 봇 구매 화이트리스트 — 지정 시 이 목록의 유닛만 생산한다. */
+  readonly enemyAllowedUnits?: readonly string[];
+  /** 적(팀1) 봇 시작 자금 오버라이드. */
+  readonly enemyStartMoney?: number;
+  /**
+   * 적(팀1) 봇 인컴 배율 % (0 = 미지정). 지정 시 기본 인컴식에 곱하며,
+   * 난이도별 인컴 보너스(normal +12/레벨)를 대체한다.
+   */
+  readonly enemyIncomePct?: number;
   /** 아군(팀0) 봇 유닛 수량 상한 (팀 합산) — 캠페인에서 아군 물량 폭주 방지. */
   readonly allyUnitCaps?: Readonly<Record<string, number>>;
   /** 팀 2 유닛별 최소 등장 웨이브 — 이 턴이 되기 전엔 봇이 구매할 수 없다. */
@@ -486,6 +495,8 @@ export interface Game {
   /** 팀 2 유닛별 수량 상한 (팀 합산). 빈 객체 = 무제한. */
   readonly enemyUnitCaps: Readonly<Record<string, number>>;
   readonly allyUnitCaps: Readonly<Record<string, number>>;
+  readonly enemyAllowedUnits: readonly string[];
+  readonly enemyIncomePct: number;
   /** 팀 2 유닛별 최소 등장 웨이브. 빈 객체 = 제한 없음. */
   readonly enemyUnitMinWave: Readonly<Record<string, number>>;
   /** 이 웨이브부터 수량 상한 해제. Infinity = 영구 적용. */

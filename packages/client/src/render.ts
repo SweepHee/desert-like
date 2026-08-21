@@ -816,10 +816,10 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
     DIR_SPRITE_UNITS.map(async (defId) => {
       // ?v= 캐시 버스터: 방향 그림을 교체(고우토 등)해도 브라우저 캐시에 안 가리게
       const [eTex, w, n, sTex] = await Promise.all([
-        loadTex(`/assets/units/${defId}_e.png?v=3`),
-        loadTex(`/assets/units/${defId}_w.png?v=3`),
-        loadTex(`/assets/units/${defId}_n.png?v=3`),
-        loadTex(`/assets/units/${defId}_s.png?v=3`),
+        loadTex(`/assets/units/${defId}_e.png?v=4`),
+        loadTex(`/assets/units/${defId}_w.png?v=4`),
+        loadTex(`/assets/units/${defId}_n.png?v=4`),
+        loadTex(`/assets/units/${defId}_s.png?v=4`),
       ]);
       // 4방향이 온전히 갖춰진 유닛만 등록 — 한 캐릭터의 그림으로 일관되게 돈다
       if (eTex && w && n && sTex) {

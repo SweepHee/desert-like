@@ -88,6 +88,7 @@ export function createMinimap(canvas: HTMLCanvasElement, renderer: Renderer): Mi
 
     for (const e of g.entities) {
       if (!e.alive) continue;
+      if (g.tick < e.stealthUntil) continue; // 은신(인큐버스): 미니맵에서도 사라진다
       const d = DEFS[e.defId]!;
       const x = tx(e.x);
       const y = ty(e.y);

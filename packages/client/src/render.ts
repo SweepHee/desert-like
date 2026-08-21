@@ -128,6 +128,13 @@ export const ASSET_UNITS: Record<string, string | string[]> = {
   tower: '/assets/units/tower.png',
   dragon: '/assets/units/dragon.png',
   hollow: '/assets/units/hollow.png',
+  // 판데모니엄 확장 로스터 (v1.1)
+  p_bone_dragon: '/assets/units/p_bone_dragon.png',
+  p_coffin_bearer: '/assets/units/p_coffin_bearer.png',
+  p_succubus: '/assets/units/p_succubus.png',
+  p_succubus_demon: '/assets/units/p_succubus_demon.png',
+  p_dream_mare: '/assets/units/p_dream_mare.png',
+  p_incubus: '/assets/units/p_incubus.png',
   teddy_guardian: '/assets/units/teddy_guardian.png',
   // 장난감 나라(toybox) 전용 건물 스킨 — 스프라이트 생성 시 맵으로 갈린다
   tower_toy: '/assets/units/tower_toy.png',
@@ -197,6 +204,10 @@ const ASSET_ICONS: Record<string, string> = {
   s_marksman: '/assets/units/s_marksman_icon.png',
   s_sage: '/assets/units/s_sage_icon.png',
   m_plushbear: '/assets/units/m_plushbear_icon.png',
+  p_bone_dragon: '/assets/units/p_bone_dragon.png',
+  p_coffin_bearer: '/assets/units/p_coffin_bearer_icon.png',
+  p_succubus: '/assets/units/p_succubus_icon.png',
+  p_incubus: '/assets/units/p_incubus_icon.png',
   m_clockwork_soldier: '/assets/units/m_clockwork_soldier_icon.png',
   c_alice_soldier: '/assets/units/m_clockwork_soldier_icon.png',
   c_alice_teddy: '/assets/units/m_gore_teddy_icon.png',
@@ -343,6 +354,9 @@ const ASSET_ATTACK_ANIMS: Record<string, string[][]> = {
   // 수호자 (중간보스)
   dragon: atk4('dragon'),
   hollow: atk4('hollow'),
+  p_coffin_bearer: atk4('p_coffin_bearer'),
+  p_succubus: atk4('p_succubus'),
+  p_incubus: atk4('p_incubus'),
   teddy_guardian: atk4('teddy_guardian'),
   // 캠페인 특수 유닛 — 원본 유닛 모션 재활용
   c_ash_revenant: atk4('p_wraith'),
@@ -358,7 +372,7 @@ const ASSET_ATTACK_ANIMS: Record<string, string[][]> = {
  * 원거리 공격의 투사체 그림. 유닛별로 어떤 탄이 날아가는지 지정한다.
  * 여기 없는 유닛은 기존처럼 종족색 선분으로 폴백한다.
  */
-type ProjKind = 'arrow' | 'bullet' | 'bone' | 'bolt_nature' | 'bolt_curse' | 'bomb' | 'pollen' | 'fireball';
+type ProjKind = 'arrow' | 'bullet' | 'bone' | 'bolt_nature' | 'bolt_curse' | 'bomb' | 'pollen' | 'fireball' | 'heart';
 
 const PROJECTILE_OF: Record<string, ProjKind> = {
   // 실바린
@@ -377,6 +391,8 @@ const PROJECTILE_OF: Record<string, ProjKind> = {
   p_bone_thrower: 'bone',
   p_corpsecaller: 'bolt_curse',
   p_banshee: 'bolt_curse',
+  p_succubus: 'heart',
+  p_dream_mare: 'bolt_curse',
   p_lich: 'fireball',
   c_kurga: 'fireball',
   c_balthar: 'bolt_curse',
@@ -417,6 +433,7 @@ const PROJECTILE_STYLE: Record<ProjKind, { size: number; rotate: boolean; spin?:
   bomb: { size: 17, rotate: false, spin: 0.008 },
   pollen: { size: 16, rotate: false },
   fireball: { size: 20, rotate: true },
+  heart: { size: 16, rotate: false, spin: 0.004 }, // 서큐버스 — 하트가 두근두근 날아간다
 };
 
 /**
@@ -444,6 +461,7 @@ const ASSET_SIZE_MUL: Record<string, number> = {
   // 호위전 소품: 나무는 반경보다 훨씬 크게 — 숲이 우거진 인상
   c_burning_tree: 1.35, c_ember_tree: 1.3, c_ember_tree2: 1.35, c_burning_log: 0.95, c_supply_cart: 1.15,
   s_fairy: 1.9, // 거대 나비(radius 0.42)보다 커 보이게 — 요정 여왕의 위용
+  p_bone_dragon: 1.5, p_coffin_bearer: 1.15, p_succubus: 1.2, p_dream_mare: 1.15, p_incubus: 1.25,
 
   c_sage_watchtower: 1.5, c_sylvarin_tent: 1.2, c_elowyn: 1.25,
   c_sylvarin_tent2: 1.25, c_camp_fire: 1.1, c_camp_crates: 1.1, c_sylvarin_banner: 1.6,
@@ -594,6 +612,8 @@ const ASSET_FLAP_FRAMES: Record<string, string[]> = {
   // 수호자: 드래곤 날갯짓, 할로우 유령마 부유 질주
   dragon: fly4('dragon'),
   hollow: fly4('hollow'),
+  p_bone_dragon: fly4('p_bone_dragon'),
+  p_dream_mare: fly4('p_dream_mare'),
   p_demilich: fly4('p_demilich'),
   c_dread_gargoyle: fly4('p_demilich'),
   c_balthar: fly4('p_demilich'),
@@ -1283,6 +1303,7 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
     if (z === 'feast' || z === 'grave') return 'cast_dark';
     if (a?.kind === 'fear') return 'cast_bell';
     if (a?.kind === 'confuse' || a?.kind === 'charm') return 'cast_puppet';
+    if (a?.kind === 'seduce' || a?.kind === 'summonMare') return 'cast_charm';
     if (a?.kind === 'sleep') return 'cast_sleep';
     return 'cast_skill';
   };
@@ -1299,6 +1320,7 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
   /** 네임드 전용 사망음 — 태그보다 우선한다. */
   const DEATH_SFX_OF: Record<string, SfxKey> = {
     m_alice: 'death_alice',
+    p_succubus: 'die_succubus', // 예쁘게 스러진다 — 전용 사망음
   };
   const deathKeyOf = (defId: string, entityId: number): SfxKey => {
     const named = DEATH_SFX_OF[defId];
@@ -1882,6 +1904,16 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
         sp.scale.x = (sp.scale.x < 0 ? -1 : 1) * Math.abs(vfx.baseScaleX) * (2 - diveSquash);
         rot += (1 - diveSquash) * 0.5; // 내리꽂을 때 앞으로 기운다
       }
+      // 은신(인큐버스): 적이 쓰면 완전히 사라지고, 내 유닛이면 반투명으로 보인다
+      const stealthedNow = g.tick < e.stealthUntil;
+      sp.visible = !stealthedNow || e.team === 0;
+      sp.alpha = stealthedNow ? 0.45 : 1;
+      // 서큐버스 악마 변신: 지속 중엔 데몬 폼 그림으로 (텍스처만 교체 — 72px 원본이라 몸집도 커진다)
+      if (e.defId === 'p_succubus') {
+        const wantKey = g.tick < e.transformUntil ? 'p_succubus_demon' : 'p_succubus';
+        const wantTex = assetTex.get(wantKey)?.[0];
+        if (wantTex && sp.texture !== wantTex) sp.texture = wantTex;
+      }
       sp.x = px;
       sp.y = py;
       sp.rotation = rot;
@@ -1927,6 +1959,22 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
         const shim = 0.55 + 0.3 * Math.sin(now * 0.012);
         fx.ellipse(px, py - sp.height * 0.45, sp.width * 0.62, sp.height * 0.55)
           .stroke({ color: 0xffd86a, width: 2, alpha: shim });
+      }
+      // 매혹(서큐버스): 머리 위에서 분홍 하트 세 개가 빙글빙글
+      if (g.tick < e.seducedUntil) {
+        const hy = py - sp.height - 8;
+        const spin = now * 0.005;
+        for (let k = 0; k < 3; k++) {
+          const a = spin + (k * Math.PI * 2) / 3;
+          const ox = Math.cos(a) * 9;
+          const oy = Math.sin(a) * 3;
+          const r = 2.2 + Math.sin(a) * 0.6;
+          // 작은 하트: 원 두 개 + 아래 꼭짓점 삼각형
+          fx.circle(px + ox - r * 0.5, hy + oy - r * 0.3, r * 0.62).fill({ color: 0xff7ac8, alpha: 0.9 });
+          fx.circle(px + ox + r * 0.5, hy + oy - r * 0.3, r * 0.62).fill({ color: 0xff7ac8, alpha: 0.9 });
+          fx.poly([px + ox - r, hy + oy, px + ox + r, hy + oy, px + ox, hy + oy + r * 1.3])
+            .fill({ color: 0xff7ac8, alpha: 0.9 });
+        }
       }
       // 혼란: 머리 위에서 별 세 개가 빙글빙글 (기절 만화 연출)
       if (confusedNow) {

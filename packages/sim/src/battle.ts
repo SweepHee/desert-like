@@ -34,6 +34,8 @@ function canHit(g: Game, attacker: EntityDef, target: Entity): boolean {
   // 영구 무적(둥지 수호탑): 어차피 피해가 안 들어가므로 아예 조준하지 않는다 —
   // 무적 몸빵이 적 화력을 빨아들이는 것 방지. 일시 무적(인비저블)은 그대로 조준된다.
   if (target.invulnUntil >= Number.MAX_SAFE_INTEGER) return false;
+  // 은신(인큐버스): 아예 보이지 않는다 — 조준 불가
+  if (g.tick < target.stealthUntil) return false;
   const tFlying = isFlying(g, target);
   if (w.targets === 'ground') return !tFlying;
   if (w.targets === 'air') return tFlying;
@@ -53,6 +55,11 @@ function isStatusImmune(e: Entity): boolean {
   return def(e).tier === 'guardian';
 }
 
+/** 인큐버스 「완전 해제」 뒤 20초 면역까지 포함한 상태이상 차단 판정. */
+function blocksStatus(g: Game, e: Entity): boolean {
+  return isStatusImmune(e) || g.tick < e.purgeImmuneUntil;
+}
+
 /** 행동 불가 상태 (기절·수면·빙결). */
 function isIncapacitated(g: Game, e: Entity): boolean {
   return g.tick < e.stunnedUntil || g.tick < e.sleepUntil || g.tick < e.frozenUntil;
@@ -64,7 +71,8 @@ function hasDebuff(g: Game, e: Entity): boolean {
     || g.tick < e.stunnedUntil || g.tick < e.confusedUntil
     || g.tick < e.weakenedUntil || g.tick < e.sleepUntil
     || g.tick < e.frozenUntil || g.tick < e.groundedUntil
-    || g.tick < e.chilledUntil || g.tick < e.fearedUntil;
+    || g.tick < e.chilledUntil || g.tick < e.fearedUntil
+    || g.tick < e.seducedUntil;
 }
 
 /** 걸려 있는 해로운 상태를 전부 지운다 (버프는 유지). */
@@ -82,6 +90,7 @@ function clearDebuffs(e: Entity): void {
   e.groundedUntil = 0;
   e.chilledUntil = 0;
   e.fearedUntil = 0;
+  e.seducedUntil = 0;
 }
 
 /** 수면 중인 대상이 맞았다 — 규정 횟수를 넘기면 깨운다. */
@@ -181,6 +190,7 @@ function nearestFoeWithin(
     if (!t.alive || t.team === e.team || isShielded(g, t)) continue;
     // 영구 무적 소품(불타는 나무 등)은 스킬 조준 대상이 아니다 — 허공에 낭비 방지
     if (t.invulnUntil >= Number.MAX_SAFE_INTEGER) continue;
+    if (g.tick < t.stealthUntil) continue; // 은신은 스킬로도 못 노린다
     if (!filter(t)) continue;
     const reach = range + d.radius + def(t).radius;
     const d2 = dist2(e.x, e.y, t.x, t.y);
@@ -231,6 +241,7 @@ function armorOf(g: Game, e: Entity, d: EntityDef): number {
   const fb = forestBuffOf(g, e);
   if (fb?.armorAdd) armor += fb.armorAdd;
   if (g.tick < e.armorBuffUntil) armor += e.armorBuffAdd; // 유니콘 「가호」
+  armor += e.sacrificeStacks * 2; // 제물 흡수 (인큐버스)
   return armor;
 }
 
@@ -341,6 +352,8 @@ function applyDamage(g: Game, attacker: Entity, attackerDef: EntityDef, victim: 
   }
   const w = attackerDef.weapon!;
   const vd = def(victim);
+  // 은신 중에는 어떤 평타도 맞지 않는다 (이미 날아온 투사체 포함)
+  if (g.tick < victim.stealthUntil) return;
   // 회피 (캠페인 강화): 평타만 피한다 — 마법·스킬·장판·독은 회피 불가
   if (vd.dodgePct && nextChance(g.rng, vd.dodgePct)) {
     victim.lastAttackerId = attacker.id;
@@ -351,6 +364,8 @@ function applyDamage(g: Game, attacker: Entity, attackerDef: EntityDef, victim: 
     for (const tag of vd.tags) if (isCombatTag(tag)) dmg += w.bonus[tag] ?? 0;
     if (vd.flying) dmg += w.bonus.flying ?? 0;
   }
+  // 제물 흡수 (인큐버스): 스택당 공격력 +10%
+  if (attacker.sacrificeStacks > 0) dmg = idiv(dmg * (100 + attacker.sacrificeStacks * 10), 100);
   // 약화: 방어력 계산 전에 가하는 피해를 깎는다
   if (g.tick < attacker.weakenedUntil) dmg = idiv(dmg * (100 - WEAKEN_PCT), 100);
   if (!w.ignoreArmor) dmg -= armorOf(g, victim, vd);
@@ -369,6 +384,14 @@ function applyDamage(g: Game, attacker: Entity, attackerDef: EntityDef, victim: 
     }
   }
 
+  // 몽마: 매혹에 홀린 제물의 생기를 통째로 빨아들인다 (최대 체력의 10%)
+  if (attackerDef.id === 'p_dream_mare' && g.tick < victim.seducedUntil && attacker.alive) {
+    const drain = idiv(vd.maxHp, 10);
+    victim.hp -= drain;
+    attacker.hp += drain;
+    const mareMax = attackerDef.maxHp;
+    if (attacker.hp > mareMax) attacker.hp = mareMax;
+  }
   // 흡혈: 입힌 피해의 일부 회복
   if (w.lifestealPct && attacker.alive) {
     const healed = idiv(dmg * w.lifestealPct, 100);
@@ -445,6 +468,7 @@ function pickNukeTarget(
 
 /** 액티브 strike 피해 (처형기). 무기 부가효과(둔화·독 등)는 묻지 않는다. */
 function applyStrike(g: Game, attacker: Entity, a: ActiveSkill, victim: Entity): void {
+  if (g.tick < victim.stealthUntil) return; // 은신은 스킬 피해도 받지 않는다
   if (g.tick < victim.invulnUntil || isShielded(g, victim)) {
     victim.lastAttackerId = attacker.id;
     return;
@@ -496,6 +520,13 @@ function spawnBattleEntity(g: Game, defId: string, team: CombatTeam, owner: numb
     chilledUntil: 0,
     reflectUntil: 0,
     fearedUntil: 0,
+    seducedUntil: 0,
+    stealthUntil: 0,
+    transformUntil: 0,
+    purgeImmuneUntil: 0,
+    sacrificeStacks: 0,
+    sacrificeNextTick: 0,
+    mareId: -1,
     groundedUntil: 0,
     frozenUntil: 0,
     sleepUntil: 0,
@@ -522,6 +553,28 @@ export function stepCombat(g: Game): void {
   for (const e of g.entities) if (e.alive) byId.set(e.id, e);
 
   // 0) 상태이상·장판 (피해/회복은 1초에 1번 — tick % 20 === 0 에 적용)
+  // 서큐버스 악마 변신 종료: 원래 모습으로 (체력은 원 최대치로 잘라낸다)
+  for (const e of g.entities) {
+    if (!e.alive || e.transformUntil !== g.tick) continue;
+    const base = DEFS[e.defId]!;
+    delete e.defOv;
+    if (e.hp > base.maxHp) e.hp = base.maxHp;
+  }
+  // 인큐버스 「완전 해제」: 상태이상이 걸리는 즉시 자동 발동 (행동불능 중에도)
+  for (const e of g.entities) {
+    if (!e.alive) continue;
+    const acts0 = def(e).actives;
+    if (!acts0) continue;
+    for (let i = 0; i < acts0.length; i++) {
+      const a = acts0[i]!;
+      if (a.kind !== 'purge' || e.skillCds[i]! > 0) continue;
+      if (a.requiresUpgrade && (e.owner < 0 || !g.players[e.owner]?.upgrades[a.requiresUpgrade])) continue;
+      if (!hasDebuff(g, e)) continue;
+      clearDebuffs(e);
+      e.purgeImmuneUntil = g.tick + (a.durTicks ?? 400); // 기본 20초 면역
+      e.skillCds[i] = a.cooldown;
+    }
+  }
   // 버프 종료 후유증 (태엽 감기 과열 등)
   for (const e of g.entities) {
     if (!e.alive || e.buffUntil !== g.tick) continue;
@@ -574,7 +627,7 @@ export function stepCombat(g: Game): void {
           // 공격성 장판은 기본 지상 전용. hitsAir 장판(망자의 만찬·사후의 경계)만 공중도 걸린다.
           if (isFlying(g, e) && !zd.hitsAir) continue;
           // 적: 지속피해 + 둔화 (장판 안에 있는 동안 갱신, 나가면 0.3초 뒤 풀림)
-          if (zd.dps && dmgTick && g.tick >= e.invulnUntil) e.hp -= zd.dps;
+          if (zd.dps && dmgTick && g.tick >= e.invulnUntil && g.tick >= e.stealthUntil) e.hp -= zd.dps;
           if (zd.slow && d.speed > 0 && !isStatusImmune(e)) {
             const until = g.tick + 6;
             if (until > e.slowedUntil) e.slowedUntil = until;
@@ -715,6 +768,14 @@ export function stepCombat(g: Game): void {
       continue;
     }
 
+    // 매혹(서큐버스): 싸움을 잊고 적진 한가운데로 홀린 듯 걸어간다
+    if (g.tick < e.seducedUntil) {
+      const foeTeam = e.team === 2 ? 1 : enemyOf(e.team as TeamId);
+      const nx = g.map.nexusX[foeTeam];
+      moveToward(g, e, d, nx, laneCenterY(g.map, nx), slowed);
+      continue;
+    }
+
     // 혼란: 조준한 "자기 편"에게 달려든다. 대상이 없으면 멍하니 제자리.
     if (g.tick < e.confusedUntil) {
       const ct = e.targetId >= 0 ? byId.get(e.targetId) : undefined;
@@ -822,7 +883,8 @@ export function stepCombat(g: Game): void {
 
     // 논스윙형 액티브 시전 (공격 쿨과 무관). 기절·수면·혼란 중엔 불가.
     const acts = d.actives;
-    if (acts && !isIncapacitated(g, e) && g.tick >= e.confusedUntil && g.tick >= e.fearedUntil) {
+    if (acts && !isIncapacitated(g, e) && g.tick >= e.confusedUntil && g.tick >= e.fearedUntil
+      && g.tick >= e.seducedUntil) {
       for (let i = 0; i < acts.length; i++) {
         const a = acts[i]!;
         if (a.kind === 'strike' || e.skillCds[i]! > 0) continue;
@@ -1160,6 +1222,116 @@ export function stepCombat(g: Game): void {
             }
             break;
           }
+          case 'seduce': { // 「매혹」(서큐버스) 확률로 적 하나를 홀린다
+            if (!inCombat) break;
+            const range6 = a.castRange ?? tiles(6);
+            const aim = nearestFoeWithin(g, e, d, range6, (v) =>
+              def(v).speed > 0 && !blocksStatus(g, v) && g.tick >= v.invulnUntil && g.tick >= v.seducedUntil);
+            if (aim) {
+              // 각성(해금 업그레이드): 확률 45% + 성공 시 15초 악마 변신
+              const awakened = e.owner >= 0 && !!g.players[e.owner]?.upgrades['pu_succubus_awaken'];
+              const chance = awakened ? 45 : (a.chancePct ?? 30);
+              if (nextChance(g.rng, chance)) {
+                aim.seducedUntil = g.tick + (a.durTicks ?? 160); // 기본 8초
+                if (awakened) {
+                  // 악마 변신: 체력 2배 + 100% 회복 + 공격력 대폭 상승 (15초)
+                  const base = DEFS[e.defId]!;
+                  const w0 = base.weapon!;
+                  e.defOv = {
+                    ...base,
+                    maxHp: base.maxHp * 2,
+                    weapon: { ...w0, damage: w0.damage * 5 },
+                  };
+                  e.hp = base.maxHp * 2;
+                  e.transformUntil = g.tick + 300; // 15초
+                }
+              }
+              e.skillCds[i] = a.cooldown; // 빗나가도 쿨은 돈다 (확률기)
+            }
+            break;
+          }
+          case 'summonMare': { // 「몽마 소환」 — 서큐버스당 한 마리, 재소환하면 이전 몽마는 흩어진다
+            if (!inCombat) break;
+            const oldMare = e.mareId >= 0 ? byId.get(e.mareId) : undefined;
+            if (oldMare && oldMare.alive) {
+              oldMare.alive = false; // 조용히 흩어진다 (사망 이벤트·보상 없음)
+            }
+            const mare = spawnBattleEntity(g, 'p_dream_mare', e.team, e.owner,
+              clamp(e.x + 400, 0, g.map.length), clampLaneY(g.map, e.x, e.y + 400));
+            e.mareId = mare.id;
+            e.skillCds[i] = a.cooldown;
+            break;
+          }
+          case 'leap': { // 「관짝 강습」(관짝지기) 후방 힐러·원거리에게 도약 — 도약 중 무적
+            const range5 = a.castRange ?? tiles(5);
+            const pick = (filter: (v: Entity) => boolean): Entity | undefined =>
+              nearestFoeWithin(g, e, d, range5, (v) =>
+                g.tick >= v.invulnUntil && def(v).speed > 0 && filter(v));
+            // 우선순위: 힐러 > 원거리(사거리 2타일 이상) > 아무 적
+            const jumpTo = pick((v) => !!def(v).heal)
+              ?? pick((v) => (def(v).weapon?.range ?? 0) >= tiles(2))
+              ?? pick(() => true);
+            if (jumpTo) {
+              const jd = def(jumpTo);
+              e.x = clamp(jumpTo.x - (jd.radius + d.radius), 0, g.map.length);
+              e.y = clampLaneY(g.map, e.x, jumpTo.y);
+              e.invulnUntil = g.tick + 12; // 0.6초 — 도약 중 무적
+              e.targetId = jumpTo.id;
+              e.skillCds[i] = a.cooldown;
+            }
+            break;
+          }
+          case 'stealth': // 「은신」(인큐버스) 6초간 조준·피해에서 완전히 사라진다
+            if (inCombat) {
+              e.stealthUntil = g.tick + (a.durTicks ?? 120); // 기본 6초
+              e.skillCds[i] = a.cooldown;
+            }
+            break;
+          case 'legion': { // 「군세 소환」(인큐버스 해금) 고정 구성 대량 소환
+            if (inCombat && a.legion) {
+              let k = 0;
+              for (const row of a.legion) {
+                for (let m = 0; m < row.n; m++) {
+                  const ov = e.owner >= 0 ? effectiveDef(row.id, g.players[e.owner]!.upgrades) : undefined;
+                  const sx2 = clamp(e.x + ((k % 5) - 2) * 500, 0, g.map.length);
+                  const sy2 = clampLaneY(g.map, sx2, e.y + (Math.floor(k / 5) - 2) * 500);
+                  spawnBattleEntity(g, row.id, e.team, e.owner, sx2, sy2, ov);
+                  k++;
+                }
+              }
+              e.skillCds[i] = a.cooldown;
+            }
+            break;
+          }
+          case 'sacrifice': { // 「제물 흡수」(인큐버스 해금) 주변 아군을 삼켜 강해진다
+            // 7초마다: 아군이 있으면 흡수 +1스택, 없으면 -1스택 (스킬 쿨 = 판정 주기)
+            const rr = a.auraRadius ?? tiles(3);
+            let victim: Entity | undefined;
+            let victimRank = 999;
+            for (const ally of g.entities) {
+              if (!ally.alive || ally.team !== e.team || ally.id === e.id) continue;
+              const ad = def(ally);
+              if (ad.tier === 'structure' || ad.tier === 'guardian') continue;
+              if (ally.invulnUntil >= Number.MAX_SAFE_INTEGER) continue;
+              if (dist2(e.x, e.y, ally.x, ally.y) > rr * rr) continue;
+              const rank = TIER_RANK[ad.tier] ?? 0;
+              if (rank < victimRank) { // 낮은 티어 우선 (동률은 배열 앞쪽)
+                victimRank = rank;
+                victim = ally;
+              }
+            }
+            if (victim) {
+              victim.alive = false; // 제물은 조용히 사라진다
+              if (e.sacrificeStacks < 10) e.sacrificeStacks++;
+              const max = def(e).maxHp;
+              e.hp += idiv(max, 10);
+              if (e.hp > max) e.hp = max;
+            } else if (e.sacrificeStacks > 0) {
+              e.sacrificeStacks--;
+            }
+            e.skillCds[i] = a.cooldown;
+            break;
+          }
           case 'sleep': // 「수면」 현재 목표를 재운다 (이미 자는 대상엔 낭비하지 않는다)
             if (inCombat && def(t!).speed > 0 && g.tick >= t!.invulnUntil && g.tick >= t!.sleepUntil
               && !isStatusImmune(t!)) {
@@ -1195,6 +1367,7 @@ export function stepCombat(g: Game): void {
     if (e.cooldown > 0) continue;
     if (isIncapacitated(g, e)) continue; // 기절·수면·빙결: 공격 불가
     if (g.tick < e.fearedUntil) continue; // 공포: 달아나느라 공격 불가
+    if (g.tick < e.seducedUntil) continue; // 매혹: 싸움을 잊었다
     // (혼란은 공격을 막지 않는다 — 타겟팅이 이미 자기 편을 조준하고 있다)
 
     const target = e.targetId >= 0 ? byId.get(e.targetId) : undefined;
@@ -1309,7 +1482,8 @@ export function stepCombat(g: Game): void {
       e.healCooldown--;
       continue;
     }
-    if (g.tick < e.confusedUntil || g.tick < e.fearedUntil || isIncapacitated(g, e)) continue; // 혼란·공포·기절·수면: 치유 불가
+    if (g.tick < e.confusedUntil || g.tick < e.fearedUntil || g.tick < e.seducedUntil
+      || isIncapacitated(g, e)) continue; // 혼란·공포·매혹·기절·수면: 치유 불가
     // 동시 회복(multi): 체력 비율이 낮은 순으로 여럿을 한 번에 돌본다 (기본 1명)
     const allies = findWoundedAllies(g, e, d, d.heal.range + d.radius, d.heal.multi ?? 1);
     let healedAny = false;

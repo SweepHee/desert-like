@@ -51,6 +51,8 @@ const SFX: Record<string, readonly string[]> = {
   cast_bell: ['/assets/sfx/cast_bell1.mp3'],
   cast_puppet: ['/assets/sfx/cast_puppet1.mp3'],
   cast_sleep: ['/assets/sfx/cast_sleep1.mp3'],
+  cast_charm: ['/assets/sfx/cast_charm1.mp3'],
+  die_succubus: ['/assets/sfx/die_succubus1.mp3'],
   explosion: ['/assets/sfx/explosion1.mp3', '/assets/sfx/explosion2.mp3'],
   // 게임 흐름
   wave: ['/assets/sfx/wave.mp3'],

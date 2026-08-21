@@ -142,10 +142,15 @@ export interface ActiveSkill {
   readonly cooldown: number; // 틱
   /** 이 업그레이드를 산 소유자만 사용 가능 (스킬 해금 — 세이지·앨리스). */
   readonly requiresUpgrade?: string;
+  /** seduce: 매혹 확률 % (기본 30). */
+  readonly chancePct?: number;
+  /** legion: 고정 구성 대량 소환 목록. */
+  readonly legion?: readonly { readonly id: string; readonly n: number }[];
   readonly kind:
     | 'strike' | 'selfbuff' | 'allybuff' | 'invuln' | 'summon' | 'confuse' | 'zone' | 'taunt' | 'nuke'
     | 'allyarmor' | 'weaken' | 'cure' | 'sleep'
-    | 'ground' | 'slowfield' | 'freeze' | 'charm' | 'reflect' | 'fear' | 'root';
+    | 'ground' | 'slowfield' | 'freeze' | 'charm' | 'reflect' | 'fear' | 'root'
+    | 'seduce' | 'summonMare' | 'leap' | 'stealth' | 'purge' | 'legion' | 'sacrifice';
   // strike: 스킬 피해 (방어 적용). executeBelowPct 가 있으면
   // 대상 체력이 그 % 이하일 때만 발동하고 executeBonus 를 더한다.
   readonly damage?: number;
@@ -308,6 +313,20 @@ export interface Entity {
   reflectUntil: number;
   /** 이 틱까지 공포 — 싸움을 포기하고 자기 기지로 달아난다 (시계탑 톱니바퀴). */
   fearedUntil: number;
+  /** 이 틱까지 매혹 (서큐버스) — 공격·시전을 잊고 적진 한가운데로 걸어간다. */
+  seducedUntil: number;
+  /** 이 틱까지 은신 (인큐버스) — 조준·피해에서 완전히 제외된다. */
+  stealthUntil: number;
+  /** 이 틱까지 악마 변신 (서큐버스 각성) — 스탯이 defOv 로 뒤집혀 있다. */
+  transformUntil: number;
+  /** 이 틱까지 상태이상 면역 (인큐버스 「완전 해제」 후). */
+  purgeImmuneUntil: number;
+  /** 제물 흡수 스택 (인큐버스): 공격력 +10%/방어 +2 씩. */
+  sacrificeStacks: number;
+  /** 다음 제물 흡수/감쇠 판정 틱. */
+  sacrificeNextTick: number;
+  /** 내가 소환한 몽마 엔티티 id (서큐버스, -1 = 없음). */
+  mareId: number;
   /**
    * 이 틱까지 지상화 (「리버스그라비티」). 비행 유닛이 지상 판정을 받는다 —
    * 대지상 무기에 맞고, 지상 장판에 걸리고, 지상 유닛과 겹침 판정도 한다.

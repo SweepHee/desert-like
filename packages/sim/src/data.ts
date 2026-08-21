@@ -745,7 +745,7 @@ reg(D({
 }));
 
 reg(D({
-  id: 'p_mammon', race: 'pandemonium', name: '마몬', tier: 'final',
+  id: 'p_mammon', race: 'pandemonium', name: '마몬', tier: 'supreme',
   cost: 570, supply: 7, maxHp: 1150, armor: 3, tags: ['plate', 'massive', 'undead', 'male'], ...GROUND,
   speed: tilesPerSecond(1.4), radius: tiles(0.7), acquireRange: tiles(6),
   // 충격 (대검 강타): 판금 카운터 + 흡혈 광역
@@ -758,6 +758,88 @@ reg(D({
     {
       name: '인비저블', desc: '4초간 모든 피해를 받지 않음', kind: 'invuln',
       cooldown: seconds(30), durTicks: seconds(4),
+    },
+  ],
+}));
+
+// ── 판데모니엄 확장 로스터 (v1.1) ─────────────────────────────────────────
+reg(D({
+  // 밴시와 데미리치 사이의 강함 — 딜러+탱커+서포터를 겸하는 공중 만능형
+  id: 'p_bone_dragon', race: 'pandemonium', name: '본드래곤', tier: 'supreme',
+  cost: 520, supply: 5, maxHp: 680, armor: 2, tags: ['plate', 'massive', 'undead'], flying: true,
+  speed: tilesPerSecond(2.4), radius: tiles(0.62), acquireRange: tiles(6),
+  // 뼈 브레스: 소범위 광역 + 입힌 피해의 30% 흡혈
+  weapon: { damage: 40, cooldown: seconds(1.3), range: tiles(1.4), targets: 'both', splash: tiles(1.1), lifestealPct: 25 },
+  actives: [{
+    name: '사령의 날개', desc: '주변 아군 방어력 +2 (12초)', kind: 'allyarmor',
+    cooldown: seconds(22), durTicks: seconds(12), armorAdd: 2, auraRadius: tiles(4.5),
+  }],
+}));
+reg(D({
+  // 후방 암살자: 힐러·원거리에게 관짝째 도약해 달려든다 (도약 중 무적)
+  id: 'p_coffin_bearer', race: 'pandemonium', name: '관짝지기', tier: 'high',
+  cost: 340, supply: 3, maxHp: 430, armor: 2, tags: ['leather', 'undead'], ...GROUND,
+  speed: tilesPerSecond(2.3), radius: tiles(0.4), acquireRange: tiles(5.5),
+  weapon: { damage: 46, bonus: { cloth: 20 }, cooldown: seconds(1.0), range: tiles(0.6), targets: 'ground' },
+  actives: [{
+    name: '관짝 강습', desc: '후방의 힐러·원거리에게 도약 (사거리 5, 도약 중 무적)', kind: 'leap',
+    cooldown: seconds(12), castRange: tiles(5),
+  }],
+}));
+reg(D({
+  // CC 마법사: 딜은 미미하지만 매혹·몽마로 전선을 뒤흔든다. 공격은 하트가 날아간다
+  id: 'p_succubus', race: 'pandemonium', name: '서큐버스', tier: 'high',
+  cost: 380, supply: 3, maxHp: 250, armor: 0, tags: ['cloth', 'undead', 'female'], ...GROUND,
+  speed: tilesPerSecond(1.9), radius: tiles(0.36), acquireRange: tiles(5.5),
+  weapon: { damage: 8, cooldown: seconds(1.1), range: tiles(5), targets: 'both' },
+  actives: [
+    {
+      name: '매혹', desc: '적 하나를 8초간 홀린다 (30%) — 싸움을 잊고 적진으로 걸어간다', kind: 'seduce',
+      cooldown: seconds(9), durTicks: seconds(8), castRange: tiles(6), chancePct: 30,
+    },
+    {
+      name: '몽마 소환', desc: '꿈의 마수를 부른다 (서큐버스당 1마리 — 재소환 시 이전 몽마는 흩어진다)', kind: 'summonMare',
+      cooldown: seconds(45),
+    },
+  ],
+}));
+reg(D({
+  // 서큐버스의 소환수: 잠을 부르는 꿈의 마수. 매혹당한 제물에게서 생기를 빨아들인다
+  id: 'p_dream_mare', race: 'pandemonium', name: '몽마', tier: 'mid', summonOnly: true,
+  cost: 0, supply: 0, maxHp: 280, armor: 1, tags: ['cloth', 'undead'], flying: true,
+  speed: tilesPerSecond(2.8), radius: tiles(0.4), acquireRange: tiles(5),
+  weapon: { damage: 34, cooldown: seconds(1.0), range: tiles(0.8), targets: 'both' },
+  actives: [{
+    name: '자장가', desc: '목표를 6초간 재운다 (3회 피격 시 해제)', kind: 'sleep',
+    cooldown: seconds(8), durTicks: seconds(6),
+  }],
+}));
+reg(D({
+  // 최종 유닛: 한손검의 귀공자. 은신과 완전 해제로 죽지 않고, 해금 스킬로 군세를 부린다
+  id: 'p_incubus', race: 'pandemonium', name: '인큐버스', tier: 'final',
+  cost: 1500, supply: 8, maxHp: 950, armor: 3, tags: ['leather', 'undead', 'male'], ...GROUND,
+  speed: tilesPerSecond(2.0), radius: tiles(0.45), acquireRange: tiles(6),
+  weapon: { damage: 95, cooldown: seconds(0.9), range: tiles(0.7), targets: 'ground' },
+  actives: [
+    {
+      name: '은신', desc: '6초간 완전히 사라진다 — 조준·피해 불가 (쿨 18초)', kind: 'stealth',
+      cooldown: seconds(18), durTicks: seconds(6),
+    },
+    {
+      name: '완전 해제', desc: '상태이상에 걸리면 즉시 해제 + 20초 면역 (자동, 쿨 30초)', kind: 'purge',
+      cooldown: seconds(30), durTicks: seconds(20),
+    },
+    {
+      name: '군세 소환', desc: '판데모니엄 군세를 부른다 — 밴시 12·시체 골렘 5·타나토스 3·데미리치 1·마몬 1 (업그레이드 필요)', kind: 'legion',
+      cooldown: seconds(60), requiresUpgrade: 'pu_incubus_legion',
+      legion: [
+        { id: 'p_banshee', n: 12 }, { id: 'p_corpse_golem', n: 5 },
+        { id: 'p_thanatos', n: 3 }, { id: 'p_demilich', n: 1 }, { id: 'p_mammon', n: 1 },
+      ],
+    },
+    {
+      name: '제물 흡수', desc: '7초마다 주변 아군을 삼켜 강해진다 — 스택당 공격 +10%·방어 +2, 최대 10 (업그레이드 필요)', kind: 'sacrifice',
+      cooldown: seconds(7), auraRadius: tiles(3), requiresUpgrade: 'pu_incubus_sacrifice',
     },
   ],
 }));
@@ -1457,6 +1539,9 @@ export const UPGRADES: UnitUpgrade[] = [
   { id: 'pu_bone_shard', unit: 'p_bone_thrower', name: '뼈 파편', desc: '공격이 소범위 파편 피해', cost: 200, tech: 2, mods: { splashAdd: tiles(0.5) } },
   { id: 'pu_knight_horse', unit: 'p_headless_knight', name: '검은 군마', desc: '이동속도 +20%', cost: 200, tech: 2, mods: { speedPct: 20 } },
   { id: 'pu_banshee_scream', unit: 'p_banshee', name: '죽음의 비명', desc: '공격력 +40%', cost: 220, tech: 2, choiceGroup: 'banshee1', mods: { damagePct: 40 } },
+  { id: 'pu_succubus_awaken', unit: 'p_succubus', name: '각성', desc: '매혹 확률 45% + 매혹 성공 시 15초 악마 변신 (체력 2배·완전 회복·공격력 대폭 상승)', cost: 1200, tech: 3, mods: {} },
+  { id: 'pu_incubus_legion', unit: 'p_incubus', name: '군세 소환 해금', desc: '스킬 해금: 밴시 12·시체 골렘 5·타나토스 3·데미리치 1·마몬 1 소환', cost: 1200, tech: 3, mods: {} },
+  { id: 'pu_incubus_sacrifice', unit: 'p_incubus', name: '제물 흡수 해금', desc: '스킬 해금: 7초마다 주변 아군을 삼켜 공격 +10%·방어 +2 (최대 10스택)', cost: 1800, tech: 3, mods: {} },
   { id: 'pu_banshee_wail', unit: 'p_banshee', name: '절망의 울음', desc: '피격 시 한기 3초 — 공속·이속 -20%', cost: 220, tech: 2, choiceGroup: 'banshee1', mods: { chillSet: { ticks: seconds(3) } } },
   { id: 'pu_thanatos_scythe', unit: 'p_thanatos', name: '죽음의 낫', desc: '낫 범위 확대', cost: 300, tech: 3, mods: { splashAdd: tiles(0.5) } },
   { id: 'pu_golem_bone', unit: 'p_corpse_golem', name: '뼈 갑주', desc: '방어력 +2', cost: 250, tech: 3, mods: { armorAdd: 2 } },

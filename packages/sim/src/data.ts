@@ -835,7 +835,7 @@ reg(D({
       ],
     },
     {
-      name: '제물 흡수', desc: '7초마다 내 1티어 유닛(소환수 포함)을 삼켜 강해진다 — 스택당 공격 +10%·방어 +2, 최대 10 (업그레이드 필요)', kind: 'sacrifice',
+      name: '제물 흡수', desc: '7초마다 내 1티어 유닛(소환수 포함)을 삼켜 강해진다 — 스택당 공격·공속 +10%, 방어 +2, 최대 10 (업그레이드 필요)', kind: 'sacrifice',
       cooldown: seconds(7), auraRadius: tiles(3), requiresUpgrade: 'pu_incubus_sacrifice',
     },
   ],
@@ -1538,7 +1538,7 @@ export const UPGRADES: UnitUpgrade[] = [
   { id: 'pu_banshee_scream', unit: 'p_banshee', name: '죽음의 비명', desc: '공격력 +40%', cost: 220, tech: 2, choiceGroup: 'banshee1', mods: { damagePct: 40 } },
   { id: 'pu_succubus_awaken', unit: 'p_succubus', name: '각성', desc: '매혹 확률 45% + 매혹 성공 시 15초 악마 변신 (체력 2배·완전 회복·공격력 대폭 상승)', cost: 1200, tech: 3, mods: {} },
   { id: 'pu_incubus_legion', unit: 'p_incubus', name: '군세 소환 해금', desc: '스킬 해금: 밴시 12·시체 골렘 5·타나토스 3·데미리치 1·마몬 1 소환', cost: 1200, tech: 3, mods: {} },
-  { id: 'pu_incubus_sacrifice', unit: 'p_incubus', name: '제물 흡수 해금', desc: '스킬 해금: 7초마다 내 1티어 유닛을 삼켜 공격 +10%·방어 +2 (최대 10스택)', cost: 1800, tech: 3, mods: {} },
+  { id: 'pu_incubus_sacrifice', unit: 'p_incubus', name: '제물 흡수 해금', desc: '스킬 해금: 7초마다 내 1티어 유닛을 삼켜 공격·공속 +10%·방어 +2 (최대 10스택)', cost: 1800, tech: 3, mods: {} },
   { id: 'pu_banshee_wail', unit: 'p_banshee', name: '절망의 울음', desc: '피격 시 한기 3초 — 공속·이속 -20%', cost: 220, tech: 2, choiceGroup: 'banshee1', mods: { chillSet: { ticks: seconds(3) } } },
   { id: 'pu_thanatos_scythe', unit: 'p_thanatos', name: '죽음의 낫', desc: '낫 범위 확대', cost: 300, tech: 3, mods: { splashAdd: tiles(0.5) } },
   { id: 'pu_golem_bone', unit: 'p_corpse_golem', name: '뼈 갑주', desc: '방어력 +2', cost: 250, tech: 3, mods: { armorAdd: 2 } },

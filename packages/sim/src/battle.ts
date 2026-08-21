@@ -253,6 +253,7 @@ function atkSpeedPctOf(g: Game, e: Entity, d: EntityDef): number {
   const fb = forestBuffOf(g, e);
   if (fb?.atkSpeedPct) pct += fb.atkSpeedPct;
   if (g.tick < e.atkBuffUntil) pct += 10; // 군세강화 (중복 없음 — 갱신만)
+  pct += e.sacrificeStacks * 10; // 제물 흡수 (인큐버스): 스택당 공속 +10%
   return pct;
 }
 

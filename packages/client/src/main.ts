@@ -255,6 +255,14 @@ function refreshUnitInfo(): void {
   if (game.tick < e.atkBuffUntil) status.push('군세강화');
   if (game.tick < e.forestUntil) status.push('숲의 가호');
   if (e.defId === 'nexus' && !game.guardianDown[e.team as 0 | 1]) status.push('보호막 (수호자 생존)');
+  // 신규 상태 (판데모니엄 확장 로스터)
+  if (game.tick < e.seducedUntil) status.push('매혹 (적진으로 홀린 듯 전진)');
+  if (game.tick < e.stealthUntil) status.push('은신');
+  if (game.tick < e.transformUntil) status.push('악마 변신');
+  if (game.tick < e.purgeImmuneUntil) status.push('완전 해제 (상태이상 면역)');
+  if (e.sacrificeStacks > 0) {
+    status.push(`제물 흡수 ${e.sacrificeStacks}/10 (공격 +${e.sacrificeStacks * 10}% · 방어 +${e.sacrificeStacks * 2})`);
+  }
   const tickNow = game.tick;
   (d.actives ?? []).forEach((a, i) => {
     if (a.kind === 'selfbuff' && tickNow < e.buffUntil) status.push(`「${a.name}」 지속 중`);

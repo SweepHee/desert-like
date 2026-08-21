@@ -551,15 +551,23 @@ export const SYLVARIN_CAMPAIGN: readonly CampaignStage[] = [
     noTowers: true,
     noEnemyNexus: true,
     bossDefId: 'c_balthar_general',
-    deadlineWave: 45,
+    // 28턴 — "기다렸다 총력 러시"가 안 통하는 빠듯한 시한. 그리디 차단의 핵심
+    deadlineWave: 28,
     // 앨리스 군단(아군 봇)은 위 갈래 끝에서 출정해 합류점으로 내려온다
     allyDeployTile: { x: 30, y: -13 },
-    // 적 물량은 봇 생산 + 확정 증원 — 보스만 잡는 게 아니라 물량전을 버티며 뚫는다
+    // 적 물량은 봇 생산 + 확정 증원 — 보스만 잡는 게 아니라 물량전을 버티며 뚫는다.
+    // 배신자 마몬도 10턴부터 직접 전장에 선다 (스토리 정합)
     growth: [
       { defId: 'p_headless_knight', label: '사령 기사단', fromWave: 4 },
       { defId: 'p_demilich', label: '데미리치 친위대', fromWave: 8 },
+      { defId: 'p_mammon', label: '💰 배신자 마몬', fromWave: 10 },
     ],
-    enemyUnitCaps: { p_headless_knight: 8, p_demilich: 4 },
+    enemyUnitCaps: { p_headless_knight: 12, p_demilich: 6, p_mammon: 3 },
+    // 웨이브 사이를 메꾸는 확정 증원 — 숨 돌릴 틈을 주지 않는다
+    spawns: [
+      { defId: 'c_bone_colossus', label: '뼈 거상', everySec: 150 },
+      { defId: 'c_dread_gargoyle', label: '공포의 가고일', atSec: 180, everySec: 170 },
+    ],
     briefing: [
       { who: '마몬', text: '배신? 아니지, 더 좋은 조건이 왔을 뿐! 발타르 님이 너희 숲을 통째로 주신다더군!' },
       { who: '', text: '계곡 끝에서 거대한 그림자가 일어선다. 발타르가 아끼는 선봉장 — 사령장군 카르가스.' },

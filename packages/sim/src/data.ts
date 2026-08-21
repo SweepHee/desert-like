@@ -1119,7 +1119,7 @@ reg(D({
   // 요새 앞을 지키며(leashed) 접근하는 모든 것을 소울파이어 대검으로 갈라 버린다.
   id: 'c_balthar_general', race: null, name: '사령장군 카르가스', tier: 'guardian', summonOnly: true,
   cost: 0, supply: 0, maxHp: 21000, armor: 6, tags: ['plate', 'massive', 'undead'], ...GROUND,
-  regenPerSec: 4, // 사령 재생 — 찔끔찔끔 갉아서는 못 잡는다, 화력을 집중해야
+  regenPerSec: 7, // 사령 재생 — 찔끔찔끔 갉아서는 못 잡는다, 화력을 한 번에 집중해야
   // (상태이상 면역은 guardian 티어 공통 규칙으로 이미 적용된다)
   speed: tilesPerSecond(1.6), radius: tiles(1.0), acquireRange: tiles(8), leashed: true,
   weapon: { damage: 120, bonus: { bio: 40 }, cooldown: seconds(1.1), range: tiles(1.6), targets: 'both', splash: tiles(1.9) },

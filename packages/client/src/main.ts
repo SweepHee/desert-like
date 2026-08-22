@@ -798,6 +798,7 @@ async function startCampaignStage(st: CampaignStage): Promise<void> {
     ...(st.allyUnitCaps ? { allyUnitCaps: st.allyUnitCaps } : {}),
     ...(st.enemyAllowedUnits ? { enemyAllowedUnits: st.enemyAllowedUnits } : {}),
     ...(st.enemyStartMoney !== undefined ? { enemyStartMoney: st.enemyStartMoney } : {}),
+    ...(st.enemyStartTech !== undefined ? { enemyStartTech: st.enemyStartTech } : {}),
     ...(st.enemyIncomePct !== undefined ? { enemyIncomePct: st.enemyIncomePct } : {}),
     ...(st.enemyUnitMinWave ? { enemyUnitMinWave: st.enemyUnitMinWave } : {}),
     ...(st.enemyCapsUntilWave !== undefined ? { enemyCapsUntilWave: st.enemyCapsUntilWave } : {}),

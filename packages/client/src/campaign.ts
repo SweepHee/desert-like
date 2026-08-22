@@ -85,6 +85,8 @@ export interface CampaignStage {
   readonly enemyAllowedUnits?: readonly string[];
   /** 적(팀1) 봇 시작 자금. */
   readonly enemyStartMoney?: number;
+  /** 적(팀1) 봇 시작 테크 (1~3). 전 티어를 미리 열고 등장은 minWave 로만 통제. */
+  readonly enemyStartTech?: number;
   /** 적(팀1) 봇 인컴 배율 % (난이도 인컴 보너스 대체). */
   readonly enemyIncomePct?: number;
   /** 적 유닛별 최소 등장 웨이브 (이 턴 전엔 구매 불가). */
@@ -480,25 +482,36 @@ export const SYLVARIN_CAMPAIGN: readonly CampaignStage[] = [
     seed: seedOf(11), mapId: 'nest',
     enemySkin: 'bone',
     // ── 11 = 판데 중상급의 무대: 시체 골렘·타나토스·밴시가 주역 ──
-    // 데미리치·마몬(끝판급)은 아직 이르다 — 25턴부터, 그것도 소수 정예(캡 3)만.
-    // preferred ×8 가중은 폭주 함정이라 반드시 캡과 함께 쓴다 (타나토스 47기 실측).
+    // 적 생산창을 아예 밴시까지로 잘라둔다. 끝판급(데미리치·마몬·본드래곤·
+    // 인큐버스…)은 목록에 없으니 봇이 살 수 없고, 데미리치·마몬만 「출현!」으로 온다.
+    enemyAllowedUnits: [
+      'p_skeleton', 'p_bone_thrower', 'p_summoner', 'p_headless_knight',
+      'p_corpsecaller', 'p_lich', 'p_corpse_golem', 'p_thanatos',
+      'p_wraith', 'p_banshee',
+    ],
+    // 적 봇은 처음부터 테크 3 — 등장 시점은 전부 minWave 로만 통제한다.
+    // (봇 테크는 성격·시드 운을 타서 "밴시가 30턴 내내 안 나오는" 시드가 생겼다.
+    //  테크비를 안 쓰는 만큼 그 돈은 병력으로 간다.)
+    enemyStartTech: 3,
     // 망령을 앞에 세워 "인컴+테크 그리디"를 초반부터 응징한다 — 공중 위협이
-    // 1~2턴부터 꾸준해야 방어에 돈을 쓰게 된다 (밴시는 테크3 즉시 합류)
+    // 1~2턴부터 꾸준해야 방어에 돈을 쓰게 된다
     enemyPreferredUnits: ['p_wraith', 'p_corpse_golem', 'p_thanatos', 'p_banshee'],
     enemyUnitMinWave: {
-      // 끝판 유닛은 25턴에야 모습을 드러낸다
-      p_demilich: 25, p_mammon: 25,
-      // 주역 지상 2종은 초반 몇 턴은 잡졸이 먼저 (테크 진행 느낌)
-      p_corpse_golem: 5, p_thanatos: 7, p_banshee: 5,
+      // 테크가 열려 있으니 등장 순서는 여기서 직접 그린다 (턴 = 대략적인 난이도 곡선)
+      p_summoner: 2, p_wraith: 2,          // 2턴: 소환사·망령 — 공중 위협이 일찍 온다
+      p_headless_knight: 3, p_corpsecaller: 3,
+      p_corpse_golem: 5, p_banshee: 5,     // 5턴: 주역 지상·공중 합류
+      p_lich: 6,
+      p_thanatos: 7,                       // 7턴: 최종 주역
     },
     enemyUnitCaps: {
-      // 주역 — 물량감은 있되 무한 누적은 금지 (팀 합산 편성 상한)
-      p_corpse_golem: 12, p_thanatos: 10, p_banshee: 10, p_wraith: 8,
+      // 주역 4종(망령·시체 골렘·타나토스·밴시)은 상한 없음 — 턴이 갈수록 계속 불어난다
+      // 잡졸은 초반 물량용. 테크비를 안 쓰는 만큼 남는 돈이 전부 스켈레톤(70원)으로
+      // 흘러가 40기씩 쌓이던 것을 캡으로 막는다 — 그 돈이 주역으로 간다
+      p_skeleton: 10,
       // 조연 — 소수만
       p_bone_thrower: 6, p_headless_knight: 12,
       p_lich: 4, p_corpsecaller: 4,
-      // 25턴부터의 끝판 손님은 딱 3기씩
-      p_demilich: 3, p_mammon: 3,
     },
     // 수비 모드: 부대가 둥지 주변에 대기하다 침입 방향으로 자동 요격한다
     defendNexus: true,
@@ -521,7 +534,10 @@ export const SYLVARIN_CAMPAIGN: readonly CampaignStage[] = [
       { defId: 'p_minion_rat', label: '⬆ 능선의 망자 무리', everySec: 7, count: 4, atXTile: 48, yOffTile: -32 },
       // 능선의 망령: 1분부터 하늘로도 꾸준히 내려온다 — 인컴 그리디의 천적
       { defId: 'p_wraith', label: '⬆ 능선의 망령', atSec: 60, everySec: 40, count: 2, atXTile: 47, yOffTile: -34 },
-      // ── 4시(적 진영): 스폰 없음 — 정규 봇 생산 웨이브만 온다
+      // ── 4시(적 진영): 봇 생산 웨이브 + 끝판 손님은 「출현!」으로만 소수 등장.
+      // 25턴(1500초)부터 데미리치 3기 · 26턴부터 마몬 2기 — 마지막 5턴의 압박
+      { defId: 'p_demilich', label: '💀 데미리치', atSec: 1500, everySec: 120 },
+      { defId: 'p_mammon', label: '💰 탐욕의 마몬', atSec: 1560, everySec: 150 },
       // ── 8시: V자 왼쪽 끝 골짜기에서 올라온다 (중립: 시간이 갈수록 사나워진다)
       { defId: 'c_wild_wolf_gray', label: '⬋ 야생 늑대 무리', everySec: 16, count: 5, atXTile: 8, yOffTile: 0, neutral: true },
       { defId: 'c_wild_snake', label: '⬋ 독사 떼', everySec: 20, count: 4, atXTile: 5, yOffTile: 0, neutral: true },
@@ -532,8 +548,14 @@ export const SYLVARIN_CAMPAIGN: readonly CampaignStage[] = [
       { defId: 'c_wild_bear_gray', label: '⬋ 회색곰', atSec: 360, everySec: 70, count: 2, atXTile: 6, yOffTile: 0, neutral: true },
       { defId: 'c_wild_direwolf', label: '⬋ 다이어울프 무리', atSec: 540, everySec: 60, count: 3, atXTile: 8, yOffTile: 0, neutral: true },
       { defId: 'c_wild_grizzly', label: '⬋ 그리즐리베어', atSec: 600, everySec: 80, count: 2, atXTile: 6, yOffTile: 0, neutral: true },
-      // 14턴부터 상시 3기 유지 — 죽으면 다시 날아온다 (출현 1회가 아니라 지속 위협)
-      { defId: 'c_wild_blackbird', label: '⚫ 검은새 — 하늘의 왕', atSec: 840, everySec: 45, concurrentCap: 3, atXTile: 5, yOffTile: -2, neutral: true },
+      // 검은새는 14·17·20·25·28턴에 딱 한 마리씩 (총 5회, 반복 없음).
+      // 상시 3기 유지는 압박이 너무 컸다 — 죽여도 45초면 또 오니 숨 돌릴 틈이 없었다.
+      // 한 마리씩 띄엄띄엄 와야 「하늘의 왕이 나타났다」는 사건으로 읽힌다.
+      { defId: 'c_wild_blackbird', label: '⚫ 검은새 — 하늘의 왕', atSec: 840, atXTile: 5, yOffTile: -2, neutral: true },
+      { defId: 'c_wild_blackbird', label: '⚫ 검은새 — 하늘의 왕', atSec: 1020, atXTile: 5, yOffTile: -2, neutral: true },
+      { defId: 'c_wild_blackbird', label: '⚫ 검은새 — 하늘의 왕', atSec: 1200, atXTile: 5, yOffTile: -2, neutral: true },
+      { defId: 'c_wild_blackbird', label: '⚫ 검은새 — 하늘의 왕', atSec: 1500, atXTile: 5, yOffTile: -2, neutral: true },
+      { defId: 'c_wild_blackbird', label: '⚫ 검은새 — 하늘의 왕', atSec: 1680, atXTile: 5, yOffTile: -2, neutral: true },
     ],
     briefing: [
       { who: '엘로윈', text: '높은 봉우리의 옛 맹약을 깨울 때다. 와이번은 긍지가 높다 — 명령하지 말고 부탁해라.' },

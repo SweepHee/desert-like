@@ -10,7 +10,7 @@ import {
 import { clamp, idiv, tiles } from './math.ts';
 import { createRng, nextChance, nextInt, nextRange } from './rng.ts';
 import { isCombatTag } from './types.ts';
-import type { BotStyle, CombatTeam, Entity, EntityDef, Game, GameConfig, HeroPerks, PlayerState, TeamId } from './types.ts';
+import type { BotStyle, CombatTeam, EnemyCamp, Entity, EntityDef, Game, GameConfig, HeroPerks, PlayerState, TeamId } from './types.ts';
 
 /** 테스트/밸런스 도구용 직접 스폰. 게임 로직은 deployWave 를 쓴다. */
 export function spawnUnit(g: Game, defId: string, team: CombatTeam, x: number, y: number): Entity {
@@ -60,6 +60,33 @@ function spawnEntity(g: Game, defId: string, team: CombatTeam, owner: number, x:
     sleepHits: 0,
     armorBuffUntil: 0,
     armorBuffAdd: 0,
+    auraKind: 0,
+    shieldHp: 0,
+    shieldEverGranted: false,
+    shieldUntil: 0,
+    shieldImmuneUntil: 0,
+    critImmuneUntil: 0,
+    armorBuffImmuneUntil: 0,
+    regenPerSec: 0,
+    regenUntil: 0,
+    regenImmuneUntil: 0,
+    silencedUntil: 0,
+    moonveilUntil: 0,
+    killStacks: 0,
+    killStackUntil: 0,
+    airTauntUntil: 0,
+    airTauntBy: -1,
+    returnTick: 0,
+    returnX: 0,
+    returnY: 0,
+    critPct: 0,
+    critUntil: 0,
+    buriedUntil: 0,
+    timeLocked: false,
+    levitateUntil: 0,
+    hatKind: 0,
+    hatUntil: 0,
+    hatSummonTick: 0,
     healWindowStart: -100,
     healsInWindow: 0,
     alive: true,
@@ -88,6 +115,10 @@ export function createGame(cfg: GameConfig): Game {
     enemyUnitCaps: cfg.enemyUnitCaps ?? {},
     allyUnitCaps: cfg.allyUnitCaps ?? {},
     enemyAllowedUnits: cfg.enemyAllowedUnits ?? [],
+    enemyDeniedUnits: cfg.enemyDeniedUnits ?? [],
+    enemyCamps: cfg.enemyCamps ?? [],
+    crits: [],
+    threadBooms: [],
     enemyIncomePct: cfg.enemyIncomePct ?? 0,
     enemyUnitMinWave: cfg.enemyUnitMinWave ?? {},
     enemyCapsUntilWave: cfg.enemyCapsUntilWave ?? Infinity,
@@ -159,7 +190,39 @@ export function createGame(cfg: GameConfig): Game {
     const lv = Math.max(1, Math.min(g.techCap, cfg.enemyStartTech));
     for (const p of g.players) if (p.team === 1 && p.isBot) p.techLevel = lv;
   }
+  // 캠페인 다거점: 거점마다 시작 경제가 다르다 (성은 부유하게, 전초는 가난하게)
+  for (const camp of g.enemyCamps) {
+    const p = g.players.find((q) => q.team === 1 && q.slot === camp.slot);
+    if (!p) continue;
+    if (camp.startIncome !== undefined) p.incomeLevel = camp.startIncome;
+    if (camp.startMoney !== undefined) p.money = camp.startMoney;
+  }
   return g;
+}
+
+/** 이 플레이어가 맡은 거점 설정 (없으면 undefined). */
+function campOf(g: Game, p: PlayerState): EnemyCamp | undefined {
+  if (p.team !== 1 || g.enemyCamps.length === 0) return undefined;
+  return g.enemyCamps.find((c) => c.slot === p.slot);
+}
+
+/** 지금 턴에 적용되는 생산 구간 (fromWave 이하 중 가장 늦은 것). */
+function phaseOf(camp: EnemyCamp, wave: number): { units: readonly string[]; preferred?: readonly string[] } | undefined {
+  if (!camp.phases || camp.phases.length === 0) return undefined;
+  let hit: typeof camp.phases[number] | undefined;
+  for (const ph of camp.phases) {
+    if (wave + 1 >= ph.fromWave) hit = ph; // 배열 순서 그대로 — 뒤에 오는 구간이 이긴다
+  }
+  return hit;
+}
+
+/** 거점의 현재 인컴 상한 (incomeUnlocks 반영). */
+function campIncomeCap(g: Game, camp: EnemyCamp): number {
+  let cap = camp.incomeCap ?? g.incomeCap;
+  for (const u of camp.incomeUnlocks ?? []) {
+    if (g.waveIndex + 1 >= u.fromWave) cap = u.cap;
+  }
+  return Math.min(g.incomeCap, cap);
 }
 
 // ── 구매 ──────────────────────────────────────────────────────────────────
@@ -183,6 +246,14 @@ export function buyUnit(g: Game, playerIdx: number, defId: string): boolean {
   if (!isMerc && p.team === 0 && !p.isBot && g.allowedUnits.length > 0 && !g.allowedUnits.includes(defId)) return false;
   // 캠페인: 적팀 화이트리스트 — 지정 시 목록 밖 유닛은 생산 불가
   if (p.team === 1 && g.enemyAllowedUnits.length > 0 && !g.enemyAllowedUnits.includes(defId)) return false;
+  // 캠페인 금지 목록 — 화이트리스트가 없는 판에서도 이 유닛만은 못 산다
+  if (p.team === 1 && g.enemyDeniedUnits.includes(defId)) return false;
+  // 거점별 턴 구간 제한 — 지금 구간의 목록에 없으면 생산 불가
+  {
+    const camp = campOf(g, p);
+    const ph = camp ? phaseOf(camp, g.waveIndex) : undefined;
+    if (ph && !ph.units.includes(defId)) return false;
+  }
   // 캠페인: 적팀 유닛 수량 상한 (팀 합산) — 최상급 유닛의 조기 물량화 방지.
   // enemyCapsUntilWave 이후엔 전부 해제 (후반 총력전).
   const cap = p.team === 1 && g.waveIndex < g.enemyCapsUntilWave ? g.enemyUnitCaps[defId] : undefined;
@@ -246,7 +317,11 @@ export function buyTechUp(g: Game, playerIdx: number): boolean {
 export function buyIncomeUpgrade(g: Game, playerIdx: number): boolean {
   const p = g.players[playerIdx];
   if (!p || g.over) return false;
-  if (p.incomeLevel >= g.incomeCap) return false;
+  {
+    const camp = campOf(g, p);
+    const cap = camp ? campIncomeCap(g, camp) : g.incomeCap;
+    if (p.incomeLevel >= cap) return false;
+  }
   if (g.tick < p.incomeCooldownUntil) return false;
   const cost = incomeUpgradeCost(p.incomeLevel);
   if (p.money < cost) return false;
@@ -284,11 +359,15 @@ function deployWave(g: Game, p: PlayerState): void {
   // 아군 봇 출정 위치 오버라이드 (앨리스 군단 — 위 갈래에서 내려온다)
   const allyOv = p.team === 0 && p.isBot ? g.allyDeploy : null;
   if (allyOv) baseX = allyOv.x;
+  // 다거점: 거점마다 자기 자리에서 나온다 (성·전초·전방기지가 다른 곳에서 밀려온다)
+  const campHere = campOf(g, p);
+  if (campHere?.x !== undefined) baseX = campHere.x;
   // 슬롯별 y 밴드: 팀 인원 수만큼 코리도어 폭을 나눠 고르게 배치한다.
   // (1명이면 정중앙, 3명이면 기존과 동일하게 상/중/하)
   const n = g.teamSize[p.team];
   const slotY = idiv((2 * p.slot - (n - 1)) * m.halfW, n);
-  const baseY = allyOv ? allyOv.y : laneCenterY(m, baseX) + slotY;
+  const baseY = campHere?.y !== undefined ? campHere.y
+    : allyOv ? allyOv.y : laneCenterY(m, baseX) + slotY;
   const dir = p.team === 0 ? -1 : 1; // 후열이 자기 진영 쪽으로
 
   for (let i = 0; i < list.length; i++) {
@@ -405,7 +484,9 @@ function botDecide(g: Game, p: PlayerState): void {
 
   // 2) 인컴 업그레이드. 어려움 난이도는 적 사람의 인컴을 따라간다 —
   //    추격 중인데 돈이 모자라면 유닛 구매를 참고 인컴비를 모은다.
-  if (p.incomeLevel < g.incomeCap && g.tick >= p.incomeCooldownUntil) {
+  const myCamp = campOf(g, p);
+  const myIncomeCap = myCamp ? campIncomeCap(g, myCamp) : g.incomeCap;
+  if (p.incomeLevel < myIncomeCap && g.tick >= p.incomeCooldownUntil) {
     const chase = human !== undefined && human.incomeLevel > p.incomeLevel;
     const cost = incomeUpgradeCost(p.incomeLevel);
     if (p.money >= cost) {
@@ -450,6 +531,15 @@ function botDecide(g: Game, p: PlayerState): void {
   if (p.team === 1 && g.enemyAllowedUnits.length > 0) {
     pool = pool.filter((d) => g.enemyAllowedUnits.includes(d.id));
   }
+  if (p.team === 1 && g.enemyDeniedUnits.length > 0) {
+    pool = pool.filter((d) => !g.enemyDeniedUnits.includes(d.id));
+  }
+  // 거점 구간 목록 (있으면 그 안에서만 고른다)
+  const campHere = campOf(g, p);
+  const phaseHere = campHere ? phaseOf(campHere, g.waveIndex) : undefined;
+  if (phaseHere) {
+    pool = pool.filter((d) => phaseHere.units.includes(d.id));
+  }
   if (p.team === 1) {
     pool = pool.filter((d) => {
       const minWave = g.enemyUnitMinWave[d.id];
@@ -486,6 +576,8 @@ function botDecide(g: Game, p: PlayerState): void {
     if (counterTarget && countersUnit(d, counterTarget)) w *= 4;
     // 캠페인 스테이지 성향: 적 봇은 지정된 유닛을 압도적으로 선호한다
     if (p.team === 1 && g.enemyPreferredUnits.includes(d.id)) w *= 8;
+    // 거점 구간이 지정한 선호 유닛도 같은 무게로 민다
+    if (phaseHere?.preferred?.includes(d.id)) w *= 8;
     return w;
   };
   const weights = pool.map(weightOf);
@@ -541,6 +633,9 @@ export function stepGame(g: Game): void {
 
   // 경제 틱
   if (g.tick > 0 && g.tick % MAP.INCOME_INTERVAL === 0) {
+    // 난이도 보너스는 「사람의 반대편」 봇에게만 준다. 사람이 없으면(봇끼리)
+    // 아무도 못 받아 완전 대칭이 된다.
+    const humanTeam = g.players.find((q) => !q.isBot)?.team;
     for (const p of g.players) {
       const baseIncome = MAP.INCOME_BASE + MAP.INCOME_PER_LEVEL * p.incomeLevel;
       // 캠페인: 적 인컴 배율 — 지정 시 난이도 인컴 보너스를 대체한다
@@ -548,8 +643,12 @@ export function stepGame(g: Game): void {
       p.money += scaled ? idiv(baseIncome * g.enemyIncomePct, 100) : baseIncome;
       // 영웅 특성: 계절의 흐름 (사람 플레이어 추가 수입)
       if (!p.isBot && g.heroPerks) p.money += g.heroPerks.incomeAdd;
-      // 중간 난이도: 봇은 인컴이 유저보다 12원 더 많다 (인컴업마다 +12씩 — 12, 24, 36…)
-      if (p.isBot && g.botDifficulty === 'normal' && !scaled) p.money += 12 * (p.incomeLevel + 1);
+      // 중간 난이도: 「적」 봇만 인컴이 12원 더 많다 (인컴업마다 +12씩).
+      // 사람과 같은 편인 봇까지 보너스를 받으면 난이도가 통째로 상쇄돼,
+      // easy·normal·hard 가 사실상 같은 판이 됐다 (실측: 승률 동일).
+      if (p.isBot && p.team !== humanTeam && g.botDifficulty === 'normal' && !scaled) {
+        p.money += 12 * (p.incomeLevel + 1);
+      }
       if (p.isBot) botDecide(g, p);
     }
   }
@@ -558,8 +657,46 @@ export function stepGame(g: Game): void {
   // (1:3 이면 1인 팀은 매 웨이브, 3인 팀은 세 명이 번갈아 출정).
   const waveTick = MAP.PREP_TICKS + g.waveIndex * MAP.WAVE_TICKS;
   if (g.tick === waveTick) {
+    // 거점 확정 편입: 돈과 무관하게 매 턴 정해진 유닛이 합류한다.
+    // (21턴부터 타나토스·밴시·본드래곤·데미리치가 최소 몇 기씩 섞이는 식)
+    for (const camp of g.enemyCamps) {
+      const p = g.players.find((q) => q.team === 1 && q.slot === camp.slot);
+      if (!p) continue;
+      // 인컴 해제: 상한만 푸는 게 아니라 그 단계까지 시스템이 직접 올려준다.
+      // (전방기지는 번 돈을 전부 병력에 쏟아붓느라 스스로는 인컴을 못 올린다)
+      for (const u of camp.incomeUnlocks ?? []) {
+        if (g.waveIndex + 1 >= u.fromWave && p.incomeLevel < u.cap) {
+          p.incomeLevel = Math.min(g.incomeCap, u.cap);
+        }
+      }
+      for (const fg of camp.forcedGrowth ?? []) {
+        if (g.waveIndex + 1 < fg.fromWave || fg.units.length === 0) continue;
+        const per = fg.perWave ?? 1;
+        for (let k = 0; k < per; k++) {
+          // 배열을 순서대로 돌며 고른다 (결정론 — rng 를 쓰지 않는다)
+          const id = fg.units[(g.waveIndex * per + k) % fg.units.length]!;
+          p.comp[id] = (p.comp[id] ?? 0) + 1;
+        }
+      }
+      // 예산 소진: 출정 전에 남은 돈을 털어 병력을 채운다
+      if (camp.spendAll) {
+        for (let guard = 0; guard < 40; guard++) {
+          const before = p.money;
+          botDecide(g, p);
+          if (p.money === before) break; // 더 살 게 없다
+        }
+      }
+    }
     for (const p of g.players) {
       const joint = g.jointDeploy && p.team === 0;
+      const camp = campOf(g, p);
+      if (camp) {
+        // 거점은 로테이션을 타지 않는다 — 저마다 제 주기로 쏟아낸다.
+        // deployEveryWave 2 면 두 턴에 한 번 (모았다가 한꺼번에 친다).
+        const every = camp.deployEveryWave ?? 1;
+        if ((g.waveIndex + 1) % every === 0) deployWave(g, p);
+        continue;
+      }
       if (joint || p.slot === g.waveIndex % g.teamSize[p.team]) deployWave(g, p);
     }
     g.events.push({ tick: g.tick, kind: 'wave', slot: g.waveIndex % g.teamSize[0] });

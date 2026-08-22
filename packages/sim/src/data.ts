@@ -1,5 +1,5 @@
 import { idiv, seconds, tiles, tilesPerSecond } from './math.ts';
-import type { ActiveSkill, BonusKey, EntityDef, RaceId, TeamId, Weapon } from './types.ts';
+import type { ActiveSkill, BonusKey, EntityDef, RaceId, TeamId, Weapon, ZoneKind } from './types.ts';
 
 // ── 맵 상수 ────────────────────────────────────────────────────────────────
 export const MAP = {
@@ -311,6 +311,12 @@ export const ZONE_DEFS: Record<string, {
   fireburst: {},                     // 화염구 — 착탄 폭발
   // 망자의 만찬 — 넓고 오래가는 저댐 장판 (지상·공중 모두). 중복되지 않는다.
   feast: { dps: 4, hitsAir: true },
+  // 검은 폭풍 — 하늘에서 하늘로 부는 깃털바람 (효과 없음, 그림만)
+  stormwing: {},
+  // 인분의 장막 — 안에 있는 적은 닳고, 공속과 사거리가 줄어든다
+  moonveil: { dps: 6, hitsAir: true },
+  // 실의 폭풍 — 효과는 스킬이 직접 준다 (그림만)
+  threadstorm: {},
 };
 
 /** 시각 전용 장판(시전 자국)의 표시 시간 (틱). */
@@ -412,17 +418,23 @@ reg(D({
   speed: tilesPerSecond(3.4), radius: tiles(0.34), acquireRange: tiles(6),
   // 참격 (쌍단검): 천 카운터 — 후방 암살 정체성
   weapon: { damage: 24, bonus: { cloth: 12 }, cooldown: seconds(0.7), range: tiles(0.5), targets: 'ground' },
+  actives: [{
+    // 짧게 모습을 감춰 전선을 통과한다 — 뒤를 잡으라고 준 스킬
+    name: '수풀 잠행', desc: '3초간 모습을 감춘다 — 조준·피해 불가 (쿨 20초)', kind: 'stealth',
+    cooldown: seconds(20), durTicks: seconds(3),
+  }],
 }));
 reg(D({
-  id: 's_mushroom_bomber', race: 'sylvarin', name: '버섯 폭탄병', tier: 'mid',
+  // 슬라브 신화의 숲 정령 — 이끼와 나무껍질로 된 노인. 스펙은 옛 버섯 폭탄병 그대로.
+  id: 's_mushroom_bomber', race: 'sylvarin', name: '레쉬', tier: 'mid',
   cost: 170, supply: 2, maxHp: 130, armor: 0, tags: ['cloth', 'bio'], ...GROUND,
   speed: tilesPerSecond(1.8), radius: tiles(0.32), acquireRange: tiles(5.5),
-  // 충격 (폭발): 판금 카운터. 착탄 지점에 포자 구름 장판 (안의 적 둔화)
+  // 충격 (숲의 폭발): 판금 카운터. 착탄 지점에 포자 구름 장판 (안의 적 둔화)
   weapon: { damage: 26, bonus: { plate: 20 }, cooldown: seconds(2.0), range: tiles(4.5), targets: 'ground', splash: tiles(1.0), zone: { kind: 'spores', radius: tiles(1.2), ticks: seconds(3) } },
 }));
 reg(D({
   id: 's_druid', race: 'sylvarin', name: '드루이드', tier: 'mid',
-  cost: 160, supply: 2, maxHp: 100, armor: 0, tags: ['cloth', 'bio', 'female'], ...GROUND,
+  cost: 160, supply: 2, maxHp: 100, armor: 0, tags: ['cloth', 'bio', 'female', 'support'], ...GROUND,
   speed: tilesPerSecond(1.7), radius: tiles(0.3), acquireRange: tiles(6),
   // 마법: 판금 카운터. 「정화의 빛」(신성, 대망자)은 업그레이드
   // 생명 회복은 생체 전용 — 망자·기물은 회복 불가 (기물은 수리로만)
@@ -447,18 +459,19 @@ reg(D({
   speed: tilesPerSecond(1.7), radius: tiles(0.3), acquireRange: tiles(6),
   // 저주 (가시): 생체 카운터. 착탄 지점에 가시밭 장판 (지속피해 + 둔화)
   // 사거리 5→ 마리오네타 원거리(4.5)가 접근 교전 가능하도록 아웃레인지 축소
-  weapon: { damage: 30, bonus: { bio: 17 }, cooldown: seconds(1.6), range: tiles(5), targets: 'ground', splash: tiles(1.1), zone: { kind: 'thorns', radius: tiles(1.1), ticks: seconds(3) } },
+  weapon: { damage: 30, bonus: { bio: 17, construct: 20 }, cooldown: seconds(1.6), range: tiles(5), targets: 'ground', splash: tiles(1.1), zone: { kind: 'thorns', radius: tiles(1.1), ticks: seconds(3) } },
 }));
 reg(D({
   id: 's_owl', race: 'sylvarin', name: '숲올빼미', tier: 'air',
-  cost: 240, supply: 3, maxHp: 260, armor: 1, tags: ['leather', 'bio'], flying: true,
+  cost: 240, supply: 3, maxHp: 320, armor: 1, tags: ['leather', 'bio'], flying: true,
   speed: tilesPerSecond(3.3), radius: tiles(0.4), acquireRange: tiles(6),
-  // 관통 (기수의 활): 가죽 카운터
-  weapon: { damage: 26, bonus: { leather: 13 }, cooldown: seconds(1.2), range: tiles(4.5), targets: 'both' },
+  // 발톱 (급습): 가죽 카운터 — 원거리 사격수에서 달려들어 할퀴는 근접으로 바꿨다.
+  // 활을 쏘던 시절엔 와이번의 하위 호환이었다. 이제는 체력으로 파고든다.
+  weapon: { damage: 26, bonus: { leather: 13 }, cooldown: seconds(1.2), range: tiles(0.6), targets: 'both' },
 }));
 reg(D({
   id: 's_butterfly', race: 'sylvarin', name: '거대 나비', tier: 'air',
-  cost: 200, supply: 2, maxHp: 240, armor: 0, tags: ['cloth', 'bio'], flying: true,
+  cost: 200, supply: 2, maxHp: 240, armor: 0, tags: ['cloth', 'bio', 'fairy'], flying: true,
   speed: tilesPerSecond(2.6), radius: tiles(0.42), acquireRange: tiles(5.5),
   // 순수 지원: 꽃가루 둔화 (보너스 없음)
   weapon: { damage: 8, cooldown: seconds(1.2), range: tiles(4), targets: 'both', slowTicks: seconds(2) },
@@ -473,7 +486,7 @@ reg(D({
 reg(D({
   // v0.5: 최종 → 최상급으로 이동 (최종은 세이지). 가지 휘둘러 공중도 때린다.
   id: 's_apostle', race: 'sylvarin', name: '세계수의 사도', tier: 'supreme',
-  cost: 500, supply: 6, maxHp: 1100, armor: 3, tags: ['plate', 'massive', 'bio'], ...GROUND,
+  cost: 500, supply: 6, maxHp: 1100, armor: 3, tags: ['plate', 'massive', 'bio', 'support'], ...GROUND,
   speed: tilesPerSecond(1.2), radius: tiles(0.7), acquireRange: tiles(6),
   // 충격 (뿌리 강타, 지상+공중) + 생체 회복 (망자·기물 제외)
   weapon: { damage: 60, bonus: { plate: 30 }, cooldown: seconds(1.5), range: tiles(2.5), targets: 'both', splash: tiles(0.9) },
@@ -540,14 +553,14 @@ reg(D({
 }));
 reg(D({
   id: 's_unicorn', race: 'sylvarin', name: '유니콘', tier: 'air', techReq: 3,
-  cost: 290, supply: 3, maxHp: 380, armor: 2, tags: ['leather', 'bio'], flying: true,
+  cost: 290, supply: 3, maxHp: 380, armor: 2, tags: ['leather', 'bio', 'support'], flying: true,
   speed: tilesPerSecond(2.9), radius: tiles(0.46), acquireRange: tiles(5.5),
   // 서포터 — 버프·해제가 본체지만 자체 화력도 준수하다
   weapon: { damage: 24, cooldown: seconds(1.3), range: tiles(4.0), targets: 'both' },
   actives: [
     {
-      name: '가호', desc: '주변 아군 전체 방어력 +6 (12초)', kind: 'allyarmor',
-      cooldown: seconds(20), durTicks: seconds(12), armorAdd: 6, auraRadius: tiles(5.5),
+      name: '가호', desc: '주변 아군 전체 방어력 +3 (12초)', kind: 'allyarmor',
+      cooldown: seconds(20), durTicks: seconds(12), armorAdd: 3, auraRadius: tiles(5.5),
     },
     {
       name: '날개짓', desc: '주변 적에게 약화 — 공격력 10% 감소 (6초)', kind: 'weaken',
@@ -561,7 +574,7 @@ reg(D({
 }));
 reg(D({
   id: 's_fairy', race: 'sylvarin', name: '페어리', tier: 'air', techReq: 3,
-  cost: 300, supply: 3, maxHp: 200, armor: 0, tags: ['cloth', 'bio', 'female'], flying: true,
+  cost: 300, supply: 3, maxHp: 200, armor: 0, tags: ['cloth', 'bio', 'female', 'fairy'], flying: true,
   speed: tilesPerSecond(2.2), radius: tiles(0.3), acquireRange: tiles(7),
   // 포지션: 공대공 전문. 공중 단일 화력은 최강이지만 지상·구조물에는 무력하다.
   weapon: { damage: 16, bonus: { flying: 34 }, cooldown: seconds(1.4), range: tiles(5.0), targets: 'both' },
@@ -570,6 +583,83 @@ reg(D({
     cooldown: seconds(16), durTicks: seconds(10),
   }],
 }));
+
+reg(D({
+  // 나무의 정령 — 후열을 감싸는 보호막과 재생을 뿌린다.
+  // 적이 다가와야 방패를 편다 (평시엔 아낀다).
+  id: 's_dryad', race: 'sylvarin', name: '드라이어드', tier: 'high', techReq: 3,
+  cost: 360, supply: 4, maxHp: 420, armor: 1, tags: ['bio', 'female', 'support'], ...GROUND,
+  speed: tilesPerSecond(1.6), radius: tiles(0.36), acquireRange: tiles(6),
+  // 땅에서 솟은 뿌리가 적을 후려친다
+  weapon: { damage: 26, bonus: { construct: 12 }, cooldown: seconds(1.5), range: tiles(4.5), targets: 'ground' },
+  actives: [
+    {
+      name: '나무껍질 장막', desc: '적이 다가오면 주변 원거리·지원가에게 보호막 100 (10초)',
+      kind: 'wardShield', cooldown: seconds(30), durTicks: seconds(10),
+      damage: 100, auraRadius: tiles(5), castRange: tiles(7),
+    },
+    {
+      name: '생명의 숨결', desc: '주변 아군이 초당 체력 3 회복 (20초)',
+      kind: 'regenAura', cooldown: seconds(30), durTicks: seconds(20),
+      damage: 3, auraRadius: tiles(7),
+    },
+  ],
+}));
+reg(D({
+  // 거대용 — 하늘의 요새이자 도살자. 대공이 되는 적만 끌어당겨 물어뜯는다.
+  id: 's_elurion', race: 'sylvarin', name: '엘루리온', tier: 'supreme', techReq: 3,
+  cost: 1100, supply: 9, maxHp: 1500, armor: 5, tags: ['leather', 'massive', 'bio'], flying: true,
+  speed: tilesPerSecond(2.0), radius: tiles(0.8), acquireRange: tiles(7),
+  passiveDesc: [
+    '공격 시 피해의 30%를 회복한다 (흡혈)',
+  ],
+  // 흡혈 30% — 맞을수록 버틴다
+  weapon: { damage: 78, cooldown: seconds(1.3), range: tiles(1.6), targets: 'both', splash: tiles(1.2), lifestealPct: 30 },
+  actives: [
+    {
+      name: '창공의 포효', desc: '하늘을 때릴 수 있는 적만 7초간 이쪽으로 끌어당긴다',
+      kind: 'airTaunt', cooldown: seconds(30), durTicks: seconds(7), auraRadius: tiles(7),
+    },
+    {
+      name: '비늘 방벽', desc: '피해 100을 막는 보호막 — 다른 보호막 위에 얹힌다',
+      kind: 'selfShield', cooldown: seconds(45), damage: 100,
+    },
+    {
+      name: '들이받기', desc: '대공 적 하나에게 날아가 강타하고 제자리로 — 자신도 남은 체력의 10%를 잃는다',
+      kind: 'ram', cooldown: seconds(20), durTicks: seconds(1.2), damage: 150, castRange: tiles(8),
+    },
+  ],
+}));
+reg(D({
+  // 요정왕 — 후열만 노리는 암살자. 죽일수록 손이 빨라진다.
+  id: 's_oberon', race: 'sylvarin', name: '오베론', tier: 'supreme', techReq: 3,
+  cost: 780, supply: 8, maxHp: 620, armor: 2, tags: ['cloth', 'bio', 'male', 'fairy'], flying: true,
+  speed: tilesPerSecond(2.9), radius: tiles(0.4), acquireRange: tiles(7),
+  passiveDesc: [
+    '처치할 때마다 공격력 +10% (최대 10스택, 7초 유지 — 계속 죽이면 계속 갱신)',
+    '초당 체력 2 자가 회복',
+  ],
+  regenPerSec: 2,
+  killStack: { pct: 10, max: 10, ticks: seconds(7) },
+  weapon: { damage: 58, cooldown: seconds(1.1), range: tiles(1.2), targets: 'ground', splash: tiles(1.0) },
+  actives: [
+    {
+      name: '그림자 도약', desc: '적 지원가·원거리에게 도약해 강타하고 2초 뒤 제자리로',
+      kind: 'diveStrike', cooldown: seconds(18), durTicks: seconds(2), damage: 120, castRange: tiles(7),
+    },
+    {
+      name: '인분의 장막', desc: '반경 4.5타일에 7초간 장막 — 안의 적은 지속피해 + 공속 -10% · 사거리 -1',
+      kind: 'debuffZone', cooldown: seconds(20), durTicks: seconds(7), splash: tiles(4.5),
+      zone: { kind: 'moonveil', radius: tiles(4.5), ticks: seconds(7) },
+    },
+    {
+      name: '요정의 축복', desc: '요정 계열 아군에게 치명타 확률 40% (12초)',
+      kind: 'critAura', cooldown: seconds(40), durTicks: seconds(12), auraRadius: tiles(6), chancePct: 40,
+      onlyTag: 'fairy',
+    },
+  ],
+}));
+
 
 // ═══ ☠️ 판데모니엄 (pandemonium) ══ 죽음·소모전 (힐러 없음) ═══
 
@@ -614,20 +704,25 @@ reg(D({
   }],
 }));
 reg(D({
-  id: 'p_corpsecaller', race: 'pandemonium', name: '시체술사', tier: 'mid',
-  cost: 210, supply: 3, maxHp: 110, armor: 0, tags: ['cloth', 'undead'], ...GROUND,
-  speed: tilesPerSecond(1.6), radius: tiles(0.3), acquireRange: tiles(6),
-  // 저주 (암흑): 생체 카운터 — 실바린 견제 핵심
-  // 저주 폭발: 착탄 지점 소범위 광역 — 수리 뭉침(마리오네타 힐 군단) 카운터
-  weapon: { damage: 28, bonus: { bio: 14, construct: 24 }, cooldown: seconds(1.7), range: tiles(5.5), targets: 'both', splash: tiles(0.8) },
-}));
-reg(D({
   id: 'p_banshee', race: 'pandemonium', name: '밴시', tier: 'air', techReq: 3,
   cost: 300, supply: 3, maxHp: 220, armor: 0, tags: ['cloth', 'undead', 'female'], flying: true,
   speed: tilesPerSecond(2.6), radius: tiles(0.36), acquireRange: tiles(5.5),
-  // 저주 (절규): 생체 카운터 + 단일 대상 둔화 (테크 3 공중)
-  // 광역이던 시절엔 같은 값 물량을 일방적으로 쓸어버려서 단일 대상으로 되돌렸다.
-  weapon: { damage: 20, bonus: { bio: 10 }, cooldown: seconds(1.3), range: tiles(4.5), targets: 'both', slowTicks: seconds(3) },
+  // 저주 (절규): 단일 대상 둔화 (테크 3 공중). 광역이던 시절엔 같은 값 물량을
+  // 일방적으로 쓸어버려서 단일 대상으로 되돌렸다. 특효 없이 사거리를 좁힌 대신,
+  // 아래 액티브 두 개로 "치고 빠지는 암살자"로 성격을 바꿨다.
+  weapon: { damage: 20, cooldown: seconds(1.3), range: tiles(2.5), targets: 'both', slowTicks: seconds(3) },
+  actives: [
+    {
+      // 쿨이 길어 한 교전에 한 번. 위험할 때 빼거나, 「원한」과 겹쳐 기습하거나.
+      name: '스러짐', desc: '4초간 모습을 감춘다 — 조준·피해 불가 (쿨 50초)', kind: 'stealth',
+      cooldown: seconds(50), durTicks: seconds(4),
+    },
+    {
+      // 「스러짐」과 타이밍이 겹치면 안 맞으면서 두들기는 구간이 생긴다
+      name: '원한', desc: '8초간 공격 속도·이동 속도 +10% (쿨 20초)', kind: 'selfbuff',
+      cooldown: seconds(20), durTicks: seconds(8), atkSpeedPct: 10, speedPct: 10,
+    },
+  ],
 }));
 reg(D({
   id: 'p_thanatos', race: 'pandemonium', name: '타나토스', tier: 'high',
@@ -746,7 +841,7 @@ reg(D({
 
 reg(D({
   id: 'p_mammon', race: 'pandemonium', name: '마몬', tier: 'supreme',
-  cost: 570, supply: 7, maxHp: 1150, armor: 3, tags: ['plate', 'massive', 'undead', 'male'], ...GROUND,
+  cost: 570, supply: 7, maxHp: 1150, armor: 3, tags: ['plate', 'massive', 'undead', 'male', 'support'], ...GROUND,
   speed: tilesPerSecond(1.4), radius: tiles(0.7), acquireRange: tiles(6),
   // 충격 (대검 강타): 판금 카운터 + 흡혈 광역
   weapon: { damage: 72, bonus: { plate: 36 }, cooldown: seconds(1.3), range: tiles(0.9), targets: 'ground', splash: tiles(0.9), lifestealPct: 30 },
@@ -841,6 +936,33 @@ reg(D({
   ],
 }));
 
+reg(D({
+  // 지원가 — 전장을 읽고 「오라」를 고른다. 적 편성이 무엇으로 채워졌느냐에 따라
+  // 아군 전체가 받는 축복이 달라진다. 그래서 탐지 범위가 15타일로 유별나게 넓다
+  // (버프가 닿는 범위는 7타일 — 부대와 함께 움직여야 한다).
+  // 오라는 팀당 한 마리분만 발동한다 (battle.ts auraOwner 참조).
+  id: 'p_dementor', race: 'pandemonium', name: '디멘터', tier: 'high', techReq: 3,
+  cost: 430, supply: 5, maxHp: 520, armor: 1, tags: ['cloth', 'undead', 'support'], flying: true,
+  speed: tilesPerSecond(2.0), radius: tiles(0.5), acquireRange: tiles(15),
+  // 흡혼: 약한 단일 공격 — 이 유닛의 값어치는 전투력이 아니라 오라에 있다
+  weapon: { damage: 22, cooldown: seconds(1.5), range: tiles(3), targets: 'both' },
+  // 오라는 코드로 도는 지속 능력이라 actives 에 안 잡힌다 — 여기 적어 정보창에 띄운다
+  passiveDesc: [
+    '「오라」 15타일 안의 적 편성을 읽어 네 유형 중 하나를 주변 7타일 아군에게 건다 (팀당 한 마리분만)',
+    '  · 적 1티어 원거리가 최다 → 방어력 +4',
+    '  · 적 2티어 이하 판금이 최다 → 사거리 +1',
+    '  · 적 비행이 최다 → 보호막 100 (평생 한 번)',
+    '  · 적 고급 이상이 최다 → 공속·이속 +10%, 초당 회복 1',
+    '디멘터가 쓰러지면 걸려 있던 오라가 그 즉시 사라진다',
+  ],
+  actives: [{
+    // 오라만 걸고 끝나면 심심하다 — 빈사인 적은 직접 거둔다
+    name: '영혼 거두기', desc: '체력 35% 이하의 적 주변에서 영혼을 뽑아낸다 — 광역 처형', kind: 'strike',
+    cooldown: seconds(8), damage: 46, splash: tiles(1.6),
+    executeBelowPct: 35, executeBonus: 60,
+  }],
+}));
+
 // ═══ 🧸 마리오네타 (marionetta) ══ 인형·실·호러·순간폭발 ═══
 // 유령(캐스퍼·스펙터 테디)은 망자, 앨리스는 유일한 생체, 나머지는 기물
 
@@ -866,7 +988,7 @@ reg(D({
 }));
 reg(D({
   id: 'm_button_doll', race: 'marionetta', name: '단추 인형', tier: 'basic',
-  cost: 80, supply: 1, maxHp: 90, armor: 0, tags: ['cloth', 'construct', 'female'], ...GROUND,
+  cost: 80, supply: 1, maxHp: 90, armor: 0, tags: ['cloth', 'construct', 'female', 'support'], ...GROUND,
   speed: tilesPerSecond(1.8), radius: tiles(0.3), acquireRange: tiles(6),
   // 「긴급 봉합」 (수리 — 망자는 수리 불가)
   heal: { amount: 8, cooldown: seconds(1.2), range: tiles(3.5), excludeTags: ['undead'] },
@@ -989,7 +1111,7 @@ reg(D({
 }));
 reg(D({
   id: 'm_alice', race: 'marionetta', name: '인형사 앨리스', tier: 'final',
-  cost: 1350, supply: 7, maxHp: 950, armor: 2, tags: ['cloth', 'bio', 'female'], ...GROUND,
+  cost: 1350, supply: 7, maxHp: 950, armor: 2, tags: ['cloth', 'bio', 'female', 'support'], ...GROUND,
   speed: tilesPerSecond(1.6), radius: tiles(0.42), acquireRange: tiles(6),
   // 마법 (조종 실): 판금 카운터 + 둔화 + 수리. 유일한 인간 (생체!)
   weapon: { damage: 52, bonus: { plate: 26 }, cooldown: seconds(1.2), range: tiles(5.5), targets: 'both', slowTicks: seconds(1.5) },
@@ -1006,6 +1128,99 @@ reg(D({
     {
       name: '인형의 실', desc: '적 중급 이상 유닛 하나를 영구히 아군으로 — 티어 높은 순 우선 (업그레이드 필요)', kind: 'charm',
       cooldown: seconds(45), castRange: tiles(6), requiresUpgrade: 'mu_alice_charm',
+    },
+  ],
+}));
+
+reg(D({
+  // 공성 병기 — 사거리 11타일로 전장 반대편에서 쏜다. 대신 굼뜨고 하늘은 못 본다.
+  id: 'm_ballista', race: 'marionetta', name: '발리스타', tier: 'high', techReq: 3,
+  cost: 400, supply: 5, maxHp: 420, armor: 2, tags: ['construct', 'massive'], ...GROUND,
+  speed: tilesPerSecond(0.9), radius: tiles(0.55), acquireRange: tiles(11),
+  passiveDesc: [
+    '사거리 11타일 공성 병기 — 하늘은 못 본다',
+  ],
+  // 대형 볼트: 느리게 장전해 한 발씩, 착탄 지점을 통째로 부순다 (지상 전용)
+  weapon: { damage: 70, cooldown: seconds(3.0), range: tiles(11), targets: 'ground', splash: tiles(1.8) },
+}));
+reg(D({
+  // 소환수 — 드로셀마이어가 적 후열 한가운데에 떨어뜨린다
+  id: 'm_nutcracker', race: 'marionetta', name: '호두까기 인형', tier: 'basic', summonOnly: true,
+  cost: 0, supply: 0, maxHp: 150, armor: 1, tags: ['construct'], ...GROUND,
+  speed: tilesPerSecond(1.9), radius: tiles(0.3), acquireRange: tiles(5),
+  weapon: { damage: 14, bonus: { cloth: 7 }, cooldown: seconds(1.0), range: tiles(0.5), targets: 'ground' },
+}));
+reg(D({
+  // 지원가 — 공격 수단이 아예 없고 혼자 진군하지 않는다. 늘 본대 뒤를 따른다.
+  id: 'm_white_rabbit', race: 'marionetta', name: '하얀토끼', tier: 'high', techReq: 3,
+  cost: 380, supply: 4, maxHp: 340, armor: 1, tags: ['cloth', 'bio', 'support'], ...GROUND,
+  speed: tilesPerSecond(2.4), radius: tiles(0.32), acquireRange: tiles(7),
+  passiveDesc: [
+    '공격 수단이 없다 — 혼자 진군하지 않고 늘 본대 뒤를 따라다닌다',
+  ],
+  followAlly: true,
+  actives: [
+    {
+      name: '초침 재촉', desc: '주변 아군의 공속·이속 +10% (3초) — 자주 돈다', kind: 'hasteAlly',
+      cooldown: seconds(10), durTicks: seconds(3), auraRadius: tiles(5),
+    },
+    {
+      name: '지각의 저주', desc: '주변 적의 공속·이속 -10% (7초)', kind: 'slowFoe',
+      cooldown: seconds(55), durTicks: seconds(7), auraRadius: tiles(6),
+    },
+    {
+      name: '토끼굴', desc: '주변 15타일에 아군이 없으면 땅속으로 숨는다 — 조준·피해 불가 (최대 30초)', kind: 'burrow',
+      cooldown: seconds(120), durTicks: seconds(30), auraRadius: tiles(15),
+    },
+    {
+      name: '멈춘 시계', desc: '가장 티어 높은 아군 1기에게 영구 상태이상 면역 (업그레이드 필요)', kind: 'timelock',
+      cooldown: seconds(20), requiresUpgrade: 'mu_rabbit_timelock',
+    },
+    {
+      name: '정각의 일격', desc: '주변 아군에게 치명타 확률 50% 부여 (6초) — 치명타는 1.5배 (업그레이드 필요)', kind: 'critAura',
+      cooldown: seconds(40), durTicks: seconds(6), auraRadius: tiles(5), chancePct: 50,
+      requiresUpgrade: 'mu_rabbit_crit',
+    },
+  ],
+}));
+reg(D({
+  // 하늘 전문 — 지상은 코앞만 닿지만 공중은 9타일 밖에서 떨군다. 하늘이 있으면 하늘부터.
+  id: 'm_mad_hatter', race: 'marionetta', name: '모자장수', tier: 'high', techReq: 3,
+  cost: 450, supply: 5, maxHp: 460, armor: 1, tags: ['cloth', 'bio', 'male'], ...GROUND,
+  speed: tilesPerSecond(1.7), radius: tiles(0.38), acquireRange: tiles(9),
+  passiveDesc: [
+    '하늘 우선 조준 — 사거리 안에 뜬 것이 있으면 지상보다 먼저 노린다',
+    '지상 18 (1.5타일) / 공중 58 (9타일)',
+  ],
+  weapon: {
+    damage: 18, airDamage: 58, cooldown: seconds(1.4),
+    range: tiles(1.5), airRange: tiles(9), preferAir: true, targets: 'both',
+  },
+  actives: [
+    {
+      name: '모자 바꾸기', desc: '쓸 때마다 다른 모자가 된다 — 빨강(태엽 병정 소환) · 파랑(공중 사거리+1) · 거대화(광역) · 황금(전부, 희귀)', kind: 'randomBuff',
+      cooldown: seconds(40), durTicks: seconds(10),
+    },
+  ],
+}));
+reg(D({
+  // 탱커형 마법사 — 후열에 서서 적 후열을 직접 두들긴다
+  id: 'm_drosselmeyer', race: 'marionetta', name: '드로셀마이어', tier: 'supreme', techReq: 3,
+  cost: 620, supply: 7, maxHp: 980, armor: 4, tags: ['cloth', 'bio', 'male'], ...GROUND,
+  speed: tilesPerSecond(1.6), radius: tiles(0.44), acquireRange: tiles(7),
+  weapon: { damage: 44, cooldown: seconds(1.3), range: tiles(5), targets: 'both' },
+  actives: [
+    {
+      name: '호두까기 병단', desc: '적 후열(원거리·지원가) 한가운데에 호두까기 인형 8기를 떨어뜨린다', kind: 'summonAtFoe',
+      cooldown: seconds(60), castRange: tiles(9), summonId: 'm_nutcracker', summonCount: 8,
+    },
+    {
+      name: '부양', desc: '주변 아군 원거리·지원가를 4초간 공중으로 띄운다 — 지상 공격이 닿지 않는다', kind: 'levitate',
+      cooldown: seconds(50), durTicks: seconds(4), auraRadius: tiles(5),
+    },
+    {
+      name: '실의 폭풍', desc: '적 지상 부대를 실로 묶어 3초간 무력화한 뒤, 실이 터지며 광역 피해', kind: 'threadStorm',
+      cooldown: seconds(45), durTicks: seconds(3), damage: 70, splash: tiles(4), castRange: tiles(7),
     },
   ],
 }));
@@ -1141,10 +1356,10 @@ reg(D({
       cooldown: seconds(22), durTicks: seconds(8), armorAdd: 45,
     },
     {
-      // 필드 리셋기 — 반경 6타일의 모든 것(지상·공중)을 갈아버린다.
-      // 잡졸은 즉사, 중급도 두 방이면 위태롭다. 검은새를 안 잡으면 군세를 못 쌓는다.
-      name: '검은 폭풍', desc: '날개를 내리쳐 반경 6타일의 지상·공중 전체에 폭풍 (150)', kind: 'nuke',
-      cooldown: seconds(24), damage: 150, splash: tiles(6), castRange: tiles(6), fxZone: 'gravity',
+      // 하늘의 지배자 — 반경 6타일의 「공중」을 통째로 쓸어버린다.
+      // 지상에는 닿지 않는다: 하늘에서 하늘로 부는 폭풍이라, 땅의 군세는 평타로 상대한다.
+      name: '검은 폭풍', desc: '날개를 내리쳐 반경 6타일의 공중 전체에 폭풍 (150) — 지상엔 안 통함', kind: 'nuke',
+      cooldown: seconds(24), damage: 150, splash: tiles(6), castRange: tiles(6), targets: 'air', fxZone: 'stormwing',
     },
     {
       name: '암흑 구체', desc: '검은 거대 구체 — 공중의 가장 튼튼한 적을 노린다 (지상엔 안 통함)', kind: 'nuke',
@@ -1172,11 +1387,14 @@ reg(D({
 // ── 수호자 (수호탑 파괴 시 부서진 팀의 수비수로 젠, docs/setting.md) ──
 // 중간보스 포지션: 빠른 연타 + 광역 브레스로 웨이브를 통째로 갈아버린다.
 reg(D({
+  // ★ 양 진영 수호자(드래곤·슬리피 할로우)는 스펙이 완전히 같다 — 대전에서
+  //   어느 자리에 앉느냐로 유불리가 갈리면 안 되기 때문. 태그도 massive 만 남겨
+  //   재질(가죽·판금) 특효와 생체·언데드 특효를 전부 비껴간다. 추뎀도 없다.
   id: 'dragon', race: null, name: '드래곤', tier: 'guardian',
-  cost: 0, supply: 0, maxHp: 4000, armor: 2, tags: ['leather', 'massive', 'bio'], flying: true,
-  speed: tilesPerSecond(2.2), radius: tiles(0.8), acquireRange: tiles(8), leashed: true,
-  // 화염 브레스: 기물 카운터 (마리오네타에게 위협적인 수호자) — 광역
-  weapon: { damage: 80, bonus: { construct: 40 }, cooldown: seconds(0.9), range: tiles(3), targets: 'both', splash: tiles(1.7) },
+  cost: 0, supply: 0, maxHp: 4250, armor: 3, tags: ['massive'], flying: true,
+  speed: tilesPerSecond(2.1), radius: tiles(0.8), acquireRange: tiles(8), leashed: true,
+  // 화염 브레스 — 광역
+  weapon: { damage: 75, cooldown: seconds(0.9), range: tiles(3), targets: 'both', splash: tiles(1.7) },
 }));
 reg(D({
   // 2막 마리오네타 수호자: 여왕이 특별히 지어 올린 근위 곰인형.
@@ -1187,11 +1405,12 @@ reg(D({
   weapon: { damage: 85, bonus: { bio: 40 }, cooldown: seconds(0.9), range: tiles(1.3), targets: 'both', splash: tiles(1.7) },
 }));
 reg(D({
+  // ★ 드래곤과 완전히 같은 스펙 (위 주석 참조) — 생김새와 이름만 다르다
   id: 'hollow', race: null, name: '슬리피 할로우', tier: 'guardian',
-  cost: 0, supply: 0, maxHp: 4500, armor: 3, tags: ['plate', 'massive', 'undead'], flying: true,
-  // 저주 참격: 생체 카운터 (실바린에게 위협적인 수호자) — 광역
-  speed: tilesPerSecond(2.0), radius: tiles(0.8), acquireRange: tiles(8), leashed: true,
-  weapon: { damage: 70, bonus: { bio: 35 }, cooldown: seconds(0.9), range: tiles(3), targets: 'both', splash: tiles(1.7) },
+  cost: 0, supply: 0, maxHp: 4250, armor: 3, tags: ['massive'], flying: true,
+  // 저주 참격 — 광역
+  speed: tilesPerSecond(2.1), radius: tiles(0.8), acquireRange: tiles(8), leashed: true,
+  weapon: { damage: 75, cooldown: seconds(0.9), range: tiles(3), targets: 'both', splash: tiles(1.7) },
 }));
 
 reg(D({
@@ -1358,6 +1577,25 @@ reg(D({
   weapon: { damage: 90, bonus: { plate: 40 }, cooldown: seconds(1.8), range: tiles(1), targets: 'ground', splash: tiles(1.3), lifestealPct: 20 },
 }));
 reg(D({
+  // 11스테이지 「바람의 둥지」 후반 압박기 — 타나토스의 몸에 하늘까지 노리는 낫.
+  // 「망자의 시선」으로 늘 주변을 도발해, 이놈을 먼저 치우지 않으면 아무것도 때릴 수 없다.
+  // 공중 조합(와이번·페어리·유니콘)이 뒤에서 안전하게 쏘는 판을 깨는 것이 존재 이유다.
+  id: 'c_grave_warden', race: null, name: '무덤의 파수꾼', tier: 'supreme', summonOnly: true,
+  cost: 0, supply: 0, maxHp: 3000, armor: 4, tags: ['cloth', 'massive', 'undead'], ...GROUND,
+  speed: tilesPerSecond(1.4), radius: tiles(0.68), acquireRange: tiles(7),
+  // 하늘엔 낫을 휘둘러 통째로 쓸고(광역), 땅은 한 놈씩 벤다(단일)
+  weapon: {
+    damage: 68, airDamage: 92, cooldown: seconds(1.5),
+    range: tiles(1.4), airRange: tiles(4), targets: 'both',
+    splash: tiles(2.2), splashAirOnly: true,
+  },
+  actives: [{
+    name: '망자의 시선', desc: '주변 적이 이 유닛만 노리게 만든다 — 쓰러뜨리기 전엔 다른 것을 때릴 수 없다', kind: 'taunt',
+    cooldown: seconds(4), durTicks: seconds(6), auraRadius: tiles(7),
+  }],
+}));
+
+reg(D({
   // 공중 엘리트: 공포의 가고일 — 하늘의 습격자
   id: 'c_dread_gargoyle', race: null, name: '공포의 가고일', tier: 'supreme', summonOnly: true,
   cost: 0, supply: 0, maxHp: 900, armor: 2, tags: ['plate', 'undead'], flying: true,
@@ -1377,7 +1615,7 @@ reg(D({
 }));
 reg(D({
   id: 'c_mammon_lord', race: null, name: '대부호 마몬', tier: 'guardian', summonOnly: true,
-  cost: 0, supply: 0, maxHp: 4200, armor: 4, tags: ['plate', 'undead', 'massive'], ...GROUND,
+  cost: 0, supply: 0, maxHp: 4200, armor: 4, tags: ['plate', 'undead', 'massive', 'support'], ...GROUND,
   speed: tilesPerSecond(1.3), radius: tiles(0.65), acquireRange: tiles(6),
   weapon: { damage: 85, bonus: { construct: 30 }, cooldown: seconds(1.1), range: tiles(1.2), targets: 'both', splash: tiles(1.2), lifestealPct: 30 },
   actives: [
@@ -1446,6 +1684,10 @@ export interface UpgradeMods {
   readonly dotSet?: { readonly dps: number; readonly ticks: number; readonly chance?: number };
   /** 속박 부여 (없던 유닛에 신설). */
   readonly rootSet?: { readonly ticks: number; readonly chance?: number };
+  /** 장판 통째 교체 (범위·지속을 함께 키운다). */
+  readonly zoneSet?: { readonly kind: ZoneKind; readonly radius: number; readonly ticks: number };
+  /** 피격한 적에게 침묵을 거는 패시브 부여 (틱). */
+  readonly silenceOnHitSet?: number;
   /** 한기 부여 (명중 시 공속·이속 -CHILL_PCT%). */
   readonly chillSet?: { readonly ticks: number };
   readonly rootTicksAdd?: number;
@@ -1506,11 +1748,17 @@ export const UPGRADES: UnitUpgrade[] = [
   { id: 'su_mush_blast', unit: 's_mushroom_bomber', name: '폭발 포자', desc: '폭발 범위 확대', cost: 220, tech: 2, choiceGroup: 'mush1', mods: { splashAdd: tiles(0.4) } },
   { id: 'su_druid_spring', unit: 's_druid', name: '생명의 샘', desc: '회복량 +40%', cost: 250, tech: 2, choiceGroup: 'druid1', mods: { healAmountPct: 40 } },
   { id: 'su_druid_purify', unit: 's_druid', name: '정화의 빛', desc: '언데드에게 +25 추가 피해', cost: 250, tech: 2, choiceGroup: 'druid1', mods: { bonusAdd: { undead: 25 } } },
-  { id: 'su_witch_black', unit: 's_thorn_witch', name: '화염 가시', desc: '기물(인형)에게 +17 추가 피해', cost: 250, tech: 3, choiceGroup: 'witch1', mods: { bonusAdd: { construct: 17 } } },
-  { id: 'su_witch_bind', unit: 's_thorn_witch', name: '속박의 가시', desc: '명중 시 40% 확률로 1초 속박', cost: 250, tech: 3, choiceGroup: 'witch1', mods: { rootSet: { ticks: seconds(1), chance: 40 } } },
+  { id: 'su_witch_black', unit: 's_thorn_witch', name: '화염 가시', desc: '기물(인형)에게 +17 추가 피해', cost: 250, tech: 3, choiceGroup: 'witch1', campaignOnly: true, mods: { bonusAdd: { construct: 17 } } },
+  { id: 'su_witch_bind', unit: 's_thorn_witch', name: '속박의 가시', desc: '명중 시 40% 확률로 3초 속박', cost: 250, tech: 3, choiceGroup: 'witch1', mods: { rootSet: { ticks: seconds(3), chance: 40 } } },
+  { id: 'su_witch_field', unit: 's_thorn_witch', name: '무성한 가시밭', desc: '가시밭 범위 2타일 · 지속 5초', cost: 250, tech: 3, choiceGroup: 'witch1', mods: { zoneSet: { kind: 'thorns', radius: tiles(2), ticks: seconds(5) } } },
   { id: 'su_treant_bark', unit: 's_treant', name: '고대의 껍질', desc: '방어력 +2', cost: 300, tech: 3, mods: { armorAdd: 2 } },
   { id: 'su_wyvern_dive', unit: 's_wyvern', name: '급강하', desc: '내리꽂기 피해 +50%, 범위 확대', cost: 300, tech: 3, choiceGroup: 'wyvern1', mods: { skillDamagePct: 50, skillSplashAdd: tiles(0.4) } },
   { id: 'su_wyvern_scale', unit: 's_wyvern', name: '두꺼운 비늘', desc: '방어력 +2, 체력 +20%', cost: 300, tech: 3, choiceGroup: 'wyvern1', mods: { armorAdd: 2, maxHpPct: 20 } },
+  { id: 'su_dryad_ward', unit: 's_dryad', name: '두터운 장막', desc: '나무껍질 장막의 보호막 100 → 200', cost: 800, tech: 3, mods: { skillDamagePct: 100 } },
+  { id: 'su_dryad_breath', unit: 's_dryad', name: '깊은 숨결', desc: '생명의 숨결 초당 5 회복 · 지속 30초', cost: 1000, tech: 3, mods: { skillDurTicksAdd: seconds(10) } },
+  { id: 'su_elurion_drain', unit: 's_elurion', name: '갈증난 송곡니', desc: '흡혈 30% → 45%', cost: 600, tech: 3, mods: { lifestealAdd: 15 } },
+  { id: 'su_elurion_hide', unit: 's_elurion', name: '용의 가죽', desc: '체력 +30%', cost: 600, tech: 3, mods: { maxHpPct: 30 } },
+  { id: 'su_elurion_silence', unit: 's_elurion', name: '용의 위압', desc: '공격한 적은 6초간 액티브 스킬을 쓰지 못한다 (침묵)', cost: 600, tech: 3, mods: { silenceOnHitSet: seconds(6) } },
   { id: 'su_unicorn_bless', unit: 's_unicorn', name: '축복의 뿔', desc: '가호·날개짓 지속 +6초', cost: 270, tech: 3, choiceGroup: 'unicorn1', mods: { skillDurTicksAdd: seconds(6) } },
   { id: 'su_unicorn_swift', unit: 's_unicorn', name: '신속한 정화', desc: '액티브 쿨타임 -25%', cost: 270, tech: 3, choiceGroup: 'unicorn1', mods: { skillCooldownPct: -25 } },
   { id: 'su_fairy_dust', unit: 's_fairy', name: '요정 가루', desc: '수면 쿨타임 -25%', cost: 280, tech: 3, choiceGroup: 'fairy1', mods: { skillCooldownPct: -25 } },
@@ -1559,6 +1807,8 @@ export const UPGRADES: UnitUpgrade[] = [
   { id: 'mu_ann_red', unit: 'm_puppet_ann', name: '붉은 실', desc: '둔화 지속 +1초', cost: 250, tech: 2, choiceGroup: 'ann1', mods: { slowTicksAdd: seconds(1) } },
   { id: 'mu_ann_sharp', unit: 'm_puppet_ann', name: '날카로운 실', desc: '공격력 +25%', cost: 250, tech: 2, choiceGroup: 'ann1', mods: { damagePct: 25 } },
   { id: 'mu_gore_pain', unit: 'm_gore_teddy', name: '고통의 실', desc: '공격력 +20%', cost: 300, tech: 3, mods: { damagePct: 20 } },
+  { id: 'mu_rabbit_timelock', unit: 'm_white_rabbit', name: '멈춘 시계 해금', desc: '스킬 해금: 가장 티어 높은 아군 1기에게 영구 상태이상 면역 (평생 한 번)', cost: 1200, tech: 3, mods: {} },
+  { id: 'mu_rabbit_crit', unit: 'm_white_rabbit', name: '정각의 일격 해금', desc: '스킬 해금: 주변 아군 치명타 확률 50% (6초, 40초 쿨)', cost: 1500, tech: 3, mods: {} },
   { id: 'mu_alice_charm', unit: 'm_alice', name: '인형의 실 해금', desc: '스킬 해금: 적 중급 이상 유닛을 영구히 아군으로 (45초 쿨)', cost: 1000, tech: 3, mods: {} },
   { id: 'mu_gear_bell', unit: 'm_clocktower_gear', name: '거대한 종', desc: '자정의 종소리 시전 사거리 +2', cost: 300, tech: 3, mods: { skillCastRangeAdd: tiles(2) } },
 ];
@@ -1646,10 +1896,6 @@ export const BOONS: readonly UnitBoon[] = [
   { id: 'b_owl_swarm', unit: 's_owl', kind: 'passive', name: '무리 사냥',
     desc: '공중 적 2기를 동시 사격, 공중에게 추가 +10',
     mods: { airMultiTargetsSet: 2, bonusAdd: { flying: 10 } } },
-  { id: 'b_owl_dive', unit: 's_owl', kind: 'active', name: '급강하',
-    desc: '전투 중 9초마다 내리꽂아 착지 지점에 광역 40',
-    mods: { addActive: { name: '급강하', desc: '착지 광역 40', kind: 'strike',
-      cooldown: seconds(9), damage: 40, splash: tiles(1.2) } } },
 
   // 거대 나비 (200원 지원, 공격 8 / 둔화 2초)
   { id: 'b_butterfly_dust', unit: 's_butterfly', kind: 'stat', name: '짙은 인분',
@@ -1730,6 +1976,7 @@ function applyMods(base: EntityDef, modList: readonly UpgradeMods[]): EntityDef 
   let actives = base.actives;
   let regenPerSec = base.regenPerSec;
   let dodgePct = base.dodgePct;
+  let silenceOnHit = base.silenceOnHit;
   for (const m of modList) {
     if (actives && (m.skillDamagePct || m.skillCooldownPct || m.skillSplashAdd || m.skillDurTicksAdd || m.skillCastRangeAdd)) {
       actives = actives.map((a) => {
@@ -1745,6 +1992,7 @@ function applyMods(base: EntityDef, modList: readonly UpgradeMods[]): EntityDef 
     if (m.maxHpPct) maxHp = idiv(maxHp * (100 + m.maxHpPct), 100);
     if (m.maxHpAdd) maxHp += m.maxHpAdd;
     if (m.dodgePct) dodgePct = m.dodgePct;
+    if (m.silenceOnHitSet) silenceOnHit = m.silenceOnHitSet;
     if (m.regenPerSec) regenPerSec = (regenPerSec ?? 0) + m.regenPerSec;
     if (m.addActive) actives = [...(actives ?? []), m.addActive];
     if (m.armorAdd) armor += m.armorAdd;
@@ -1778,6 +2026,7 @@ function applyMods(base: EntityDef, modList: readonly UpgradeMods[]): EntityDef 
         w.rootTicks = Math.max(w.rootTicks ?? 0, m.rootSet.ticks);
         if (m.rootSet.chance !== undefined) w.rootChance = m.rootSet.chance;
       }
+      if (m.zoneSet) w.zone = { kind: m.zoneSet.kind, radius: m.zoneSet.radius, ticks: m.zoneSet.ticks };
       if (m.chillSet) w.chillTicks = Math.max(w.chillTicks ?? 0, m.chillSet.ticks);
       if (m.rootTicksAdd) w.rootTicks = (w.rootTicks ?? 0) + m.rootTicksAdd;
       if (m.rootChanceAdd && w.rootChance !== undefined) {
@@ -1805,6 +2054,7 @@ function applyMods(base: EntityDef, modList: readonly UpgradeMods[]): EntityDef 
     ...(actives ? { actives } : {}),
     ...(regenPerSec ? { regenPerSec } : {}),
     ...(dodgePct ? { dodgePct } : {}),
+    ...(silenceOnHit ? { silenceOnHit } : {}),
   };
   return eff;
 }

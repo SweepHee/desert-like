@@ -917,9 +917,10 @@ function unlockSage(g: Game, sage: Entity): void {
   // 혼란이 풀리면 반드시 적으로 재조준하고 전투를 재개해야 한다
   const g = newArena();
   const mid = tiles(30);
-  const owl = spawnUnit(g, 's_owl', 0, mid - tiles(2), 0);
+  // 숲올빼미는 근접 유닛이라 사거리 안에서 시작해야 한다 (예전 원거리 시절엔 4타일)
+  const owl = spawnUnit(g, 's_owl', 0, mid - tiles(0.5), 0);
   const buddy = spawnUnit(g, 's_butterfly', 0, mid - tiles(2), tiles(0.5)); // 붙어 다니는 아군
-  const foe = spawnUnit(g, 'p_skeleton', 1, mid + tiles(2), 0);
+  const foe = spawnUnit(g, 'p_skeleton', 1, mid + tiles(0.3), 0);
   // 혼란을 인위로 부여 (앨리스 없이 상태만 재현)
   owl.confusedUntil = g.tick + 20 * 3;
   let stalkedAllyAfterRecovery = false;

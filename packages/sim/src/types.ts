@@ -49,11 +49,20 @@ export type CombatTag =
  * 인간형 유닛에만 붙이며, UI에는 노출하지 않는다.
  */
 export type SexTag = 'male' | 'female';
-export type Tag = CombatTag | SexTag;
+/**
+ * 지원가 — 힐·아군 버프·오라로 부대를 받치는 유닛.
+ * 전투 판정에는 관여하지 않고, 「도약 강습」처럼 뒤를 치는 스킬의 우선 목표로 쓰인다.
+ */
+/**
+ * 계열 태그 「요정」 — 오베론 「요정의 축복」이 고르는 대상.
+ * 전투 판정에도, 화면 표시에도 나오지 않는 숨은 분류다.
+ */
+export type RoleTag = 'support' | 'fairy';
+export type Tag = CombatTag | SexTag | RoleTag;
 export type BonusKey = CombatTag | 'flying';
 
-const SEX_TAGS: readonly string[] = ['male', 'female'];
-/** 전투 판정에 쓰이는 태그만 통과 (성별 태그는 연출 전용이라 제외). */
+const SEX_TAGS: readonly string[] = ['male', 'female', 'support', 'fairy'];
+/** 전투 판정에 쓰이는 태그만 통과 (성별·역할 태그는 제외). */
 export function isCombatTag(t: Tag): t is CombatTag {
   return !SEX_TAGS.includes(t);
 }
@@ -66,6 +75,9 @@ export type TargetCap = 'ground' | 'air' | 'both';
  */
 export type ZoneKind = 'thorns' | 'spores' | 'forest' | 'grave' | 'blaze'
   | 'quake' | 'frost' | 'gravity' | 'hellfire' | 'fireburst' | 'feast'
+  | 'threadstorm' // 드로셀마이어 「실의 폭풍」 — 시각 전용
+  | 'moonveil'  // 오베론 「인분의 장막」 — 지속딜 + 공속·사거리 감소
+  | 'stormwing' // 검은 폭풍 (검은새) — 하늘을 찢는 깃털바람, 시각 전용
   | 'balm'; // 치유 포자 (버섯 폭탄병 캠페인 강화) — 적 둔화 + 아군 생체 회복
 
 /** 지면에 남는 지속 효과 영역. 근처 재시전 시 갱신되므로 위치·만료는 가변. */
@@ -114,6 +126,15 @@ export interface Weapon {
    * 지상 목표에는 적용되지 않는다 (지상은 항상 단일 대상).
    */
   readonly airMultiTargets?: number;
+  /**
+   * 공중 대상 전용 사거리 (생략 = range 와 동일).
+   * 모자장수처럼 「지상은 짧고 하늘은 멀리」가 성립하는 유닛용.
+   */
+  readonly airRange?: number;
+  /** 공중 대상 전용 피해 (생략 = damage 와 동일). */
+  readonly airDamage?: number;
+  /** true 면 사거리 안에 공중이 있을 때 지상보다 먼저 노린다. */
+  readonly preferAir?: boolean;
   /** 방어력 무시 (망령류). */
   readonly ignoreArmor?: boolean;
   /** 입힌 피해의 몇 %를 회복하는가 (흡혈/시체 흡수). */
@@ -142,6 +163,11 @@ export interface ActiveSkill {
   readonly cooldown: number; // 틱
   /** 이 업그레이드를 산 소유자만 사용 가능 (스킬 해금 — 세이지·앨리스). */
   readonly requiresUpgrade?: string;
+  /** 공격 적중 시 침묵 부여 틱 (엘루리온 해금 패시브). */
+  readonly silenceTicks?: number;
+  /** 치명타·버프를 받을 유닛을 이 id 목록으로 제한 (오베론 — 나비·페어리·오베론). */
+  /** 버프 대상을 이 태그를 가진 유닛으로 제한 (오베론 — 요정 계열). */
+  readonly onlyTag?: Tag;
   /** seduce: 매혹 확률 % (기본 30). */
   readonly chancePct?: number;
   /** legion: 고정 구성 대량 소환 목록. */
@@ -150,7 +176,25 @@ export interface ActiveSkill {
     | 'strike' | 'selfbuff' | 'allybuff' | 'invuln' | 'summon' | 'confuse' | 'zone' | 'taunt' | 'nuke'
     | 'allyarmor' | 'weaken' | 'cure' | 'sleep'
     | 'ground' | 'slowfield' | 'freeze' | 'charm' | 'reflect' | 'fear' | 'root'
-    | 'seduce' | 'summonMare' | 'leap' | 'stealth' | 'purge' | 'legion' | 'sacrifice';
+    | 'seduce' | 'summonMare' | 'leap' | 'stealth' | 'purge' | 'legion' | 'sacrifice'
+    // 마리오네타 확장 로스터
+    | 'hasteAlly'    // 「초침 재촉」 주변 아군 공속·이속 증가
+    | 'slowFoe'      // 「지각의 저주」 주변 적 공속·이속 감소
+    | 'burrow'       // 「토끼굴」 땅속으로 숨는다 (무적·조준 불가)
+    | 'timelock'     // 「멈춘 시계」 최고 티어 아군 1기에게 영구 상태이상 면역 (1회한)
+    | 'critAura'     // 「정각의 일격」 주변 아군에게 치명타 확률 부여
+    | 'randomBuff'   // 모자장수 — 발동할 때마다 다른 모자로 바뀜다
+    | 'summonAtFoe'  // 드로셀마이어 — 적 후열 한가운데에 소환
+    | 'levitate'     // 주변 아군 원거리·지원가를 공중으로 띄운다
+    | 'threadStorm'  // 「실의 폭풍」 광역 속박 후 폭발 피해
+    // 실바린 확장 로스터
+    | 'wardShield'   // 드라이어드 — 적이 다가오면 주변 후열에 보호막
+    | 'regenAura'    // 드라이어드 — 주변 아군 초당 체력 회복
+    | 'selfShield'   // 엘루리온 — 자신에게 보호막 (다른 보호막과 합산)
+    | 'airTaunt'     // 엘루리온 — 대공이 되는 적만 도발
+    | 'ram'          // 엘루리온 — 대공 적에게 돌진해 박고 돌아온다
+    | 'diveStrike'   // 오베론 — 적 후열로 도약 강타 후 제자리로
+    | 'debuffZone';  // 오베론 — 지속딜 + 공속·사거리 감소 장판
   // strike: 스킬 피해 (방어 적용). executeBelowPct 가 있으면
   // 대상 체력이 그 % 이하일 때만 발동하고 executeBonus 를 더한다.
   readonly damage?: number;
@@ -229,6 +273,20 @@ export interface EntityDef {
    * (보급 마차 — 나무·부대 사이에 끼지 않고 제 길을 간다. 레인 경계는 그대로)
    */
   readonly ghost?: boolean;
+  /**
+   * 전투에 띄어들지 않고 아군 본대를 따라다니는 유닛 (하얀토끼).
+   * 적진으로 혼자 진군하지 않는다.
+   */
+  readonly followAlly?: boolean;
+  /**
+   * 정보창에 띄울 패시브 설명 — 코드로만 구현된 능력(오라·스택 등)은
+   * actives 에 안 잡혀서 유닛 설명이 텅 빈 것처럼 보인다.
+   */
+  readonly passiveDesc?: readonly string[];
+  /** 피격한 적에게 침묵을 거는 패시브 (틱) — 업그레이드로 붙는다. */
+  readonly silenceOnHit?: number;
+  /** 막타 스택 패시브 (오베론): 처치당 공격력 % 증가·최대 스택·지속. */
+  readonly killStack?: { readonly pct: number; readonly max: number; readonly ticks: number };
   /** FP 충돌 반지름. */
   readonly radius: number;
   /** FP 적 탐지 거리. */
@@ -343,6 +401,55 @@ export interface Entity {
   /** 이 틱까지 방어 버프 (유니콘 「가호」). 중복 없음 — 더 센 쪽으로 갱신. */
   armorBuffUntil: number;
   armorBuffAdd: number;
+  /** 디멘터 오라 — 지금 받고 있는 유형 (0 = 없음, 1~4). 매 틱 재계산된다. */
+  auraKind: number;
+  /** 치명타 확률 % (「정각의 일격」). 0 = 없음. */
+  critPct: number;
+  critUntil: number;
+  /** 땅속에 숨은 상태 만료 틱 (「토끼굴」). */
+  buriedUntil: number;
+  /** 영구 상태이상 면역 (「멈춘 시계」). */
+  timeLocked: boolean;
+  /** 임시 비행 만료 틱 (드로셀마이어 「부양」). */
+  levitateUntil: number;
+  /** 모자장수 랜덤 버프: 0=없음 1=빨강 2=파랑 3=거대화 4=황금(전부). */
+  hatKind: number;
+  hatUntil: number;
+  /** 빨강 모자: 다음 태엽 병정 소환 틱. */
+  hatSummonTick: number;
+  /** 남은 보호막 (피해를 먼저 흡수한다). */
+  shieldHp: number;
+  /** 한 번이라도 보호막을 받은 적이 있는가 (디멘터 오라 — 영구 차단). */
+  shieldEverGranted: boolean;
+  /**
+   * 보호막 재부여 면역 만료 틱 — 이 시각까지는 새 보호막을 못 받는다.
+   * 드라이어드가 여러 마리여도 돌려가며 계속 걸어주지 못하게 막는다.
+   */
+  /** 보호막 만료 틱 (0 또는 MAX = 지속시간 없음). */
+  shieldUntil: number;
+  shieldImmuneUntil: number;
+  /** 치명타 버프 재부여 면역 만료 틱. */
+  critImmuneUntil: number;
+  /** 가호(방어 버프) 재부여 면역 만료 틱. */
+  armorBuffImmuneUntil: number;
+  /** 체력 재생 버프 (드라이어드) — 초당 회복량과 만료/면역. */
+  regenPerSec: number;
+  regenUntil: number;
+  regenImmuneUntil: number;
+  /** 침묵 — 액티브 스킬 사용 불가 (엘루리온). */
+  silencedUntil: number;
+  /** 「인분의 장막」 안에 있는 동안 — 공속 -10%, 사거리 -1. */
+  moonveilUntil: number;
+  /** 막타 스택 (오베론) — 처치 할 때마다 공격력 +10%, 최대 10. */
+  killStacks: number;
+  killStackUntil: number;
+  /** 대공 도발 — 대공이 되는 적만 이 유닛을 노리게 된다. */
+  airTauntUntil: number;
+  airTauntBy: number;
+  /** 돌진·도약 뒤 제자리로 돌아갈 예약 (복귀 틱과 원래 좌표). */
+  returnTick: number;
+  returnX: number;
+  returnY: number;
   /** 중복힐 상한용 1초 창: 시작 틱과 창 내 받은 힐 횟수 (최대 3). */
   healWindowStart: number;
   healsInWindow: number;
@@ -379,6 +486,53 @@ export interface PlayerState {
   botGoal: string | null;
 }
 
+/**
+ * 적 거점 (캠페인 「발타르의 성」류 다거점 스테이지).
+ * 팀 1 의 봇 하나를 「거점」으로 보고, 출정 위치·경제·생산 목록을 따로 준다.
+ * 사실상 1:N 싸움을 만드는 장치 — 거점마다 성격이 다르다.
+ */
+export interface EnemyCamp {
+  /** 팀 1 안에서의 봇 순번 (players 배열의 팀1 등장 순서). */
+  readonly slot: number;
+  /** 화면에 띄울 이름 (「발타르의 성」·「전초 A」…). */
+  readonly label?: string;
+  /** 출정 좌표 (FP). 생략 시 기본 스폰 지점. */
+  readonly x?: number;
+  readonly y?: number;
+  /** 시작 인컴 단계 (0 = 기본). */
+  readonly startIncome?: number;
+  /**
+   * 인컴 상한. 지정하면 그 단계까지만 올릴 수 있다.
+   * unlocks 로 특정 턴에 풀 수 있다.
+   */
+  readonly incomeCap?: number;
+  /** 시작 자금. */
+  readonly startMoney?: number;
+  /** 출정 주기 (턴). 2 면 두 턴에 한 번 — C·D 처럼 모았다 치는 거점용. */
+  readonly deployEveryWave?: number;
+  /**
+   * 턴 구간별 생산 목록. fromWave 오름차순으로 적고, 현재 턴 이하 중
+   * 가장 늦은 구간이 적용된다. units 가 비면 그 구간엔 아무것도 못 산다.
+   */
+  readonly phases?: readonly {
+    readonly fromWave: number;
+    readonly units: readonly string[];
+    /** 이 구간에서 특히 선호할 유닛 (가중 ×8). */
+    readonly preferred?: readonly string[];
+  }[];
+  /** 특정 턴에 인컴 상한을 푼다 (fromWave 오름차순). */
+  readonly incomeUnlocks?: readonly { readonly fromWave: number; readonly cap: number }[];
+  /** 매 턴 확정 편입 (fromWave 부터, 목록에서 amount 종을 골라 1기씩). */
+  readonly forcedGrowth?: readonly {
+    readonly fromWave: number;
+    readonly units: readonly string[];
+    /** 매 턴 편입할 종류 수 (기본 1). */
+    readonly perWave?: number;
+  }[];
+  /** true 면 출정 직전에 남은 돈을 전부 털어 병력을 산다. */
+  readonly spendAll?: boolean;
+}
+
 export interface GameConfig {
   readonly seed: number;
   /**
@@ -407,6 +561,13 @@ export interface GameConfig {
   readonly enemyUnitCaps?: Readonly<Record<string, number>>;
   /** 적(팀1) 봇 구매 화이트리스트 — 지정 시 이 목록의 유닛만 생산한다. */
   readonly enemyAllowedUnits?: readonly string[];
+  /**
+   * 적(팀1) 봇 구매 금지 목록 — 화이트리스트보다 우선한다.
+   * 특정 유닛을 "아직 등장할 때가 아니다"로 잠그는 용도.
+   */
+  readonly enemyDeniedUnits?: readonly string[];
+  /** 적 거점별 설정 (다거점 스테이지). */
+  readonly enemyCamps?: readonly EnemyCamp[];
   /** 적(팀1) 봇 시작 자금 오버라이드. */
   readonly enemyStartMoney?: number;
   /**
@@ -521,6 +682,12 @@ export interface Game {
   readonly enemyUnitCaps: Readonly<Record<string, number>>;
   readonly allyUnitCaps: Readonly<Record<string, number>>;
   readonly enemyAllowedUnits: readonly string[];
+  readonly enemyDeniedUnits: readonly string[];
+  readonly enemyCamps: readonly EnemyCamp[];
+  /** 이번 틱에 터진 치명타 위치 (렌더 전용 — 매 틱 비워진다). */
+  crits: { x: number; y: number; tick: number }[];
+  /** 「실의 폭풍」 지연 폭발 예약. */
+  threadBooms: { x: number; y: number; tick: number; dmg: number; team: CombatTeam; r: number }[];
   readonly enemyIncomePct: number;
   /** 팀 2 유닛별 최소 등장 웨이브. 빈 객체 = 제한 없음. */
   readonly enemyUnitMinWave: Readonly<Record<string, number>>;

@@ -608,13 +608,13 @@ reg(D({
 reg(D({
   // 거대용 — 하늘의 요새이자 도살자. 대공이 되는 적만 끌어당겨 물어뜯는다.
   id: 's_elurion', race: 'sylvarin', name: '엘루리온', tier: 'supreme', techReq: 3,
-  cost: 1100, supply: 9, maxHp: 1500, armor: 5, tags: ['leather', 'massive', 'bio'], flying: true,
+  cost: 1100, supply: 9, maxHp: 1100, armor: 3, tags: ['leather', 'massive', 'bio'], flying: true,
   speed: tilesPerSecond(2.0), radius: tiles(0.8), acquireRange: tiles(7),
   passiveDesc: [
     '공격 시 피해의 30%를 회복한다 (흡혈)',
   ],
   // 흡혈 30% — 맞을수록 버틴다
-  weapon: { damage: 78, cooldown: seconds(1.3), range: tiles(1.6), targets: 'both', splash: tiles(1.2), lifestealPct: 30 },
+  weapon: { damage: 78, cooldown: seconds(1.3), range: tiles(1.6), targets: 'both', lifestealPct: 30 },
   actives: [
     {
       name: '창공의 포효', desc: '하늘을 때릴 수 있는 적만 7초간 이쪽으로 끌어당긴다',

@@ -20,6 +20,7 @@ import {
   setProgressListener, localSave, applySave,
   perkAlloc, savePerkAlloc, perkPointsSpent, perksToHero,
   BOON_UNLOCKS, boonChoices, saveBoonChoice, unlockedBoonUnits, selectedBoonIds,
+  deniedUnitsOf,
   type CampaignStage,
 } from './campaign.ts';
 import { createAudio } from './audio.ts';
@@ -252,6 +253,21 @@ function refreshUnitInfo(): void {
   if (game.tick < e.groundedUntil) status.push('지상화 (리버스그라비티)');
   if (game.tick < e.invulnUntil) status.push('무적');
   if (game.tick < e.armorBuffUntil) status.push(`가호 (방어력 +${e.armorBuffAdd})`);
+  // 디멘터 오라 — 적 편성을 읽고 고른 네 유형 중 하나
+  if (e.auraKind === 1) status.push('오라 「검푸른 장막」 — 방어력 +4 (적 1티어 원거리가 최다)');
+  if (e.auraKind === 2) status.push('오라 「뻗은 손톱」 — 사거리 +1 (적 2티어 이하 판금이 최다)');
+  if (e.auraKind === 3) status.push('오라 「재의 장막」 — 보호막 100, 평생 한 번뿐 (적 비행이 최다)');
+  if (e.auraKind === 4) status.push('오라 「종말」 — 공속·이속 +10%, 초당 회복 1 (적 고급 이상이 최다)');
+  if (e.shieldHp > 0) status.push(`보호막 ${e.shieldHp}`);
+  // 마리오네타 확장 상태
+  if (game.tick < e.buriedUntil) status.push('토끼굴 (땅속 — 조준·피해 불가)');
+  if (e.timeLocked) status.push('멈춘 시계 (영구 상태이상 면역)');
+  if (game.tick < e.critUntil && e.critPct > 0) status.push(`정각의 일격 (치명타 ${e.critPct}% · 1.5배)`);
+  if (game.tick < e.levitateUntil) status.push('부양 (공중 취급 — 지상 공격이 안 닿는다)');
+  if (game.tick < e.hatUntil && e.hatKind > 0) {
+    const HAT = ['', '빨강 모자 (태엽 병정 소환)', '파랑 모자 (공중 사거리 +1)', '거대화 모자 (평타 광역)', '황금 모자 (전부 적용!)'];
+    status.push(HAT[e.hatKind] ?? '');
+  }
   if (game.tick < e.atkBuffUntil) status.push('군세강화');
   if (game.tick < e.forestUntil) status.push('숲의 가호');
   if (e.defId === 'nexus' && !game.guardianDown[e.team as 0 | 1]) status.push('보호막 (수호자 생존)');
@@ -537,6 +553,8 @@ let campaign: CampaignStage | null = null;
 let campaignCaps: { incomeCap?: number; techCap?: number } | null = null;
 /** 특수 유닛 스폰 규칙별 다음 발동 시각(초). Infinity = 소진. */
 let campaignSpawnNext: number[] = [];
+/** 이번 스테이지에서 막힌 유닛 (전역 잠금 − 스테이지별 해제). */
+let campaignDenied: readonly string[] = [];
 let campaignSpawnedTotal: number[] = [];
 /** 마몬의 상점 채널링 시작 틱 (-1 = 채널링 없음). */
 let campaignCaptureStartTick = -1;
@@ -611,7 +629,7 @@ function showCampaignSelect(): void {
   for (const st of SYLVARIN_CAMPAIGN) {
     const btn = document.createElement('button');
     btn.className = 'camp-stage';
-    const unreleased = st.act === 3 && st.id > 13 && !act3Open(); // 13은 전체 공개, 14+ 는 테스터만
+    const unreleased = st.act === 3 && st.id > 14 && !act3Open(); // 14까지 전체 공개, 15+ 는 테스터만
     const locked = unreleased || st.id > cleared + 1;
     const done = st.id <= cleared;
     const isNext = !unreleased && st.id === cleared + 1;
@@ -779,7 +797,7 @@ function showBoonScreen(): void {
 }
 
 async function startCampaignStage(st: CampaignStage): Promise<void> {
-  if (st.act === 3 && st.id > 13 && !act3Open()) { showCampaignSelect(); return; } // 14+ 는 테스터 전용
+  if (st.act === 3 && st.id > 14 && !act3Open()) { showCampaignSelect(); return; } // 15+ 는 테스터 전용
   showScreen(null);
   await runDialogue(st.briefing);
   campaign = st;
@@ -799,6 +817,7 @@ async function startCampaignStage(st: CampaignStage): Promise<void> {
     ...(st.enemyAllowedUnits ? { enemyAllowedUnits: st.enemyAllowedUnits } : {}),
     ...(st.enemyStartMoney !== undefined ? { enemyStartMoney: st.enemyStartMoney } : {}),
     ...(st.enemyStartTech !== undefined ? { enemyStartTech: st.enemyStartTech } : {}),
+    enemyDeniedUnits: deniedUnitsOf(st),
     ...(st.enemyIncomePct !== undefined ? { enemyIncomePct: st.enemyIncomePct } : {}),
     ...(st.enemyUnitMinWave ? { enemyUnitMinWave: st.enemyUnitMinWave } : {}),
     ...(st.enemyCapsUntilWave !== undefined ? { enemyCapsUntilWave: st.enemyCapsUntilWave } : {}),
@@ -817,6 +836,7 @@ async function startCampaignStage(st: CampaignStage): Promise<void> {
       ? { allyDeploy: { x: Math.floor(st.allyDeployTile.x * FP), y: Math.floor(st.allyDeployTile.y * FP) } }
       : {}),
   } as { incomeCap?: number; techCap?: number };
+  campaignDenied = deniedUnitsOf(st);
   campaignSpawnNext = (st.spawns ?? []).map((r) => r.atSec ?? r.everySec ?? Infinity);
   campaignSpawnedTotal = (st.spawns ?? []).map(() => 0);
   campaignCaptureStartTick = -1;
@@ -917,7 +937,7 @@ function campaignFinish(win: boolean, reason?: string): void {
     const isLast = st.id === SYLVARIN_CAMPAIGN.length;
     const newBoonUnit = win ? BOON_UNLOCKS[st.id] : undefined;
     const nextSt = SYLVARIN_CAMPAIGN.find((x) => x.id === st.id + 1);
-    const nextUnreleased = nextSt !== undefined && nextSt.act === 3 && nextSt.id > 13 && !act3Open(); // 14+ 테스터 전용
+    const nextUnreleased = nextSt !== undefined && nextSt.act === 3 && nextSt.id > 14 && !act3Open(); // 15+ 테스터 전용
     overlay.innerHTML =
       `<h1>${win ? '스테이지 클리어!' : `패배… (${turnAt}턴)`}</h1>` +
       `<p>${st.id}. ${st.title}${reason ? ` — ${reason}` : ''}</p>` +
@@ -1188,8 +1208,15 @@ function buildShop(race: RaceId): void {
     let holdTip: number | undefined;
     let holdUpg: number | undefined;
     let heldOpened = false;
+    // 롱프레스 중 브라우저 기본 동작(텍스트 선택·복사 말풍선·드래그) 차단.
+    // 이게 없으면 「공중 원거리 / 지·공 300」 같은 글자가 통째로 잡혀서
+    // 손을 뗄 때마다 선택을 풀어줘야 했다.
+    btn.addEventListener('contextmenu', (ev) => ev.preventDefault());
+    btn.addEventListener('selectstart', (ev) => ev.preventDefault());
+    btn.addEventListener('dragstart', (ev) => ev.preventDefault());
     btn.addEventListener('pointerdown', (e) => {
       if (e.pointerType === 'mouse') return;
+      e.preventDefault(); // 터치 롱프레스의 선택 제스처를 시작 단계에서 막는다
       heldOpened = false;
       holdTip = window.setTimeout(() => {
         heldOpened = true; // 설명창을 연 순간부터 손을 떼도 구매되지 않는다
@@ -1261,8 +1288,11 @@ function buildShop(race: RaceId): void {
       // 터치: 꾹 1초 = 설명창 (놓으면 닫힘), 짧은 탭 = 구매만
       let mercHold: number | undefined;
       let mercHeld = false;
+      btn.addEventListener('contextmenu', (ev) => ev.preventDefault());
+      btn.addEventListener('selectstart', (ev) => ev.preventDefault());
       btn.addEventListener('pointerdown', (e) => {
         if (e.pointerType === 'mouse') return;
+        e.preventDefault();
         mercHeld = false;
         mercHold = window.setTimeout(() => { mercHeld = true; showTip(); }, 1000);
       });
@@ -1292,9 +1322,10 @@ const TAG_KO: Record<string, string> = {
   cloth: '천', leather: '가죽', plate: '판금',
   bio: '생체', undead: '망자', construct: '기물',
   massive: '거대', structure: '구조물', flying: '비행',
+  support: '지원가',
 };
 /** 화면에 띄우지 않는 태그 — 성별은 연출용 메타데이터일 뿐이다. */
-const HIDDEN_TAGS = new Set(['male', 'female']);
+const HIDDEN_TAGS = new Set(['male', 'female', 'fairy']);
 
 const ZONE_KO: Record<string, string> = {
   thorns: '가시밭', spores: '포자 구름', forest: '숲의 영역', grave: '사후의 경계', blaze: '블레이즈',
@@ -1373,6 +1404,11 @@ function unitInfoHtml(d: EntityDef, hp?: number): string {
       ? ` (${d.heal.excludeTags.map((t) => TAG_KO[t] ?? t).join('·')} 제외)`
       : '';
     rows.push(`<div class="ui-row">회복 <b>${d.heal.amount}</b> / ${(d.heal.cooldown / TICK_HZ).toFixed(1)}초${excl}</div>`);
+  }
+  // 코드로만 도는 능력(오라·스택 등)은 actives 에 없어서 설명이 비어 보인다
+  for (const line of d.passiveDesc ?? []) {
+    const indent = line.startsWith('  ') ? ' style="padding-left:14px;opacity:.85"' : '';
+    rows.push(`<div class="ui-row"${indent}><span class="ui-bonus">패시브</span> ${line.trim()}</div>`);
   }
   for (const a of d.actives ?? []) {
     rows.push(`<div class="ui-row"><span class="ui-bonus">액티브 「${a.name}」</span> ${a.desc} (쿨 ${(a.cooldown / TICK_HZ).toFixed(0)}초)</div>`);
@@ -1799,6 +1835,11 @@ function tick(deltaMS: number): void {
     const nowSec = game.tick / TICK_HZ;
     for (let i = 0; i < campaign.spawns.length; i++) {
       const rule = campaign.spawns[i]!;
+      // 전역 잠금 유닛은 출현 이벤트로도 나오지 않는다 (unlockEnemyUnits 로 푸는 판만 예외)
+      if (campaignDenied.includes(rule.defId)) {
+        campaignSpawnNext[i] = Infinity;
+        continue;
+      }
       if (nowSec < campaignSpawnNext[i]!) continue;
       // 총량 상한 도달 시 이 규칙은 종료 (무한 누적 방지)
       if (rule.maxTotal !== undefined && campaignSpawnedTotal[i]! >= rule.maxTotal) {
@@ -1834,9 +1875,13 @@ function tick(deltaMS: number): void {
   if (campaign && !campaignDone && !game.over && campaign.growth) {
     for (let i = 0; i < campaign.growth.length; i++) {
       const rule = campaign.growth[i]!;
+      if (campaignDenied.includes(rule.defId)) continue; // 전역 잠금 유닛은 확정 편입도 막는다
       const nextWave = game.waveIndex + 1; // 지금 편입하면 이 웨이브 출정분
       if (nextWave < rule.fromWave || nextWave <= campaignGrowthWave[i]!) continue;
+      // once: fromWave 에 딱 한 번만 (편성은 누적이라 이후 매 턴 그만큼 계속 나온다)
+      if (rule.once && campaignGrowthWave[i]! > 0) continue;
       campaignGrowthWave[i] = nextWave;
+      const add = rule.amount ?? 1;
       // 총 편입 상한 (네임드는 1기) — 팀 합산 보유량으로 판정
       if (rule.maxCount !== undefined) {
         let have = 0;
@@ -1862,10 +1907,12 @@ function tick(deltaMS: number): void {
         if (best && size(q) < size(best)) best = q;
       }
       if (best) {
-        best.comp[rule.defId] = (best.comp[rule.defId] ?? 0) + 1;
+        best.comp[rule.defId] = (best.comp[rule.defId] ?? 0) + add;
         if (!campaignGrowthAnnounced[i]) {
           campaignGrowthAnnounced[i] = true;
-          campaignAlertText = `⚠ 적군에 ${rule.label} 합류!`;
+          campaignAlertText = add > 1
+            ? `⚠ 적군에 ${rule.label} ${add}기 합류!`
+            : `⚠ 적군에 ${rule.label} 합류!`;
           campaignAlertUntil = performance.now() + 4000;
           audio.play('cast_skill', { volume: 0.9 });
         }

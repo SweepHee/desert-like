@@ -56,6 +56,15 @@ const SFX: Record<string, readonly string[]> = {
   cast_bless: ['/assets/sfx/cast_bless1.mp3', '/assets/sfx/cast_bless2.mp3'],
   // 「급강하」 — 날개가 공기를 가르고 맹금이 울며 내리꽂는다
   cast_dive: ['/assets/sfx/cast_dive1.mp3'],
+  // 「검은 폭풍」 — 거대한 날개가 내리치며 하늘을 찢는다
+  cast_storm: ['/assets/sfx/cast_storm1.mp3'],
+  // 마리오네타·실바린 확장 로스터 스킬음
+  cast_puppetarmy: ['/assets/sfx/cast_puppetarmy1.mp3'], // 호두까기 병단
+  cast_threadstorm: ['/assets/sfx/cast_threadstorm1.mp3'], // 실의 폭풍
+  cast_hat: ['/assets/sfx/cast_hat1.mp3'],               // 모자 바꾸기
+  cast_roar: ['/assets/sfx/cast_roar1.mp3'],             // 창공의 포효·들이받기
+  cast_bark: ['/assets/sfx/cast_bark1.mp3'],             // 나무껍질 장막·생명의 숨결
+  cast_moonveil: ['/assets/sfx/cast_moonveil1.mp3'],     // 인분의 장막·그림자 도약
   die_succubus: ['/assets/sfx/die_succubus1.mp3'],
   explosion: ['/assets/sfx/explosion1.mp3', '/assets/sfx/explosion2.mp3'],
   // 게임 흐름

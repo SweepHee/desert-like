@@ -37,6 +37,12 @@
       display: flex;
       flex-direction: column;
       user-select: none;
+      /* 모바일 롱프레스: 텍스트 선택·복사 말풍선·드래그가 뜨지 않게.
+         user-select 만으로는 iOS 사파리와 안드로이드 크롬에서 여전히 뜬다. */
+      -webkit-user-select: none;
+      -webkit-touch-callout: none;
+      -webkit-tap-highlight-color: transparent;
+      touch-action: manipulation;
     }
     #topbar {
       display: flex; align-items: center; gap: 16px;

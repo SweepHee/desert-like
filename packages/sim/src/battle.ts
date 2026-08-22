@@ -23,6 +23,12 @@ function def(e: Entity): EntityDef {
   return d;
 }
 
+/**
+ * 구조물을 때리는 중 주위를 살피는 탐지 거리 배율 (%).
+ * 건물만 두들기느라 곁의 적을 못 보는 일이 없게 평소보다 넓게 본다.
+ */
+const STRUCT_SCAN_PCT = 200;
+
 /** 유효 비행 판정 — 「리버스그라비티」로 끌어내려진 공중 유닛은 지상 취급. */
 function isFlying(g: Game, e: Entity): boolean {
   return def(e).flying && g.tick >= e.groundedUntil;
@@ -113,8 +119,13 @@ function canTargetAir(d: EntityDef): boolean {
   return d.weapon !== undefined && d.weapon.targets !== 'ground';
 }
 
-function findTarget(g: Game, e: Entity, d: EntityDef): number {
+/**
+ * 탐지 거리 안 가장 가까운 적. skipStructures 면 구조물(넥서스·수호탑)을 건너뛰고,
+ * rangePct 로 탐지 거리를 늘린다 (구조물을 때리는 중엔 주위를 더 넓게 살핀다).
+ */
+function findTarget(g: Game, e: Entity, d: EntityDef, skipStructures = false, rangePct = 100): number {
   const origin = acquireOrigin(e, d);
+  const acquire = rangePct === 100 ? d.acquireRange : idiv(d.acquireRange * rangePct, 100);
   let best = -1;
   let bestD2 = -1;
   // 공중 유닛은 대공 가능한 적(=나를 위협하는 적)을 우선한다.
@@ -124,7 +135,8 @@ function findTarget(g: Game, e: Entity, d: EntityDef): number {
     if (!t.alive || t.team === e.team) continue;
     if (!canHit(g, d, t) || isShielded(g, t)) continue;
     const td = def(t);
-    const reach = d.acquireRange + d.radius + td.radius;
+    if (skipStructures && td.tier === 'structure') continue;
+    const reach = acquire + d.radius + td.radius;
     const d2 = dist2(origin.x, origin.y, t.x, t.y);
     if (d2 > reach * reach) continue;
     if (best === -1 || d2 < bestD2) {
@@ -733,6 +745,19 @@ export function stepCombat(g: Game): void {
           e.targetId = atk.id;
           valid = true;
         }
+      }
+    }
+
+    // 구조물(넥서스·수호탑)을 때리는 중엔 주위를 평소의 2배 거리까지 살펴,
+    // 살아 있는 적이 보이면 건물을 놔두고 그쪽을 먼저 상대한다.
+    // 구조물은 반격해도 「나를 때린 놈」 보복 대상이 못 되는 경우가 있어,
+    // 서로 다른 세력이 같은 넥서스를 노리면 코앞에 마주 서고도 안 싸웠다.
+    // (11스테이지처럼 판데 군세와 야생 무리가 한 둥지로 수렴하는 판에서 특히 어색했다)
+    if (valid) {
+      const curT = byId.get(e.targetId);
+      if (curT && def(curT).tier === 'structure') {
+        const live = findTarget(g, e, d, true, STRUCT_SCAN_PCT);
+        if (live >= 0) e.targetId = live;
       }
     }
 

@@ -410,6 +410,12 @@ export interface GameConfig {
   /** 적(팀1) 봇 시작 자금 오버라이드. */
   readonly enemyStartMoney?: number;
   /**
+   * 적(팀1) 봇 시작 테크 레벨 (1~TECH_MAX). 캠페인 전용 —
+   * 처음부터 전 티어를 열어두고 등장 시점은 enemyUnitMinWave 로만 통제한다.
+   * 테크가 이미 최대면 봇은 테크비를 쓰지 않으므로 그 돈이 전부 병력으로 간다.
+   */
+  readonly enemyStartTech?: number;
+  /**
    * 적(팀1) 봇 인컴 배율 % (0 = 미지정). 지정 시 기본 인컴식에 곱하며,
    * 난이도별 인컴 보너스(normal +12/레벨)를 대체한다.
    */

@@ -148,9 +148,16 @@ export function createGame(cfg: GameConfig): Game {
   // 영웅 특성: 시작 자금 (사람 플레이어에게만)
   if (g.heroPerks) {
     for (const p of g.players) if (!p.isBot) p.money += g.heroPerks.startMoney;
+  }
+  // 캠페인: 적 봇 시작 자금 오버라이드
   if (cfg.enemyStartMoney !== undefined) {
     for (const p of g.players) if (p.team === 1 && p.isBot) p.money = cfg.enemyStartMoney;
   }
+  // 캠페인: 적 봇 시작 테크 — 전 티어를 미리 열고 등장은 minWave 로만 통제한다.
+  // 테크가 이미 상한이면 botDecide 의 테크 분기가 통째로 스킵돼 테크비가 병력으로 간다.
+  if (cfg.enemyStartTech !== undefined) {
+    const lv = Math.max(1, Math.min(g.techCap, cfg.enemyStartTech));
+    for (const p of g.players) if (p.team === 1 && p.isBot) p.techLevel = lv;
   }
   return g;
 }

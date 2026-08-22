@@ -87,6 +87,11 @@ export interface CampaignStage {
   readonly enemyStartMoney?: number;
   /** 적(팀1) 봇 시작 테크 (1~3). 전 티어를 미리 열고 등장은 minWave 로만 통제. */
   readonly enemyStartTech?: number;
+  /**
+   * 이 스테이지에서만 잠금을 푸는 유닛 (LOCKED_ENEMY_UNITS 중에서 고른다).
+   * 여기 적힌 유닛만 봇 생산·출현 이벤트·growth 에 다시 등장한다.
+   */
+  readonly unlockEnemyUnits?: readonly string[];
   /** 적(팀1) 봇 인컴 배율 % (난이도 인컴 보너스 대체). */
   readonly enemyIncomePct?: number;
   /** 적 유닛별 최소 등장 웨이브 (이 턴 전엔 구매 불가). */
@@ -172,6 +177,13 @@ export interface CampaignStage {
     readonly defId: string;
     readonly label: string;
     readonly fromWave: number;
+    /** 한 번에 편입할 수량 (생략 = 1). */
+    readonly amount?: number;
+    /**
+     * true = fromWave 턴에 딱 한 번만 편입 (생략 = 매 턴 반복).
+     * 편성(comp)은 누적이라 한 번 넣어두면 이후 매 턴 그만큼 계속 출정한다.
+     */
+    readonly once?: boolean;
     /** 총 편입 상한 (생략 = 무제한). 네임드는 1 — 여왕이 둘일 수는 없다. */
     readonly maxCount?: number;
   }[];
@@ -227,6 +239,27 @@ const U14 = [...U13, 's_apostle', 's_treant'];
 const U17 = [...U14, 's_sage'];
 
 const seedOf = (id: number): number => (id * 7919 + 3) | 0;
+
+/**
+ * 캠페인 전역 잠금 유닛 — 3막의 지정된 무대를 위해 아껴두는 판데모니엄 상급진.
+ * 어느 스테이지에서도 적 봇이 사지 못하고, 출현 이벤트·growth 편입도 막힌다.
+ * 특정 스테이지에서만 풀려면 그 스테이지에 unlockEnemyUnits 로 나열한다.
+ * (대전·연습 모드에는 적용되지 않는다 — 캠페인 한정)
+ */
+export const LOCKED_ENEMY_UNITS: readonly string[] = [
+  'p_coffin_bearer', 'p_succubus', 'p_demilich', 'p_bone_dragon', 'p_mammon', 'p_incubus',
+  'p_dementor',
+  // 마리오네타 확장 로스터
+  'm_ballista', 'm_white_rabbit', 'm_mad_hatter', 'm_drosselmeyer',
+  // 실바린 확장 로스터
+  's_dryad', 's_elurion', 's_oberon',
+];
+
+/** 이 스테이지에서 실제로 막을 유닛 목록 (전역 잠금 − 스테이지별 해제). */
+export function deniedUnitsOf(st: { readonly unlockEnemyUnits?: readonly string[] }): readonly string[] {
+  const open = st.unlockEnemyUnits ?? [];
+  return LOCKED_ENEMY_UNITS.filter((id) => !open.includes(id));
+}
 
 export const SYLVARIN_CAMPAIGN: readonly CampaignStage[] = [
   // ═══ 1막 「재의 새벽」 ═══
@@ -486,7 +519,7 @@ export const SYLVARIN_CAMPAIGN: readonly CampaignStage[] = [
     // 인큐버스…)은 목록에 없으니 봇이 살 수 없고, 데미리치·마몬만 「출현!」으로 온다.
     enemyAllowedUnits: [
       'p_skeleton', 'p_bone_thrower', 'p_summoner', 'p_headless_knight',
-      'p_corpsecaller', 'p_lich', 'p_corpse_golem', 'p_thanatos',
+      'p_lich', 'p_corpse_golem', 'p_thanatos',
       'p_wraith', 'p_banshee',
     ],
     // 적 봇은 처음부터 테크 3 — 등장 시점은 전부 minWave 로만 통제한다.
@@ -499,7 +532,7 @@ export const SYLVARIN_CAMPAIGN: readonly CampaignStage[] = [
     enemyUnitMinWave: {
       // 테크가 열려 있으니 등장 순서는 여기서 직접 그린다 (턴 = 대략적인 난이도 곡선)
       p_summoner: 2, p_wraith: 2,          // 2턴: 소환사·망령 — 공중 위협이 일찍 온다
-      p_headless_knight: 3, p_corpsecaller: 3,
+      p_headless_knight: 3,
       p_corpse_golem: 5, p_banshee: 5,     // 5턴: 주역 지상·공중 합류
       p_lich: 6,
       p_thanatos: 7,                       // 7턴: 최종 주역
@@ -511,8 +544,17 @@ export const SYLVARIN_CAMPAIGN: readonly CampaignStage[] = [
       p_skeleton: 10,
       // 조연 — 소수만
       p_bone_thrower: 6, p_headless_knight: 12,
-      p_lich: 4, p_corpsecaller: 4,
+      p_lich: 4,
     },
+    // 발타르의 밴시 증원 — 8·11·16턴에 걸쳐 4시 판데 군세에 통째로 편입된다.
+    // 편성은 누적이라 한 번 들어가면 이후 매 턴 그만큼 계속 출정한다 (봇 생산분과 별개).
+    // 3 → 8 → 23기로 불어나며 상시 공중 압박을 만든다. 봇의 구매 가중치는
+    // 편성 규모를 보지 않으므로, 이렇게 얹어도 봇은 밴시를 계속 자기 돈으로 산다.
+    growth: [
+      { defId: 'p_banshee', label: '밴시 무리', fromWave: 8, amount: 3, once: true },
+      { defId: 'p_banshee', label: '밴시 무리', fromWave: 11, amount: 5, once: true },
+      { defId: 'p_banshee', label: '밴시 무리', fromWave: 16, amount: 15, once: true },
+    ],
     // 수비 모드: 부대가 둥지 주변에 대기하다 침입 방향으로 자동 요격한다
     defendNexus: true,
     // 둥지 수호탑: 세 갈래 입구에 하나씩 (평타만 — 타워)
@@ -538,24 +580,36 @@ export const SYLVARIN_CAMPAIGN: readonly CampaignStage[] = [
       // 25턴(1500초)부터 데미리치 3기 · 26턴부터 마몬 2기 — 마지막 5턴의 압박
       { defId: 'p_demilich', label: '💀 데미리치', atSec: 1500, everySec: 120 },
       { defId: 'p_mammon', label: '💰 탐욕의 마몬', atSec: 1560, everySec: 150 },
-      // ── 8시: V자 왼쪽 끝 골짜기에서 올라온다 (중립: 시간이 갈수록 사나워진다)
-      { defId: 'c_wild_wolf_gray', label: '⬋ 야생 늑대 무리', everySec: 16, count: 5, atXTile: 8, yOffTile: 0, neutral: true },
-      { defId: 'c_wild_snake', label: '⬋ 독사 떼', everySec: 20, count: 4, atXTile: 5, yOffTile: 0, neutral: true },
-      { defId: 'c_wild_wolf_black', label: '⬋ 검은늑대 무리', atSec: 120, everySec: 40, count: 3, atXTile: 8, yOffTile: 0, neutral: true },
-      { defId: 'c_wild_tarantula', label: '⬋ 타란튤라', atSec: 180, everySec: 50, count: 2, atXTile: 6, yOffTile: 0, neutral: true },
+      // ── 8시: V자 왼쪽 끝 골짜기에서 올라온다 (중립: 시간이 갈수록 사나워진다).
+      // 12시보다 훨씬 뜸하게 온다 — 야생이 쉼 없이 쏟아지면 판데 군세가 중간에서
+      // 야생과 갉아먹는 소모전만 하다 끝나 둥지가 한 대도 안 맞았다.
+      // 유입량 기준 12시의 1/8 수준으로 낮춰, 판데가 둥지까지 도달하게 한다.
+      { defId: 'c_wild_wolf_gray', label: '⬋ 야생 늑대 무리', everySec: 45, count: 3, atXTile: 8, yOffTile: 0, neutral: true },
+      { defId: 'c_wild_snake', label: '⬋ 독사 떼', everySec: 55, count: 3, atXTile: 5, yOffTile: 0, neutral: true },
+      { defId: 'c_wild_wolf_black', label: '⬋ 검은늑대 무리', atSec: 120, everySec: 80, count: 2, atXTile: 8, yOffTile: 0, neutral: true },
+      { defId: 'c_wild_tarantula', label: '⬋ 타란튤라', atSec: 180, everySec: 95, count: 2, atXTile: 6, yOffTile: 0, neutral: true },
       // 황조롱이는 1분 반부터 — 공중 조합에도 초반부터 성가신 손님이 있어야 한다
-      { defId: 'c_wild_kestrel', label: '⬋ 황조롱이 떼', atSec: 90, everySec: 35, count: 3, atXTile: 10, yOffTile: -1, neutral: true },
-      { defId: 'c_wild_bear_gray', label: '⬋ 회색곰', atSec: 360, everySec: 70, count: 2, atXTile: 6, yOffTile: 0, neutral: true },
-      { defId: 'c_wild_direwolf', label: '⬋ 다이어울프 무리', atSec: 540, everySec: 60, count: 3, atXTile: 8, yOffTile: 0, neutral: true },
-      { defId: 'c_wild_grizzly', label: '⬋ 그리즐리베어', atSec: 600, everySec: 80, count: 2, atXTile: 6, yOffTile: 0, neutral: true },
-      // 검은새는 14·17·20·25·28턴에 딱 한 마리씩 (총 5회, 반복 없음).
-      // 상시 3기 유지는 압박이 너무 컸다 — 죽여도 45초면 또 오니 숨 돌릴 틈이 없었다.
-      // 한 마리씩 띄엄띄엄 와야 「하늘의 왕이 나타났다」는 사건으로 읽힌다.
+      { defId: 'c_wild_kestrel', label: '⬋ 황조롱이 떼', atSec: 90, everySec: 70, count: 2, atXTile: 10, yOffTile: -1, neutral: true },
+      { defId: 'c_wild_bear_gray', label: '⬋ 회색곰', atSec: 360, everySec: 105, count: 2, atXTile: 6, yOffTile: 0, neutral: true },
+      { defId: 'c_wild_direwolf', label: '⬋ 다이어울프 무리', atSec: 540, everySec: 100, count: 2, atXTile: 8, yOffTile: 0, neutral: true },
+      { defId: 'c_wild_grizzly', label: '⬋ 그리즐리베어', atSec: 600, everySec: 115, count: 2, atXTile: 6, yOffTile: 0, neutral: true },
+      // 18턴부터 매 턴 한 기씩 — 「망자의 시선」으로 부대를 붙들어 세운다.
+      // 뒤에서 안전하게 쏘던 공중 조합(와이번·페어리·유니콘)을 강제로 앞으로 끌어낸다.
+      { defId: 'c_grave_warden', label: '⚰ 무덤의 파수꾼', atSec: 1080, everySec: 60 },
+      // 검은새 등장표 (반복 없음, 총 11마리):
+      //   14·17턴 한 마리  →  20·23턴 두 마리  →  25·27·28·29·30턴 한 마리씩
+      // 상시 3기 유지(45초 보충)는 숨 돌릴 틈이 없었다. 대신 후반으로 갈수록
+      // 간격이 촘촘해져 마지막 4턴은 매 턴 한 마리씩 — 끝을 향해 조여든다.
+      // 상시 압박은 검은새가 아니라 아래 growth(밴시 증원)가 맡는다.
       { defId: 'c_wild_blackbird', label: '⚫ 검은새 — 하늘의 왕', atSec: 840, atXTile: 5, yOffTile: -2, neutral: true },
       { defId: 'c_wild_blackbird', label: '⚫ 검은새 — 하늘의 왕', atSec: 1020, atXTile: 5, yOffTile: -2, neutral: true },
-      { defId: 'c_wild_blackbird', label: '⚫ 검은새 — 하늘의 왕', atSec: 1200, atXTile: 5, yOffTile: -2, neutral: true },
+      { defId: 'c_wild_blackbird', label: '⚫ 검은새 — 하늘의 왕', atSec: 1200, count: 2, atXTile: 5, yOffTile: -2, neutral: true },
+      { defId: 'c_wild_blackbird', label: '⚫ 검은새 — 하늘의 왕', atSec: 1380, count: 2, atXTile: 5, yOffTile: -2, neutral: true },
       { defId: 'c_wild_blackbird', label: '⚫ 검은새 — 하늘의 왕', atSec: 1500, atXTile: 5, yOffTile: -2, neutral: true },
+      { defId: 'c_wild_blackbird', label: '⚫ 검은새 — 하늘의 왕', atSec: 1620, atXTile: 5, yOffTile: -2, neutral: true },
       { defId: 'c_wild_blackbird', label: '⚫ 검은새 — 하늘의 왕', atSec: 1680, atXTile: 5, yOffTile: -2, neutral: true },
+      { defId: 'c_wild_blackbird', label: '⚫ 검은새 — 하늘의 왕', atSec: 1740, atXTile: 5, yOffTile: -2, neutral: true },
+      { defId: 'c_wild_blackbird', label: '⚫ 검은새 — 하늘의 왕', atSec: 1800, atXTile: 5, yOffTile: -2, neutral: true },
     ],
     briefing: [
       { who: '엘로윈', text: '높은 봉우리의 옛 맹약을 깨울 때다. 와이번은 긍지가 높다 — 명령하지 말고 부탁해라.' },
@@ -586,7 +640,7 @@ export const SYLVARIN_CAMPAIGN: readonly CampaignStage[] = [
     // ── 적 구성: 중상급 정예군만 생산한다 (잡졸·끝판 유닛은 생산 목록에서 제외)
     // 데미리치가 growth 로 일찍부터 확정 편입되던 것 폐지 — 끝판 유닛은 「출현!」로만
     enemyAllowedUnits: [
-      'p_hound', 'p_bone_thrower', 'p_headless_knight', 'p_corpsecaller',
+      'p_hound', 'p_bone_thrower', 'p_headless_knight',
       'p_lich', 'p_corpse_golem', 'p_thanatos', 'p_wraith', 'p_banshee',
     ],
     // 리치·타나토스·시체 골렘·밴시가 주력으로 쏟아진다 (x8 가중, 상한 없음)

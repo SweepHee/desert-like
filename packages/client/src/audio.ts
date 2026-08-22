@@ -52,6 +52,10 @@ const SFX: Record<string, readonly string[]> = {
   cast_puppet: ['/assets/sfx/cast_puppet1.mp3'],
   cast_sleep: ['/assets/sfx/cast_sleep1.mp3'],
   cast_charm: ['/assets/sfx/cast_charm1.mp3'],
+  // 「가호」 — 성스러운 종소리 + 합창이 부풀며 보호막이 퍼진다 (2종 무작위)
+  cast_bless: ['/assets/sfx/cast_bless1.mp3', '/assets/sfx/cast_bless2.mp3'],
+  // 「급강하」 — 날개가 공기를 가르고 맹금이 울며 내리꽂는다
+  cast_dive: ['/assets/sfx/cast_dive1.mp3'],
   die_succubus: ['/assets/sfx/die_succubus1.mp3'],
   explosion: ['/assets/sfx/explosion1.mp3', '/assets/sfx/explosion2.mp3'],
   // 게임 흐름

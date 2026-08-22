@@ -1277,7 +1277,9 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
   const DIVE_MS = 430;
   const DIVE_DOWN_AT = 0.55;
   /** 착지 흙먼지 (튀어오르는 파편). */
-  const diveDusts: { x: number; y: number; start: number; r: number }[] = [];
+  const diveDusts: { x: number; y: number; start: number; r: number; feather?: boolean }[] = [];
+  /** 「가호」 시전 순간 — 시전자에서 솟아오르는 빛기둥과 흩날리는 성광 (900ms). */
+  const blessBursts: { x: number; y: number; start: number; r: number }[] = [];
   const corpses: Corpse[] = [];
 
   // 카메라
@@ -1305,6 +1307,7 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
     if (a?.kind === 'fear') return 'cast_bell';
     if (a?.kind === 'confuse' || a?.kind === 'charm') return 'cast_puppet';
     if (a?.kind === 'seduce' || a?.kind === 'summonMare') return 'cast_charm';
+    if (a?.kind === 'allyarmor') return 'cast_bless';
     if (a?.kind === 'sleep') return 'cast_sleep';
     return 'cast_skill';
   };
@@ -1740,8 +1743,21 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
             : castKind === 'fear' ? 0x7a3de0
             : strikeTarget ? 0xffd23d : 0x7ddcff,
         });
-        // 「내리꽂기」류(지상 전용 strike): 솟구쳤다 내리찍는 전용 연출
-        const isDive = castKind === 'strike' && castSkill?.targets === 'ground';
+        // 「가호」는 링 하나로는 눈에 안 띈다 — 시전자에게서 빛이 터지고
+        // 파문이 세 겹으로 퍼져 나가며 축복 범위를 확실히 알린다
+        if (castKind === 'allyarmor' && auraR) {
+          impacts.push({ x: cx, y: cy, start: now, radius: auraR * 0.35, color: 0xffffff });
+          impacts.push({ x: cx, y: cy, start: now + 90, radius: auraR * 0.7, color: 0xd8f0ff });
+          impacts.push({ x: cx, y: cy, start: now + 190, radius: auraR * 1.05, color: 0xffe9a8 });
+          blessBursts.push({ x: cx, y: cy, start: now, r: auraR });
+        }
+        // 「내리꽂기」류: 솟구쳤다 내리찍는 전용 연출.
+        // 지상 전용 strike(와이번)에 더해, 나는 유닛의 strike 도 포함한다 —
+        // 숲올빼미 「급강하」는 대공도 되는 탓에 targets 가 'ground' 가 아니라
+        // 전용 연출을 못 받아, 링 하나에 평타 모션만 나오고 있었다.
+        const isDive = castKind === 'strike' && (castSkill?.targets === 'ground' || d.flying);
+        // 맹금이 덮치는 급강하는 흙먼지가 아니라 깃털이 터진다 (공중 목표도 있으니)
+        const featherDive = isDive && d.flying && castSkill?.targets !== 'ground';
         if (isDive) {
           vfx.diveStart = now;
           vfx.diveUntil = now + DIVE_MS;
@@ -1750,11 +1766,18 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
           const r = castSkill?.splash ? (castSkill.splash / FP) * TILE : 24;
           // 착지 순간(하강 완료 시점)에 맞춰 흙먼지 3겹 + 바깥으로 퍼지는 균열 링
           const land = now + DIVE_MS * DIVE_DOWN_AT;
-          impacts.push({ x: gx, y: gy, start: land, radius: r * 1.25, color: 0xd8b98a });
-          impacts.push({ x: gx, y: gy, start: land + 70, radius: r * 0.95, color: 0xb08c5a });
-          impacts.push({ x: gx, y: gy, start: land + 150, radius: r * 0.6, color: 0x8a6a42 });
-          impacts.push({ x: gx, y: gy, start: land, radius: r * 1.6, color: 0xfff0c0 });
-          diveDusts.push({ x: gx, y: gy, start: land, r });
+          if (featherDive) {
+            // 덮치는 순간 하얗게 터지는 충격 — 링을 크고 밝게 잡아 확실히 눈에 띄게
+            impacts.push({ x: gx, y: gy, start: land, radius: r * 1.7, color: 0xffffff });
+            impacts.push({ x: gx, y: gy, start: land + 60, radius: r * 1.25, color: 0xfff2d0 });
+            impacts.push({ x: gx, y: gy, start: land + 140, radius: r * 0.85, color: 0xd8c49a });
+          } else {
+            impacts.push({ x: gx, y: gy, start: land, radius: r * 1.25, color: 0xd8b98a });
+            impacts.push({ x: gx, y: gy, start: land + 70, radius: r * 0.95, color: 0xb08c5a });
+            impacts.push({ x: gx, y: gy, start: land + 150, radius: r * 0.6, color: 0x8a6a42 });
+            impacts.push({ x: gx, y: gy, start: land, radius: r * 1.6, color: 0xfff0c0 });
+          }
+          diveDusts.push({ x: gx, y: gy, start: land, r, feather: featherDive });
         }
         if (skillAnimTex.has(e.defId)) {
           // 전용 시전 프레임 재생
@@ -1765,7 +1788,8 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
           vfx.aimStart = now;
           vfx.aimUntil = now + (strikeTarget ? 400 : 600);
         }
-        sfx(isDive ? 'cast_quake' : castSfxOf(castSkill), cx, isDive ? 1 : 0.85);
+        // 땅을 찍는 내리꽂기는 지진음, 맹금의 급강하는 날갯짓·울음소리
+        sfx(featherDive ? 'cast_dive' : isDive ? 'cast_quake' : castSfxOf(castSkill), cx, isDive ? 1 : 0.85);
       }
       vfx.lastSkillCd = skillCdSum;
       vfx.lastSkillCds = [...e.skillCds];
@@ -1954,6 +1978,25 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
       // 뿌리박기류: 지속 중 발밑에 갈색 뿌리 링
       if (buffedNow && sbSkill?.holdGround) {
         fx.ellipse(px, shadowY, 12, 5.5).stroke({ color: 0x8a6a3d, width: 2, alpha: 0.8 });
+      }
+      // 「가호」 지속 중: 하늘빛 방어막을 두른다 — 12초 내내 누가 축복받았는지
+      // 한눈에 보이게 발밑 이중 링 + 몸을 감싸는 맥동 방패 + 떠오르는 성광
+      if (g.tick < e.armorBuffUntil && !propInvuln) {
+        const pulse = 0.5 + 0.32 * Math.sin(now * 0.006 + e.id);
+        const bw = sp.width * 0.66;
+        const bh = sp.height * 0.6;
+        const bcy = py - sp.height * 0.45;
+        fx.ellipse(px, bcy, bw, bh).fill({ color: 0x8fd8ff, alpha: 0.1 + pulse * 0.09 });
+        fx.ellipse(px, bcy, bw, bh).stroke({ color: 0xbfeaff, width: 2, alpha: 0.45 + pulse * 0.45 });
+        fx.ellipse(px, shadowY, 13, 5.5).stroke({ color: 0x8fd8ff, width: 2, alpha: 0.55 + pulse * 0.35 });
+        fx.ellipse(px, shadowY, 9, 3.8).stroke({ color: 0xfff2c8, width: 1, alpha: 0.35 + pulse * 0.3 });
+        // 방패를 타고 천천히 떠오르는 빛 알갱이 2개 (개체마다 위상이 어긋난다)
+        for (let k = 0; k < 2; k++) {
+          const ph = ((now * 0.0009 + e.id * 0.37 + k * 0.5) % 1);
+          const ang = (e.id * 1.7 + k * Math.PI) % (Math.PI * 2);
+          fx.circle(px + Math.cos(ang) * bw * 0.8, shadowY - ph * bh * 2.1, 1.6)
+            .fill({ color: 0xfff0b0, alpha: (1 - ph) * 0.8 });
+        }
       }
       // 무적 (인비저블): 금색 보호막 링 (맥동)
       if (invulnNow) {
@@ -2268,13 +2311,34 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
     // ── 내리꽂기 착지 흙먼지: 사방으로 튀는 파편 (420ms) ──
     for (let i = diveDusts.length - 1; i >= 0; i--) {
       const du = diveDusts[i]!;
-      const t = (now - du.start) / 420;
+      const t = (now - du.start) / (du.feather ? 780 : 420); // 깃털은 더 오래 나풀거린다
       if (t >= 1) {
         diveDusts.splice(i, 1);
         continue;
       }
       if (t < 0) continue;
       const ease = 1 - (1 - t) * (1 - t); // 빠르게 퍼졌다 느려짐
+      if (du.feather) {
+        // 급강하: 사방으로 터진 깃털이 빙글 돌며 천천히 내려앉는다 (흙먼지보다 오래 남음)
+        for (let k = 0; k < 14; k++) {
+          const ang = (k / 14) * Math.PI * 2 + du.r * 0.05;
+          const dist = du.r * (0.2 + ease * 1.15);
+          const fall = t * t * 16 - Math.sin(t * Math.PI) * 7; // 튀었다가 나풀나풀 낙하
+          const spin = ang + t * 5.5;
+          const fx0 = du.x + Math.cos(ang) * dist;
+          const fy0 = du.y + Math.sin(ang) * dist * 0.5 + fall;
+          const fl = 4.4 * (1 - t * 0.5);
+          // 깃털 한 장 = 가늘고 긴 타원 (회전시켜 나풀거림 표현)
+          const cos = Math.cos(spin), sin = Math.sin(spin);
+          fx.poly([
+            fx0 + cos * fl, fy0 + sin * fl,
+            fx0 - sin * fl * 0.34, fy0 + cos * fl * 0.34,
+            fx0 - cos * fl, fy0 - sin * fl,
+            fx0 + sin * fl * 0.34, fy0 - cos * fl * 0.34,
+          ]).fill({ color: k % 4 === 0 ? 0xfff6e4 : k % 4 === 1 ? 0xe4d3b2 : 0xc9b593, alpha: (1 - t) * 0.95 });
+        }
+        continue;
+      }
       for (let k = 0; k < 10; k++) {
         const ang = (k / 10) * Math.PI * 2 + du.r * 0.03;
         const dist = du.r * (0.25 + ease * 0.95);
@@ -2284,6 +2348,39 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
           du.y + Math.sin(ang) * dist * 0.5 - hop,
           3.2 * (1 - t) + 0.8,
         ).fill({ color: k % 3 === 0 ? 0xe8d0a8 : 0xb08c5a, alpha: (1 - t) * 0.85 });
+      }
+    }
+    // ── 「가호」 시전: 빛기둥 + 위로 흩날리는 성광 (900ms) ──
+    for (let i = blessBursts.length - 1; i >= 0; i--) {
+      const bb = blessBursts[i]!;
+      const t = (now - bb.start) / 900;
+      if (t >= 1) {
+        blessBursts.splice(i, 1);
+        continue;
+      }
+      if (t < 0) continue;
+      const fade = 1 - t;
+      // 시전자에게 내리쬐는 빛기둥 — 위로 갈수록 옅어진다
+      const colW = 13 * (0.6 + fade * 0.7);
+      for (let k = 0; k < 3; k++) {
+        const h = 46 - k * 12;
+        fx.ellipse(bb.x, bb.y - h * 0.5, colW * (1 - k * 0.22), h * 0.5)
+          .fill({ color: k === 0 ? 0xfff6d8 : 0xd8f0ff, alpha: fade * (0.22 - k * 0.05) });
+      }
+      // 발밑에 고이는 축복의 빛무리
+      fx.ellipse(bb.x, bb.y + 4, 16 * (0.7 + t * 0.5), 6 * (0.7 + t * 0.5))
+        .fill({ color: 0xfff2c8, alpha: fade * 0.5 });
+      // 사방으로 퍼지며 떠오르는 성광 알갱이 — 오라 반경까지 나아간다
+      for (let k = 0; k < 12; k++) {
+        const ang = (k / 12) * Math.PI * 2 + 0.26;
+        const ease = 1 - (1 - t) * (1 - t);
+        const dist = bb.r * ease * 0.95;
+        const rise = t * 22;
+        fx.circle(
+          bb.x + Math.cos(ang) * dist,
+          bb.y + Math.sin(ang) * dist * 0.5 - rise,
+          2.6 * fade + 0.7,
+        ).fill({ color: k % 3 === 0 ? 0xfff0b0 : 0xc8ecff, alpha: fade * 0.95 });
       }
     }
   }

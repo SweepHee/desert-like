@@ -267,7 +267,6 @@ const LOOK: Record<string, { shape: string; pal: string; accent?: string }> = {
   merc_headless_knight: { shape: 'hollow', pal: 'pandemonium' },
   merc_lich: { shape: 'mage', pal: 'pandemonium', accent: '#7fe89a' },
   merc_thanatos: { shape: 'shaman', pal: 'pandemonium', accent: '#2e2838' },
-  p_corpsecaller: { shape: 'mage', pal: 'pandemonium' },
   p_banshee: { shape: 'priest', pal: 'pandemonium', accent: '#bcd4e8' },
   p_thanatos: { shape: 'shaman', pal: 'pandemonium', accent: '#2e2838' },
   p_corpse_golem: { shape: 'golem', pal: 'pandemonium' },
@@ -308,17 +307,17 @@ const LOOK: Record<string, { shape: string; pal: string; accent?: string }> = {
   // 중립 구조물/수호자
   teddy_guardian: { shape: 'soldier', pal: 'none' },
   c_balthar_general: { shape: 'hollow', pal: 'pandemonium' },
-  c_nest_wyvern: { shape: 'wing', pal: 'sylvarin' },
-  c_nest_unicorn: { shape: 'wing', pal: 'sylvarin' },
-  c_nest_fairy: { shape: 'wing', pal: 'sylvarin' },
-  c_wild_wolf_gray: { shape: 'beast', pal: 'none' },
-  c_wild_snake: { shape: 'beast', pal: 'none' },
-  c_wild_wolf_black: { shape: 'beast', pal: 'none' },
-  c_wild_tarantula: { shape: 'beast', pal: 'none' },
-  c_wild_kestrel: { shape: 'wing', pal: 'none' },
-  c_wild_bear_gray: { shape: 'beast', pal: 'none' },
-  c_wild_direwolf: { shape: 'beast', pal: 'none' },
-  c_wild_grizzly: { shape: 'beast', pal: 'none' },
+  c_nest_wyvern: { shape: 'flyer', pal: 'sylvarin' },
+  c_nest_unicorn: { shape: 'flyer', pal: 'sylvarin' },
+  c_nest_fairy: { shape: 'flyer', pal: 'sylvarin' },
+  c_wild_wolf_gray: { shape: 'rider', pal: 'none' },
+  c_wild_snake: { shape: 'rider', pal: 'none' },
+  c_wild_wolf_black: { shape: 'rider', pal: 'none' },
+  c_wild_tarantula: { shape: 'rider', pal: 'none' },
+  c_wild_kestrel: { shape: 'flyer', pal: 'none' },
+  c_wild_bear_gray: { shape: 'rider', pal: 'none' },
+  c_wild_direwolf: { shape: 'rider', pal: 'none' },
+  c_wild_grizzly: { shape: 'rider', pal: 'none' },
   // 호위전(13) 소품 — PNG 누락 시 임시 형상
   c_supply_cart: { shape: 'golem', pal: 'none' },
   c_alice_soldier: { shape: 'archer', pal: 'marionetta' },
@@ -329,8 +328,18 @@ const LOOK: Record<string, { shape: string; pal: string; accent?: string }> = {
   p_coffin_bearer: { shape: 'brute', pal: 'pandemonium' },
   p_succubus: { shape: 'mage', pal: 'pandemonium' },
   p_succubus_demon: { shape: 'mage', pal: 'pandemonium' },
-  p_dream_mare: { shape: 'beast', pal: 'pandemonium' },
+  p_dream_mare: { shape: 'rider', pal: 'pandemonium' },
   p_incubus: { shape: 'soldier', pal: 'pandemonium' },
+  p_dementor: { shape: 'flyer', pal: 'pandemonium', accent: '#6a5a80' },
+  m_ballista: { shape: 'golem', pal: 'marionetta', accent: '#c8543a' },
+  m_white_rabbit: { shape: 'priest', pal: 'marionetta', accent: '#f4f0e8' },
+  m_mad_hatter: { shape: 'mage', pal: 'marionetta', accent: '#3fa85a' },
+  m_drosselmeyer: { shape: 'shaman', pal: 'marionetta', accent: '#2a3a80' },
+  m_nutcracker: { shape: 'soldier', pal: 'marionetta', accent: '#c03030' },
+  c_grave_warden: { shape: 'brute', pal: 'pandemonium', accent: '#8a7fd0' },
+  s_dryad: { shape: 'priest', pal: 'sylvarin', accent: '#5fbf4a' },
+  s_elurion: { shape: 'dragon', pal: 'sylvarin', accent: '#3fa878' },
+  s_oberon: { shape: 'flyer', pal: 'sylvarin', accent: '#9a6ad0' },
   c_sylvarin_tent: { shape: 'golem', pal: 'sylvarin' },
   c_sylvarin_tent2: { shape: 'golem', pal: 'sylvarin' },
   c_camp_fire: { shape: 'golem', pal: 'none' },
@@ -340,7 +349,7 @@ const LOOK: Record<string, { shape: string; pal: string; accent?: string }> = {
   c_burning_tree: { shape: 'tower', pal: 'none' },
   c_ember_tree: { shape: 'tower', pal: 'none' },
   c_burning_log: { shape: 'golem', pal: 'none' },
-  c_wild_blackbird: { shape: 'wing', pal: 'none' },
+  c_wild_blackbird: { shape: 'flyer', pal: 'none' },
   tower: { shape: 'tower', pal: 'none' },
   nexus: { shape: 'nexus', pal: 'none', accent: '#7fe8d8' },
   dragon: { shape: 'dragon', pal: 'none' },
@@ -375,7 +384,9 @@ export function artOf(defId: string, team: 0 | 1): SpriteArt {
   // 미등록 유닛은 게임을 죽이는 대신 기본 실루엣으로 폴백한다
   // (신유닛 추가 시 LOOK 등록 누락 = 종족 전체 시작 불가였던 사고 방지).
   const look = LOOK[defId] ?? { shape: 'soldier', pal: 'none' };
-  const rows = SHAPES[look.shape]!;
+  // 등록은 됐지만 없는 shape 을 가리키는 경우까지 폴백한다 —
+  // 예전엔 여기서 그대로 터져 종족 전체가 시작 불가였다 ('wing' 사고).
+  const rows = SHAPES[look.shape] ?? SHAPES.soldier!;
   const pal: Palette = {
     ...BASE,
     ...(RACE_PAL[look.pal] ?? RACE_PAL.none!),

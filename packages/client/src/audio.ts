@@ -54,6 +54,15 @@ const SFX: Record<string, readonly string[]> = {
   cast_charm: ['/assets/sfx/cast_charm1.mp3'],
   // 「가호」 — 성스러운 종소리 + 합창이 부풀며 보호막이 퍼진다 (2종 무작위)
   cast_bless: ['/assets/sfx/cast_bless1.mp3', '/assets/sfx/cast_bless2.mp3'],
+  // 에버그린 — 삼연사 / 「질풍의 노래」
+  atk_bow_triple: ['/assets/sfx/atk_bow_triple1.mp3'],
+  cast_windsong: ['/assets/sfx/cast_windsong2.mp3', '/assets/sfx/cast_windsong1.mp3'],
+  // 영웅 강화 — 찍을 때 / 되돌릴 때
+  ui_heroup: ['/assets/sfx/ui_heroup1.mp3'],
+  ui_herodown: ['/assets/sfx/ui_herodown1.mp3'],
+  // 카엘 — 창 찌르기 / 방패 계열 스킬(도발·무적·반사)
+  atk_spear: ['/assets/sfx/atk_spear1.mp3'],
+  cast_bulwark: ['/assets/sfx/cast_bulwark1.mp3'],
   // 「급강하」 — 날개가 공기를 가르고 맹금이 울며 내리꽂는다
   cast_dive: ['/assets/sfx/cast_dive1.mp3'],
   // 「검은 폭풍」 — 거대한 날개가 내리치며 하늘을 찢는다
@@ -65,6 +74,12 @@ const SFX: Record<string, readonly string[]> = {
   cast_roar: ['/assets/sfx/cast_roar1.mp3'],             // 창공의 포효·들이받기
   cast_bark: ['/assets/sfx/cast_bark1.mp3'],             // 나무껍질 장막·생명의 숨결
   cast_moonveil: ['/assets/sfx/cast_moonveil1.mp3'],     // 인분의 장막·그림자 도약
+  // 본드래곤 — 마른 뼈 브레스와 무덤에서 다시 일어설 때의 굉음
+  atk_bone: ['/assets/sfx/atk_bone1.mp3'],
+  bone_revive: ['/assets/sfx/bone_revive1.mp3'],
+  // 앵리스 — 무대가 닫힐 때와 인형들이 살아날 때
+  cast_curtain: ['/assets/sfx/cast_curtain1.mp3'],
+  cast_puppetshow: ['/assets/sfx/cast_puppetshow1.mp3'],
   die_succubus: ['/assets/sfx/die_succubus1.mp3'],
   explosion: ['/assets/sfx/explosion1.mp3', '/assets/sfx/explosion2.mp3'],
   // 게임 흐름

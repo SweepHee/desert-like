@@ -11,7 +11,8 @@ import { serverUrl } from './net.ts';
 export interface SaveData {
   cleared: number;
   perks: Record<string, number>;
-  boons: Record<string, string>;
+  /** 유닛별 강화 — 슬롯이 둘로 늘면서 배열이 됐다. 예전 저장본은 문자열 하나. */
+  boons: Record<string, string | string[]>;
   updatedAt: number;
 }
 

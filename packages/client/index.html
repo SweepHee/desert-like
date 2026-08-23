@@ -19,6 +19,23 @@
       /* 이번 접속에 걸린 타이틀 아트의 강조색. title.ts 가 덮어쓴다. */
       --tt-rgb: 232 197 89;
       --tt: rgb(var(--tt-rgb));
+
+      /* 리퀴드 글래스 토큰.
+         유리 질감은 전부 정적 그라디언트 + 림 라이트로 만든다 — 한 번
+         그리면 끝이라 프레임당 비용이 0 이다. backdrop-filter 는 이 UI 어디에도
+         쓰지 않는다: 전장 캔버스 위에 걸면 캔버스가 움직일 때마다 다시
+         흐려야 해서 GPU 부담이 커진다 (지형이 뭉개지는 일이 있었다). */
+      --gl-face: linear-gradient(168deg, rgba(255,246,225,.085), rgba(0,0,0,.30));
+      --gl-line: rgba(255,246,225,.10);
+      --gl-hi: inset 0 1px 0 rgba(255,246,225,.13);
+      /* 떠 있는 패널 / 눌리는 버튼의 공통 표면 */
+      --gl-panel: linear-gradient(168deg, rgba(48,36,21,.97), rgba(18,12,7,.98));
+      --gl-btn: linear-gradient(180deg, rgba(255,246,225,.08), rgba(0,0,0,.26));
+      --gl-drop: 0 10px 28px rgba(0,0,0,.5);
+      /* 상단바의 실제 높이. main.ts 가 실측해 채운다 — 세로폰에서는 두세 줄로
+         접히고 조작 메뉴를 접으면 한 줄이 통째로 사라져 고정값을 쓸 수 없다.
+         명단·토스트·정보창·캠페인 배너가 상단바에 가리지 않게 하는 데 쓴다. */
+      --hud-top: 0px;
     }
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body {
@@ -44,53 +61,172 @@
       -webkit-tap-highlight-color: transparent;
       touch-action: manipulation;
     }
+    /* 한때 이 바들을 전장 위에 띄우고 backdrop-filter 로 지형을 비쳤다.
+       예뻤지만 걷어냈다 — 뒤 캔버스가 매 프레임 움직이니 흐림도 매 프레임
+       다시 계산되고, 전장이 화면 전체로 커지며 캔버스 픽셀까지 늘어
+       GPU 부담이 컸다. 지금은 다시 문서 흐름에 있고, 유리 질감은
+       정적 그라디언트로만 낸다 (그리면 끝이라 프레임당 비용 0). */
     #topbar {
-      display: flex; align-items: center; gap: 16px;
-      padding: 8px 14px; background: var(--panel); border-bottom: 2px solid var(--line);
+      position: relative; isolation: isolate;
+      display: flex; flex-direction: column; gap: 6px;
+      padding: 7px 14px 6px; background: #150f08;
+      border-bottom: 1px solid var(--gl-line);
+      box-shadow: 0 4px 14px rgba(0,0,0,.45);
       /* 가로모드 폰: 노치·둥근 모서리·브라우저 UI 에 가려지지 않게 */
-      padding-top: max(8px, env(safe-area-inset-top));
+      padding-top: max(7px, env(safe-area-inset-top));
       padding-left: max(14px, env(safe-area-inset-left));
       padding-right: max(14px, env(safe-area-inset-right));
     }
-    .basebars { flex: 1; display: flex; flex-direction: column; gap: 3px; }
-    .bar { height: 12px; background: #120d08; border: 1px solid var(--line); position: relative; }
-    .bar > i { position: absolute; inset: 0; transform-origin: left; }
-    .bar > span { position: absolute; inset: 0; text-align: center; font-size: 10px; line-height: 12px; color: #fff; text-shadow: 0 1px 2px #000; }
-    #bar-n0 > i { background: var(--t0); } #bar-n1 > i { background: var(--t1); }
-    #bar-t0 > i, #bar-t1 > i { background: #8a7a4f; }
-    .bar.tower { height: 8px; width: 60%; } .bar.tower > span { display: none; }
-    #wave { text-align: center; min-width: 150px; }
-    #wave b { font-size: 18px; color: var(--gold); display: block; }
-    #speed button { background: var(--panel2); color: var(--dim); border: 1px solid var(--line); padding: 3px 10px; cursor: pointer; }
-    #speed button.on { color: var(--gold); border-color: var(--gold); }
-    #btn-pause { background: var(--panel2); color: var(--dim); border: 1px solid var(--line);
-      padding: 3px 10px; margin-right: 8px; cursor: pointer; }
-    #btn-pause:hover, #btn-pause.on { color: var(--gold); border-color: var(--gold); }
+    /* 유리에 비쳐 보이는 배경 — 타이틀에서 고른 아트를 흐리게 깐다.
+       한 번 그리고 캐시되는 정적 레이어라 매 프레임 비용이 없다. */
+    #topbar::before, #bottombar::before {
+      content: ''; position: absolute; inset: 0; pointer-events: none;
+      background-image: var(--title-art, none);
+      background-size: cover; background-position: center;
+      filter: blur(30px) brightness(.30) saturate(1.2); opacity: .6;
+    }
+    #topbar::after, #bottombar::after {
+      content: ''; position: absolute; inset: 0; pointer-events: none;
+      background: var(--gl-face); box-shadow: var(--gl-hi);
+    }
+    #topbar > *, #bottombar > * { position: relative; z-index: 1; }
+
+    /* 윗줄 = 전황만: 우리 넥서스 / 다음 출정까지 / 상대 넥서스 */
+    #tb-main { display: flex; align-items: center; gap: 14px; }
+    .nexus {
+      flex: 0 1 400px; min-width: 0; display: flex; align-items: center; gap: 9px;
+      padding: 4px 10px; border-radius: 11px;
+      background: linear-gradient(170deg, rgba(255,246,225,.06), rgba(0,0,0,.26));
+      border: 1px solid var(--gl-line); box-shadow: var(--gl-hi);
+    }
+    .nexus.mirror { flex-direction: row-reverse; }
+    #nx-0 { --tc: #2f6fd0; --tc-hi: #9ccaff; --tc-glow: rgba(79,143,232,.5); }
+    #nx-1 { --tc: #c33f30; --tc-hi: #ffa596; --tc-glow: rgba(232,95,79,.5); }
+    /* 팀 문장 — 마름모 보석 */
+    .nx-crest {
+      flex: 0 0 20px; width: 20px; height: 20px; transform: rotate(45deg);
+      border-radius: 5px; border: 1px solid rgba(255,255,255,.3);
+      background: linear-gradient(135deg, var(--tc-hi), var(--tc));
+      box-shadow: 0 0 10px var(--tc-glow), inset 0 0 7px rgba(255,255,255,.35);
+    }
+    .nx-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+    .nx-head { display: flex; align-items: baseline; gap: 6px; }
+    .mirror .nx-head { flex-direction: row-reverse; }
+    .nx-name {
+      font-size: 11px; letter-spacing: .05em; color: var(--dim);
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .nx-hp {
+      margin-left: auto; font-size: 13px; font-weight: 700; color: #f2e5c8;
+      font-variant-numeric: tabular-nums; text-shadow: 0 1px 2px #000;
+    }
+    .mirror .nx-hp { margin-left: 0; margin-right: auto; }
+    .bar {
+      height: 11px; border-radius: 6px; position: relative; overflow: hidden;
+      background: linear-gradient(180deg, #090603, #17100a);
+      box-shadow: inset 0 1px 3px rgba(0,0,0,.85), inset 0 -1px 0 rgba(255,255,255,.05);
+    }
+    .bar > i {
+      position: absolute; inset: 0; transform-origin: left;
+      background: linear-gradient(180deg, var(--tc-hi), var(--tc) 58%, rgba(0,0,0,.35));
+      transition: transform .16s linear;
+    }
+    .mirror .bar > i { transform-origin: right; }
+    /* 채워진 부분 위쪽만 밝게 — 유리에 맺힌 광택 */
+    .bar > i::after {
+      content: ''; position: absolute; left: 0; right: 0; top: 0; height: 45%;
+      background: linear-gradient(180deg, rgba(255,255,255,.36), rgba(255,255,255,0));
+    }
+    .bar.low > i { animation: hpLow 1.05s ease-in-out infinite; }
+    @keyframes hpLow { 0%, 100% { filter: brightness(1); } 50% { filter: brightness(1.75); } }
+    .bar.tower { height: 5px; border-radius: 3px; width: 62%; }
+    .bar.tower > i { background: linear-gradient(180deg, #e6d29a, #8a7a4f); }
+    .mirror .bar.tower { margin-left: auto; }
+
+    #wave-zone { flex: 1 1 auto; display: flex; flex-direction: column; align-items: center; gap: 4px; min-width: 152px; }
+    #wave { text-align: center; }
+    #wave #wave-label { font-size: 11px; letter-spacing: .07em; color: var(--dim); }
+    #wave b {
+      font-size: 19px; color: var(--gold); display: block; line-height: 1.15;
+      font-variant-numeric: tabular-nums; text-shadow: 0 0 14px rgba(232,197,89,.32);
+    }
+    #btn-lane {
+      display: flex; flex-direction: column; align-items: center; gap: 1px;
+      padding: 4px 12px; border-radius: 9px; cursor: pointer;
+      background: linear-gradient(180deg, rgba(255,214,130,.16), rgba(0,0,0,.3));
+      border: 1px solid #a8863c; color: #ffd98a; font: inherit; line-height: 1.15;
+      animation: laneNudge 2.4s ease-in-out infinite;
+    }
+    #btn-lane:hover { border-color: #ffd070; background: linear-gradient(180deg, rgba(255,214,130,.26), rgba(0,0,0,.28)); }
+    #btn-lane #lane-name { font-weight: 700; font-size: 13px; }
+    #btn-lane small { font-size: 10px; opacity: .72; font-weight: 400; }
+    /* 「누를 수 있다」는 신호 — 은은하게 번지는 테두리 */
+    @keyframes laneNudge {
+      0%, 100% { box-shadow: 0 0 0 0 rgba(255, 190, 80, .45); }
+      50% { box-shadow: 0 0 0 6px rgba(255, 190, 80, 0); }
+    }
+
+    /* 아랫줄 = 조작 메뉴. ▾ 로 접으면 통째로 사라진다. */
+    #btn-tools {
+      flex: 0 0 auto; width: 26px; height: 26px; padding: 0; cursor: pointer;
+      border-radius: 8px; border: 1px solid var(--gl-line); color: var(--dim);
+      background: linear-gradient(180deg, rgba(255,246,225,.08), rgba(0,0,0,.26));
+      box-shadow: var(--gl-hi); font-size: 13px; line-height: 1;
+    }
+    #btn-tools:hover { color: var(--gold); border-color: rgba(232,197,89,.5); }
+    #tb-tools {
+      display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+      padding-top: 5px; border-top: 1px solid rgba(255,246,225,.07);
+    }
+    #tb-tools.collapsed { display: none; }
+    /* 유리 버튼 공통 */
+    #tb-tools button, #sfx button, #btn-income, #btn-tech {
+      background: linear-gradient(180deg, rgba(255,246,225,.08), rgba(0,0,0,.26));
+      border: 1px solid var(--gl-line); box-shadow: var(--gl-hi);
+      color: var(--text); border-radius: 8px; padding: 4px 11px;
+      cursor: pointer; font: inherit; line-height: 1.5;
+      transition: color .12s, border-color .12s, background .12s;
+    }
+    #tb-tools button:hover, #sfx button:hover { color: var(--gold); border-color: rgba(232,197,89,.55); }
+    #btn-quit:hover { color: #ff6f62; border-color: rgba(255,111,98,.6); }
+    #btn-retry:hover { color: #8ed9a6; border-color: rgba(142,217,166,.6); }
+    #btn-pause.on { color: var(--gold); border-color: rgba(232,197,89,.55); }
     #btn-pause.hidden { display: none; }
-    /* 일시정지 오버레이 — 전장 위에 덮어 "멈췄다"를 분명히 알린다 */
+    #sfx { display: flex; align-items: center; gap: 6px; }
+    #sfx button { padding: 4px 9px; }
+    #sfx input[type=range] { width: 72px; accent-color: var(--gold); cursor: pointer; }
+    /* 배속 — 하나로 이어 붙인 세그먼트 컨트롤 */
+    #speed {
+      display: flex; margin-left: auto; border-radius: 8px; overflow: hidden;
+      border: 1px solid var(--gl-line); box-shadow: var(--gl-hi);
+    }
+    #speed button {
+      background: linear-gradient(180deg, rgba(255,246,225,.06), rgba(0,0,0,.26));
+      color: var(--dim); border: 0; padding: 4px 11px; cursor: pointer; font: inherit;
+    }
+    #speed button + button { border-left: 1px solid rgba(255,246,225,.09); }
+    #speed button.on {
+      color: #201603; font-weight: 700;
+      background: linear-gradient(180deg, #f0cf72, #b8952f);
+    }
+    /* 일시정지 오버레이 — 전장 위에 덮어 "멈췄다"를 분명히 알린다.
+       멈춘 동안엔 캔버스가 갱신되지 않으므로 흐림을 걸어도 싸다. */
     #paused {
       position: absolute; inset: 0; z-index: 30;
-      background: rgba(10, 8, 5, .55);
+      background: rgba(10, 8, 5, .62);
       display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px;
       cursor: pointer;
     }
     #paused.hidden { display: none; }
     #paused .pz-title { color: var(--gold); font-size: 26px; letter-spacing: .3em; }
     #paused .pz-sub { color: var(--text); font-size: 13px; }
-    #sfx { display: flex; align-items: center; gap: 6px; margin-right: 10px; }
-    #sfx button { background: var(--panel2); color: var(--dim); border: 1px solid var(--line);
-      padding: 3px 8px; cursor: pointer; line-height: 1; }
-    #sfx input[type=range] { width: 72px; accent-color: var(--gold); cursor: pointer; }
-    #btn-quit { background: var(--panel2); color: var(--dim); border: 1px solid var(--line);
-      padding: 3px 10px; margin-right: 8px; cursor: pointer; }
-    #btn-quit:hover { color: #e0524a; border-color: #e0524a; }
     #stage { flex: 1; position: relative; min-height: 0; overflow: hidden; background: radial-gradient(ellipse at center, #211710 0%, var(--bg) 75%); }
     #gamecanvas { image-rendering: pixelated; display: block; width: 100%; height: 100%; cursor: grab; }
     #gamecanvas.grabbing { cursor: grabbing; }
     #minimap {
       position: absolute; left: 10px; bottom: 10px; z-index: 5;
       width: 280px; height: auto;
-      border: 2px solid var(--line); background: #c7a566;
+      border: 1px solid var(--gl-line); border-radius: 8px; background: #c7a566;
       box-shadow: 0 2px 10px rgba(0,0,0,.5); cursor: pointer;
       image-rendering: auto;
     }
@@ -101,8 +237,11 @@
     /* 상점이 세로 공간을 무한정 먹지 않도록 상한을 둔다. 화면이 짧아지면
        (가로로 든 폰 등) 예전엔 상점이 전장을 통째로 밀어냈다. */
     #bottombar {
+      position: relative; isolation: isolate;
       display: flex; gap: 14px; align-items: stretch;
-      padding: 10px 14px; background: var(--panel); border-top: 2px solid var(--line);
+      padding: 10px 14px; background: #150f08;
+      border-top: 1px solid var(--gl-line);
+      box-shadow: 0 -4px 14px rgba(0,0,0,.45);
       /* 모바일 하단 제스처 바·브라우저 UI 에 가려지지 않게 */
       padding-bottom: max(10px, env(safe-area-inset-bottom));
       padding-left: max(14px, env(safe-area-inset-left));
@@ -110,36 +249,75 @@
       max-height: 44vh; flex: 0 0 auto;
     }
     #bottombar.collapsed { display: none; }
-    #economy { min-width: 170px; display: flex; flex-direction: column; gap: 6px; justify-content: center; }
-    #money { font-size: 20px; color: var(--gold); font-weight: bold; }
-    #income { color: var(--dim); }
-    #btn-income, #btn-tech {
-      background: var(--panel2); color: var(--text); border: 1px solid var(--line);
-      padding: 6px; cursor: pointer; text-align: left;
+    #economy { min-width: 178px; display: flex; flex-direction: column; gap: 6px; justify-content: center; }
+    #money {
+      font-size: 21px; color: var(--gold); font-weight: bold;
+      font-variant-numeric: tabular-nums; text-shadow: 0 0 14px rgba(232,197,89,.3);
     }
-    #btn-income:hover, #btn-tech:hover { border-color: var(--gold); }
+    #income { color: var(--dim); }
+    /* 인컴·테크는 단축키가 있다 — 오른쪽에 키캡을 붙여 알려준다.
+       버튼 글귀는 JS 가 textContent 로 갈아끼우므로 의사요소로 그린다
+       (자식 노드였다면 매 프레임 지워졌다). */
+    #btn-income, #btn-tech { position: relative; text-align: left; padding: 7px 32px 7px 10px; }
+    #btn-income::after, #btn-tech::after {
+      content: attr(data-key);
+      position: absolute; right: 6px; top: 50%; transform: translateY(-50%);
+      min-width: 17px; padding: 1px 4px; border-radius: 4px;
+      font-size: 10px; line-height: 1.4; text-align: center; font-weight: 700;
+      color: var(--gold); background: rgba(0,0,0,.45);
+      border: 1px solid rgba(232,197,89,.4); box-shadow: 0 1px 0 rgba(232,197,89,.18);
+    }
+    /* 물리 키보드가 없는 기기엔 키캡을 띄우지 않는다 */
+    @media (hover: none) { #btn-income::after, #btn-tech::after { display: none; } }
+    #btn-income:hover, #btn-tech:hover { border-color: rgba(232,197,89,.55); }
     #btn-income:disabled, #btn-tech:disabled { opacity: .4; cursor: default; }
-    #btn-tech { border-color: #6a8ac9; }
+    /* 예약 구매 — 우클릭(모바일 길게 누르기)으로 걸어 두면 가능해지는 순간 자동으로 눌린다 */
+    #btn-income.queued, #btn-tech.queued {
+      border-color: rgba(232,197,89,.9);
+      box-shadow: 0 0 0 1px rgba(232,197,89,.5), 0 0 10px rgba(232,197,89,.35) inset;
+      opacity: 1;
+    }
+    #btn-income.queued::before, #btn-tech.queued::before {
+      content: '⟳';
+      position: absolute; left: 3px; top: 50%; transform: translateY(-50%);
+      font-size: 11px; color: #e8c559; animation: queuedSpin 2.4s linear infinite;
+    }
+    #btn-income.queued, #btn-tech.queued { padding-left: 17px; }
+    @keyframes queuedSpin { to { transform: translateY(-50%) rotate(360deg); } }
+    #btn-tech { border-color: rgba(106,138,201,.45); }
     #shop {
       flex: 1; display: flex; gap: 8px; flex-wrap: wrap; align-content: flex-start;
-      overflow-y: auto; overscroll-behavior: contain;
+      overflow-y: auto; overscroll-behavior: contain; padding: 2px;
     }
+    /* ── 유닛 카드 ─────────────────────────────────────────────────── */
     .unitbtn {
-      width: 96px; background: var(--panel2); border: 1px solid var(--line);
-      color: var(--text); cursor: pointer; padding: 6px 4px; text-align: center;
+      position: relative; overflow: hidden; width: 96px; border-radius: 10px;
+      background: linear-gradient(168deg, rgba(255,246,225,.09), rgba(0,0,0,.32)), var(--panel2);
+      border: 1px solid var(--gl-line); color: var(--text); cursor: pointer;
+      padding: 6px 4px; text-align: center;
       display: flex; flex-direction: column; align-items: center; gap: 2px;
+      box-shadow: var(--gl-hi), 0 2px 7px rgba(0,0,0,.36);
+      transition: box-shadow .16s ease, border-color .12s;
     }
-    .unitbtn:hover { border-color: var(--gold); background: #3d2e1c; }
+    .unitbtn:hover { border-color: rgba(232,197,89,.55); box-shadow: var(--gl-hi), 0 6px 16px rgba(0,0,0,.5); }
     .unitbtn:disabled { opacity: .35; cursor: default; }
-    .unitbtn { position: relative; }
+    /* 최종 유닛(4티어)은 금색 테두리로 구분한다 (움직이지 않는 정적 강조) */
+    .unitbtn.rare {
+      border-color: rgba(232,197,89,.45);
+      box-shadow: var(--gl-hi), 0 0 13px rgba(232,197,89,.18), 0 2px 7px rgba(0,0,0,.4);
+    }
     /* 용병 (마몬의 장사): 금화빛 테두리로 구분 */
-    .unitbtn.merc { border-color: #c9962a; background: #322414; }
+    .unitbtn.merc { border-color: rgba(201,150,42,.7); background: linear-gradient(168deg, rgba(255,220,140,.12), rgba(0,0,0,.34)), #322414; }
     .unitbtn.merc .nm { color: #f0c96a; }
     .unitbtn.merc:hover { border-color: #ffd23d; }
     .unitbtn .key {
-      position: absolute; top: 2px; left: 3px; font-size: 10px; line-height: 1;
-      color: var(--gold); opacity: .75; pointer-events: none;
+      position: absolute; top: 3px; left: 4px; z-index: 1;
+      min-width: 14px; padding: 0 3px; border-radius: 3px;
+      font-size: 10px; line-height: 14px; font-weight: 700;
+      color: var(--gold); background: rgba(0,0,0,.42);
+      border: 1px solid rgba(232,197,89,.32); pointer-events: none;
     }
+    @media (hover: none) { .unitbtn .key { display: none; } }
     .unitbtn img { width: 40px; height: 40px; image-rendering: pixelated; }
     .unitbtn .nm { font-size: 12px; }
     .unitbtn .cost { color: var(--gold); font-size: 11px; }
@@ -149,23 +327,27 @@
     .unitbtn .upg.owned { color: var(--gold); }
     #upg-panel {
       position: fixed; z-index: 45; width: 250px;
-      background: var(--panel); border: 2px solid #6a8ac9; padding: 8px;
-      box-shadow: 0 4px 16px rgba(0,0,0,.6);
+      background: linear-gradient(168deg, rgba(42,53,78,.97), rgba(18,14,9,.98));
+      border: 1px solid rgba(106,138,201,.6); border-radius: 12px; padding: 9px;
+      box-shadow: 0 10px 28px rgba(0,0,0,.6), var(--gl-hi);
     }
     #upg-panel.hidden { display: none; }
     /* 유닛 정보 툴팁 (상점 호버) / 정보창 (전장 클릭) */
     #tooltip, #unit-info {
       position: fixed; z-index: 35; width: 240px;
-      background: rgba(22, 15, 9, .96); border: 1px solid var(--gold); padding: 9px 11px;
+      background: linear-gradient(168deg, rgba(48,36,21,.97), rgba(18,12,7,.98));
+      border: 1px solid rgba(232,197,89,.45); border-radius: 12px; padding: 9px 11px;
+      box-shadow: 0 10px 28px rgba(0,0,0,.6), var(--gl-hi);
       font-size: 12px; line-height: 1.55; pointer-events: none;
     }
-    #unit-info { pointer-events: auto; right: 12px; top: 56px; left: auto; }
+    #unit-info { pointer-events: auto; right: 12px; top: calc(var(--hud-top) + 8px); left: auto; }
     #tooltip.hidden, #unit-info.hidden { display: none; }
     .ui-name { color: var(--gold); font-size: 14px; font-weight: bold; }
     .ui-tags { margin: 3px 0; }
     .ui-tags span {
       display: inline-block; padding: 1px 7px; margin-right: 4px; font-size: 11px;
-      border: 1px solid var(--line); background: var(--panel2); color: var(--text);
+      border: 1px solid var(--gl-line); border-radius: 5px; color: var(--text);
+      background: linear-gradient(180deg, rgba(255,246,225,.08), rgba(0,0,0,.24));
     }
     .ui-row { color: var(--text); }
     .ui-row b { color: var(--gold); font-weight: normal; }
@@ -174,8 +356,9 @@
     #upg-panel h3 { font-size: 13px; color: var(--gold); margin-bottom: 6px; }
     #upg-panel .upgbtn {
       display: block; width: 100%; text-align: left; margin-bottom: 4px;
-      background: var(--panel2); color: var(--text); border: 1px solid var(--line);
-      padding: 5px 7px; cursor: pointer; font-size: 12px;
+      background: linear-gradient(180deg, rgba(255,246,225,.08), rgba(0,0,0,.26));
+      color: var(--text); border: 1px solid var(--gl-line); border-radius: 7px;
+      box-shadow: var(--gl-hi); padding: 5px 7px; cursor: pointer; font-size: 12px;
     }
     #upg-panel .upgbtn:hover { border-color: var(--gold); }
     #upg-panel .upgbtn:disabled { opacity: .45; cursor: default; }
@@ -216,7 +399,7 @@
     .racechooser { position: relative; width: min(88vw, 920px); user-select: none; }
     .racechooser img { display: block; width: 100%; height: auto; }
     .racechooser .hotspot {
-      position: absolute; top: 0; height: 100%; width: 33.34%;
+      position: absolute; top: 0; height: 100%;
       cursor: pointer; border: 3px solid transparent; box-sizing: border-box;
       transition: border-color .12s, background .12s;
     }
@@ -231,7 +414,7 @@
     .seat.moving { border: 1px dashed var(--gold); }
     /* 게임 내 알림 토스트 */
     #toasts {
-      position: fixed; top: 56px; left: 50%; transform: translateX(-50%);
+      position: fixed; top: calc(var(--hud-top) + 8px); left: 50%; transform: translateX(-50%);
       display: flex; flex-direction: column; align-items: center; gap: 6px;
       z-index: 20; pointer-events: none;
     }
@@ -258,7 +441,8 @@
     #authbar {
       display: flex; align-items: center; justify-content: center; gap: 12px;
       margin-top: -14px; padding: 7px 8px 7px 16px; border-radius: 999px;
-      background: rgba(18, 13, 8, .68); border: 1px solid var(--line);
+      background: rgba(18, 13, 8, .68); border: 1px solid var(--gl-line);
+      box-shadow: var(--gl-hi);
     }
     #authbar.hidden { display: none; }
     #auth-pic { width: 26px; height: 26px; border-radius: 50%; border: 1px solid var(--gold); }
@@ -280,7 +464,9 @@
     #need-login b { color: var(--gold); }
     .nl-dim { color: var(--dim); font-size: 12px; }
     .sync-box {
-      background: var(--panel); border: 1px solid var(--gold); padding: 22px 26px;
+      background: var(--gl-panel); border: 1px solid rgba(232,197,89,.45);
+      border-radius: 14px; padding: 22px 26px;
+      box-shadow: var(--gl-drop), var(--gl-hi);
       max-width: min(460px, 92vw); display: flex; flex-direction: column; gap: 14px;
     }
     .sync-box h3 { color: var(--gold); font-size: 17px; }
@@ -288,41 +474,57 @@
     .sync-rows { display: flex; flex-direction: column; gap: 8px; }
     .menurow { display: flex; gap: 10px; align-items: center; }
     #nickname {
-      background: var(--panel2); border: 1px solid var(--line); color: var(--text);
+      background: rgba(0,0,0,.35); border: 1px solid var(--gl-line); color: var(--text);
+      border-radius: 8px; box-shadow: inset 0 1px 3px rgba(0,0,0,.6);
       padding: 9px 12px; font-size: 14px; width: 140px;
     }
+    #nickname:focus { outline: none; border-color: rgba(232,197,89,.6); }
     .menubtn {
-      background: var(--gold); color: #201505; border: 0; font-size: 14px; font-weight: bold;
-      padding: 10px 22px; cursor: pointer;
+      /* 광택만 얹고 바탕은 --gold 그대로 — 타이틀 아트마다 강조색이 달라지는데
+         금색을 하드코딩하면 그 색조와 섞여 어긋난다. */
+      background: linear-gradient(180deg, rgba(255,255,255,.3), rgba(0,0,0,.22)), var(--gold);
+      color: #201505; border: 1px solid rgba(255,255,255,.35); border-radius: 9px;
+      font-size: 14px; font-weight: bold; padding: 10px 22px; cursor: pointer;
+      box-shadow: inset 0 1px 0 rgba(255,255,255,.45), 0 3px 10px rgba(0,0,0,.4);
+      transition: filter .12s, box-shadow .12s;
     }
-    .menubtn.alt { background: var(--panel2); color: var(--text); border: 1px solid var(--line); }
+    .menubtn:hover:not(:disabled) { filter: brightness(1.08); box-shadow: inset 0 1px 0 rgba(255,255,255,.5), 0 5px 16px rgba(232,197,89,.28); }
+    .menubtn.alt {
+      background: var(--gl-btn); color: var(--text);
+      border: 1px solid var(--gl-line); box-shadow: var(--gl-hi);
+    }
+    .menubtn.alt:hover:not(:disabled) { filter: none; border-color: rgba(232,197,89,.55); color: var(--gold); }
     .menubtn:disabled { opacity: .4; cursor: default; }
     #net-status { color: var(--dim); font-size: 12px; min-height: 15px; }
     #room-list { display: flex; flex-direction: column; gap: 6px; min-width: 360px; }
     .roomrow {
       display: flex; justify-content: space-between; align-items: center; gap: 12px;
-      background: var(--panel); border: 1px solid var(--line); padding: 8px 12px; cursor: pointer;
+      background: var(--gl-btn); border: 1px solid var(--gl-line); border-radius: 9px;
+      box-shadow: var(--gl-hi); padding: 8px 12px; cursor: pointer;
     }
     .roomrow:hover { border-color: var(--gold); }
     #room-screen h2 { color: var(--gold); }
     #seats { display: flex; gap: 20px; min-width: 620px; }
     .teamcol { flex: 1; display: flex; flex-direction: column; gap: 8px; }
-    .teamcol h4 { text-align: center; font-size: 13px; padding-bottom: 2px; border-bottom: 2px solid var(--line); }
+    .teamcol h4 { text-align: center; font-size: 13px; padding-bottom: 2px; border-bottom: 2px solid var(--gl-line); }
     .teamcol.team0 h4 { color: var(--t0); border-color: var(--t0); }
     .teamcol.team1 h4 { color: var(--t1); border-color: var(--t1); }
     .sizerow { display: flex; gap: 4px; justify-content: center; }
     .sizerow button { flex: 0 0 auto; min-width: 26px; padding: 2px 8px; font-size: 12px;
-      background: var(--panel2); color: var(--dim); border: 1px solid var(--line); cursor: pointer; }
+      background: var(--gl-btn); color: var(--dim); border: 1px solid var(--gl-line);
+      border-radius: 6px; box-shadow: var(--gl-hi); cursor: pointer; }
     .sizerow button.on { color: var(--gold); border-color: var(--gold); }
     .seat {
       display: flex; align-items: center; gap: 8px;
-      background: var(--panel); border: 1px solid var(--line); padding: 8px 10px;
+      background: var(--gl-btn); border: 1px solid var(--gl-line); border-radius: 9px;
+      box-shadow: var(--gl-hi); padding: 8px 10px;
     }
-    .seat.me { border-color: var(--gold); }
+    .seat.me { border-color: rgba(232,197,89,.6); }
     .seat .slotlabel { color: var(--dim); font-size: 11px; width: 46px; }
     .seat .sname { flex: 1; }
     .seat button {
-      background: var(--panel2); color: var(--text); border: 1px solid var(--line);
+      background: var(--gl-btn); color: var(--text); border: 1px solid var(--gl-line);
+      border-radius: 6px; box-shadow: var(--gl-hi);
       padding: 4px 8px; cursor: pointer; font-size: 12px;
     }
     .seat button:disabled { opacity: .4; cursor: default; }
@@ -337,9 +539,19 @@
 
     /* 세로 공간이 짧을 때 (가로로 든 폰) */
     @media (max-height: 620px) {
-      #topbar { padding: 4px 8px; gap: 8px; }
-      #wave { min-width: 96px; }
+      #topbar { padding: 4px 8px; gap: 4px; }
+      #tb-main { gap: 8px; }
+      #wave-zone { min-width: 96px; gap: 2px; }
       #wave b { font-size: 15px; }
+      #wave #wave-label { font-size: 10px; }
+      .nexus { padding: 3px 8px; gap: 7px; }
+      .nx-crest { flex-basis: 15px; width: 15px; height: 15px; }
+      .nx-head { gap: 4px; }
+      .nx-name { font-size: 10px; }
+      .nx-hp { font-size: 11px; }
+      .bar { height: 8px; }
+      .bar.tower { height: 4px; }
+      #tb-tools { padding-top: 3px; gap: 6px; }
       #bottombar { max-height: none; padding: 5px 8px; gap: 8px; }
       #economy { min-width: 118px; gap: 3px; }
       #money { font-size: 15px; }
@@ -347,6 +559,9 @@
       /* 세로가 짧으면 카드를 접지 말고 한 줄로 세워 가로 스크롤한다.
          여러 줄로 접히면 상점이 전장을 다 먹는다. */
       #shop { flex-wrap: nowrap; overflow-x: auto; overflow-y: hidden; align-content: stretch; }
+      /* 좁은 화면에서는 흐린 아트 레이어를 끈다 — 저사양 기기에서 blur 는
+         한 번뿐이라도 부담이 될 수 있다. 유리 질감은 그라디언트로 남는다. */
+      #topbar::before, #bottombar::before { display: none; }
       .unitbtn { width: 68px; padding: 3px 2px; flex: 0 0 auto; }
       .unitbtn img { width: 26px; height: 26px; }
       .unitbtn .nm { font-size: 10px; }
@@ -363,14 +578,22 @@
 
     /* 가로 폭이 좁을 때 (세로로 든 폰) */
     @media (max-width: 700px) {
-      #topbar { flex-wrap: wrap; gap: 6px 8px; padding: 5px 8px; }
-      .basebars { min-width: 84px; flex: 1 1 84px; }
+      #topbar { gap: 5px; padding: 5px 8px; }
+      #topbar::before, #bottombar::before { display: none; }
+      #tb-main { gap: 7px; }
+      .nexus { flex: 1 1 84px; min-width: 84px; padding: 3px 7px; gap: 6px; }
+      .nx-crest { flex-basis: 14px; width: 14px; height: 14px; }
+      .nx-name { font-size: 10px; }
+      .nx-hp { font-size: 11px; }
+      .bar { height: 8px; }
+      .bar.tower { height: 4px; }
       #sfx input[type=range] { display: none; } /* 버튼만 남긴다 */
       /* 컨트롤 버튼들: 크기를 줄이되 반드시 화면 안에 보이게 */
-      #sfx button, #btn-roster, #btn-chat, #btn-shop, #btn-quit, #btn-pause,
-      #speed button { padding: 3px 7px; font-size: 11px; }
-      #btn-pause { margin-right: 4px; }
-      #wave { min-width: 80px; font-size: 12px; }
+      #tb-tools button, #sfx button, #speed button { padding: 3px 8px; font-size: 11px; }
+      #tb-tools { gap: 6px; }
+      #wave-zone { min-width: 78px; gap: 2px; }
+      #wave { font-size: 12px; }
+      #wave b { font-size: 16px; }
       #economy {
         min-width: 0; flex-direction: row; flex-wrap: wrap;
         align-items: center; gap: 4px 8px;
@@ -399,22 +622,21 @@
       .seat .slotlabel { width: 34px; }
     }
 
-    /* 상점 접기 토글 (모바일에서 전장을 넓게 보고 싶을 때) */
-    #btn-shop {
-      background: var(--panel2); color: var(--dim); border: 1px solid var(--line);
-      padding: 3px 10px; margin-right: 8px; cursor: pointer;
-    }
-    #btn-shop.on { color: var(--gold); border-color: var(--gold); }
+    /* 상점 접기 토글 (모바일에서 전장을 넓게 보고 싶을 때).
+       표면은 #tb-tools button 이 잡는다 — 여기서는 켜짐 표시만. */
+    #btn-shop.on { color: var(--gold); border-color: rgba(232,197,89,.55); }
 
     /* ── 참여자 목록 (인게임) ───────────────────────────────────────────── */
     #roster {
-      position: fixed; top: 56px; left: 12px; z-index: 45;
-      background: var(--panel); border: 1px solid var(--line);
+      position: fixed; top: calc(var(--hud-top) + 8px); left: 12px; z-index: 45;
+      background: linear-gradient(168deg, rgba(48,36,21,.97), rgba(18,12,7,.98));
+      border: 1px solid var(--gl-line); border-radius: 12px;
+      box-shadow: 0 10px 28px rgba(0,0,0,.55), var(--gl-hi);
       padding: 10px 12px; display: flex; gap: 18px; font-size: 12px;
       max-width: 92vw;
     }
     #roster.hidden { display: none; }
-    #roster h4 { font-size: 11px; margin-bottom: 4px; padding-bottom: 2px; border-bottom: 1px solid var(--line); }
+    #roster h4 { font-size: 11px; margin-bottom: 4px; padding-bottom: 2px; border-bottom: 1px solid var(--gl-line); }
     #roster .rcol.t0 h4 { color: var(--t0); border-color: var(--t0); }
     #roster .rcol.t1 h4 { color: var(--t1); border-color: var(--t1); }
     #roster .rrow { padding: 2px 0; white-space: nowrap; }
@@ -432,8 +654,9 @@
     }
     #chat-log { display: flex; flex-direction: column; gap: 2px; }
     #chat-log .line {
-      background: rgba(20,14,8,.72); border-left: 2px solid var(--line);
-      padding: 2px 6px; font-size: 12px; line-height: 1.35;
+      background: rgba(20,14,8,.86);
+      border-left: 2px solid var(--gl-line); border-radius: 0 7px 7px 0;
+      padding: 2px 7px; font-size: 12px; line-height: 1.35;
       max-width: 100%; word-break: break-word;
       transition: opacity .6s;
     }
@@ -444,16 +667,14 @@
     #chat-log .who.sys { color: var(--gold); }
     #chat-input {
       display: none; pointer-events: auto;
-      background: rgba(20,14,8,.95); color: var(--text);
-      border: 1px solid var(--gold); padding: 5px 8px; font: inherit; font-size: 13px;
+      background: rgba(12,8,5,.95); color: var(--text);
+      border: 1px solid rgba(232,197,89,.5); border-radius: 8px;
+      box-shadow: inset 0 1px 3px rgba(0,0,0,.6);
+      padding: 6px 9px; font: inherit; font-size: 13px;
     }
     #chat.open #chat-input { display: block; }
     #chat.open #chat-log .line { opacity: 1; } /* 입력 중엔 로그를 계속 보여준다 */
-    #btn-chat {
-      background: var(--panel2); color: var(--dim); border: 1px solid var(--line);
-      padding: 3px 10px; margin-right: 8px; cursor: pointer;
-    }
-    #btn-chat.unread { color: var(--gold); border-color: var(--gold); }
+    #btn-chat.unread { color: var(--gold); border-color: rgba(232,197,89,.55); }
 
     /* 세로 모드 안내 — 가로 권장 (전장이 가로로 긴 복도라서) */
     #rotate-hint {
@@ -463,8 +684,9 @@
       z-index: 60; display: none;
     }
     #rotate-hint button {
-      margin-left: 10px; background: var(--panel2); color: var(--dim);
-      border: 1px solid var(--line); padding: 2px 8px; cursor: pointer;
+      margin-left: 10px; background: var(--gl-btn); color: var(--dim);
+      border: 1px solid var(--gl-line); border-radius: 6px; box-shadow: var(--gl-hi);
+      padding: 3px 9px; cursor: pointer;
     }
     /* ── 캠페인 대화창 ── */
     #dialogue {
@@ -488,41 +710,109 @@
     #dialogue.dlg-cine { background: rgba(4, 3, 2, .93); }
     .dlg-box {
       width: min(720px, 94vw); margin-bottom: max(24px, env(safe-area-inset-bottom));
-      display: flex; gap: 14px; align-items: flex-end;
-      background: var(--panel2, #1c1712); border: 2px solid var(--gold, #c9a86a);
-      padding: 14px 18px; box-shadow: 0 6px 30px rgba(0,0,0,.6);
+      display: flex; gap: 15px; align-items: flex-end;
+      background: var(--gl-panel); border: 1px solid rgba(232,197,89,.42);
+      border-radius: 14px; padding: 15px 19px;
+      box-shadow: 0 14px 44px rgba(0,0,0,.7), var(--gl-hi);
     }
     #dialogue.dlg-right .dlg-box { flex-direction: row-reverse; }
+    /* 초상 액자 — 안쪽으로 파인 감실에 인물이 앉은 느낌 */
     .dlg-portrait {
-      width: 96px; height: 96px; image-rendering: pixelated; flex: none;
-      background: #0d0a07; border: 1px solid var(--line, #3a3025); object-fit: contain;
+      width: 98px; height: 98px; image-rendering: pixelated; flex: none;
+      object-fit: contain; border-radius: 11px; padding: 3px;
+      background: radial-gradient(circle at 50% 32%, #2b2013 0%, #0a0705 78%);
+      border: 1px solid rgba(232,197,89,.38);
+      box-shadow: inset 0 2px 10px rgba(0,0,0,.85), 0 3px 12px rgba(0,0,0,.55);
     }
     .dlg-body { flex: 1; min-width: 0; }
-    .dlg-name { color: var(--gold, #e8c559); font-weight: bold; font-size: 15px; margin-bottom: 6px; }
+    .dlg-name {
+      color: var(--gold, #e8c559); font-weight: bold; font-size: 15px; margin-bottom: 7px;
+      letter-spacing: .02em; text-shadow: 0 0 14px rgba(232,197,89,.3);
+    }
     #dialogue.dlg-right .dlg-name { text-align: right; }
     .dlg-text { color: var(--text, #efe6d5); font-size: 15px; line-height: 1.6; min-height: 48px; white-space: pre-wrap; }
     .dlg-hint { color: var(--dim, #8a7f6a); font-size: 11px; text-align: right; margin-top: 6px; }
     /* ── 캠페인 스테이지 목록 ── */
     #campaign-list { display: flex; flex-direction: column; gap: 6px; max-height: 56vh; overflow-y: auto; width: min(560px, 92vw); }
     /* 캠페인 선택: 막(Act)별 컬럼 — 18스테이지가 한눈에 들어온다 */
+    /* ── 영웅 강화 ─────────────────────────────────────────────── */
+    #hero-cards { display: flex; flex-wrap: wrap; gap: 14px; justify-content: center; max-width: 760px; }
+    .hero-card {
+      width: 200px; background: var(--gl-btn); border: 1px solid var(--gl-line);
+      border-radius: 12px; box-shadow: var(--gl-hi); padding: 12px 12px 10px;
+      cursor: pointer; text-align: center; transition: border-color .12s, transform .12s;
+    }
+    .hero-card:hover { border-color: rgba(232,197,89,.6); transform: translateY(-2px); }
+    .hero-card img {
+      width: 108px; height: 108px; object-fit: contain; image-rendering: pixelated;
+      display: block; margin: 0 auto 6px;
+      filter: drop-shadow(0 4px 8px rgba(0,0,0,.55));
+    }
+    .hero-card .hc-name { font-weight: bold; color: var(--gold); font-size: 15px; }
+    .hero-card .hc-blurb { color: var(--dim); font-size: 11px; margin-top: 3px; line-height: 1.35; }
+    .hero-card .hc-pts { margin-top: 7px; font-size: 12px; }
+    /* 영웅을 가운데 두고 강화를 사방에 둘러 놓는다 */
+    #hero-detail {
+      display: grid; width: 100%; max-width: 1040px; gap: 12px;
+      grid-template-columns: 1fr auto 1fr;
+      grid-template-areas: '.  up   .' 'left mid right' '.  down .';
+      align-items: start; justify-items: stretch;
+    }
+    .hero-side { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+    .hero-side > .grp {
+      color: var(--gold); font-size: 12px; font-weight: bold; letter-spacing: .06em;
+      text-align: center; opacity: .85;
+    }
+    .hero-side .camp-stage { font-size: 12px; padding: 6px 9px; }
+    #hs-up { grid-area: up; } #hs-down { grid-area: down; }
+    #hs-left { grid-area: left; } #hs-right { grid-area: right; }
+    #hero-portrait {
+      grid-area: mid; width: 232px; background: var(--gl-btn);
+      border: 1px solid rgba(232,197,89,.4); border-radius: 14px; padding: 12px;
+      text-align: center; box-shadow: var(--gl-hi), 0 0 22px rgba(232,197,89,.10);
+    }
+    #hero-portrait .stage {
+      height: 132px; display: flex; align-items: flex-end; justify-content: center;
+      background: radial-gradient(ellipse at 50% 85%, rgba(232,197,89,.16), transparent 62%);
+      border-radius: 10px;
+    }
+    #hero-portrait img {
+      max-width: 118px; max-height: 124px; object-fit: contain; image-rendering: pixelated;
+      filter: drop-shadow(0 6px 10px rgba(0,0,0,.65));
+    }
+    #hero-spec { margin-top: 8px; text-align: left; font-size: 11.5px; line-height: 1.55; }
+    #hero-spec .sp { display: flex; justify-content: space-between; gap: 8px; }
+    #hero-spec .sp b { color: var(--gold); }
+    #hero-spec .sp.up b { color: #7fe08a; }
+    #hero-spec hr { border: 0; border-top: 1px solid var(--gl-line); margin: 6px 0; }
+    @media (max-width: 900px) {
+      #hero-detail {
+        grid-template-columns: 1fr;
+        grid-template-areas: 'mid' 'up' 'left' 'right' 'down';
+        justify-items: center;
+      }
+      .hero-side { width: 100%; max-width: 420px; }
+    }
     #camp-acts {
       display: grid; grid-template-columns: repeat(3, minmax(220px, 1fr));
       gap: 14px; width: min(880px, 94vw); max-height: 62vh; overflow-y: auto;
     }
     .camp-act-col {
-      background: var(--panel); border: 1px solid var(--line); padding: 10px;
+      background: linear-gradient(168deg, rgba(255,246,225,.05), rgba(0,0,0,.3));
+      border: 1px solid var(--gl-line); border-radius: 12px;
+      box-shadow: var(--gl-hi), 0 4px 14px rgba(0,0,0,.35); padding: 11px;
       display: flex; flex-direction: column; gap: 5px; align-self: start;
     }
     .camp-act-col h3 {
       color: var(--gold); font-size: 13px; margin: 0 0 6px;
-      padding-bottom: 6px; border-bottom: 1px solid var(--line);
+      padding-bottom: 6px; border-bottom: 1px solid var(--gl-line);
     }
     .camp-act-col .camp-stage { padding: 7px 10px; font-size: 13px; }
     .camp-progress { color: var(--dim); font-size: 12px; }
     /* 기능 버튼 바: 스테이지 목록과 분리된 영역으로 */
     .camp-tools {
       display: flex; gap: 10px; flex-wrap: wrap; justify-content: center;
-      padding: 8px 0 0; border-top: 1px solid var(--line);
+      padding: 10px 0 0; border-top: 1px solid var(--gl-line);
       width: min(880px, 94vw); box-sizing: border-box;
     }
     @media (max-width: 900px) {
@@ -530,19 +820,669 @@
     }
     .camp-stage {
       display: flex; align-items: center; gap: 10px; text-align: left;
-      background: var(--panel2, #1c1712); border: 1px solid var(--line, #3a3025);
+      background: var(--gl-btn); border: 1px solid var(--gl-line); border-radius: 8px;
+      box-shadow: var(--gl-hi);
       color: var(--text, #efe6d5); padding: 10px 14px; cursor: pointer; font-size: 14px;
+      transition: border-color .12s, color .12s;
     }
-    .camp-stage:hover:not(:disabled) { border-color: var(--gold, #c9a86a); }
+    .camp-stage:hover:not(:disabled) { border-color: rgba(232,197,89,.55); color: var(--gold); }
     .camp-stage:disabled { opacity: .35; cursor: default; }
+    /* ── 세계수의 축복 — 유닛 강화 패널 (강화 화면 목업 스타일) ── */
+    #perk-panel {
+      width: min(620px, 94vw);
+      background: linear-gradient(180deg, rgba(255,246,225,.05), rgba(0,0,0,.30)), var(--panel);
+      border: 1px solid var(--line); border-radius: 12px; padding: 16px 18px;
+      box-shadow: 0 10px 30px rgba(0,0,0,.45);
+    }
+    #perk-head { display: flex; align-items: center; gap: 10px; }
+    #perk-head h2 { margin: 0; font-size: 20px; }
+    #perk-pts {
+      margin-left: auto; background: rgba(0,0,0,.35); border: 1px solid var(--line);
+      border-radius: 999px; padding: 4px 13px; color: var(--gold); font-weight: bold; font-size: 14px;
+    }
+    #perk-sub { color: var(--dim); font-size: 12px; margin: 6px 0 14px; }
+    .perk-row {
+      display: flex; align-items: center; gap: 12px;
+      /* flex 목록 안에서 줄어들지 않게 — eh-boon 의 overflow:hidden 이
+         min-height 보호를 풀어 행이 납작해지던 문제 방지 */
+      flex: none;
+      background: var(--gl-btn); border: 1px solid var(--gl-line);
+      border-radius: 10px; padding: 10px 12px; box-shadow: var(--gl-hi);
+    }
+    .perk-row + .perk-row { margin-top: 8px; }
+    .perk-ico {
+      width: 44px; height: 44px; flex: none; display: flex; align-items: center; justify-content: center;
+      font-size: 22px; border-radius: 9px; border: 1px solid rgba(255,255,255,.18);
+      box-shadow: inset 0 1px 0 rgba(255,255,255,.20), 0 2px 6px rgba(0,0,0,.4);
+    }
+    .perk-body { flex: 1; min-width: 0; text-align: left; }
+    .perk-name { font-weight: bold; font-size: 14px; }
+    .perk-name small { color: var(--gold); font-weight: bold; margin-left: 7px; font-size: 12px; }
+    .perk-desc { color: var(--dim); font-size: 12px; margin-top: 2px; word-break: keep-all; }
+    .perk-pips { display: flex; gap: 3px; margin-top: 6px; }
+    .perk-pips i { width: 20px; height: 6px; border-radius: 2px; background: rgba(255,255,255,.10); border: 1px solid rgba(0,0,0,.4); }
+    .perk-pips i.on {
+      background: linear-gradient(180deg, #ffe9a8, var(--gold));
+      border-color: rgba(232,197,89,.7); box-shadow: 0 0 6px rgba(232,197,89,.35);
+    }
+    .perk-btns { display: flex; gap: 6px; flex: none; }
+    .perk-btns button {
+      min-width: 50px; padding: 7px 11px; border-radius: 7px; font-weight: bold;
+      letter-spacing: 1px; cursor: pointer; font-size: 12px;
+      border: 1px solid rgba(255,246,225,.15);
+      background: linear-gradient(180deg, rgba(255,246,225,.09), rgba(0,0,0,.28));
+      color: var(--dim);
+      box-shadow: inset 0 1px 0 rgba(255,255,255,.08);
+      transition: transform .1s, color .12s, border-color .12s;
+    }
+    .perk-btns button:hover:not(:disabled) { transform: translateY(-1px); color: var(--text, #efe6d5); border-color: rgba(232,197,89,.4); }
+    /*
+     * 「강화」 버튼.
+     *
+     * 예전엔 형광 초록 한 겹이라 배경과 따로 놀았다. 바탕을 가라앉히고
+     * 위쪽에만 옅은 빛을 얹어, 눌러야 할 곳이라는 건 알겠되 튀지는 않게 한다.
+     */
+    .perk-btns .up {
+      position: relative; overflow: hidden;
+      border-color: rgba(150,205,120,.34); color: #d6ecc2;
+      background:
+        linear-gradient(180deg, rgba(168,220,135,.16), rgba(168,220,135,.04) 52%, rgba(0,0,0,.22)),
+        rgba(22,30,18,.5);
+      box-shadow: inset 0 1px 0 rgba(214,240,190,.22), 0 1px 3px rgba(0,0,0,.32);
+      text-shadow: 0 1px 2px rgba(0,0,0,.45);
+      transition: transform .12s, color .16s, border-color .16s, box-shadow .16s, background .16s;
+    }
+    /* 스치듯 지나가는 광택 — 호버할 때만 한 번 훑는다 */
+    .perk-btns .up::after {
+      content: ''; position: absolute; inset: 0;
+      background: linear-gradient(105deg, transparent 38%, rgba(255,255,255,.22) 50%, transparent 62%);
+      transform: translateX(-120%); transition: transform .45s ease;
+    }
+    .perk-btns .up:hover:not(:disabled) {
+      border-color: rgba(180,232,148,.65); color: #f0ffe2;
+      box-shadow: inset 0 1px 0 rgba(230,250,210,.3), 0 3px 12px rgba(150,220,120,.2);
+    }
+    .perk-btns .up:hover:not(:disabled)::after { transform: translateX(120%); }
+    .perk-btns .up:active:not(:disabled) { transform: translateY(1px); }
+    /* 비활성 — 흐리게만 하지 않고 광택도 끈다 (남은 포인트가 없을 때) */
+    .perk-btns button:disabled { opacity: .34; cursor: default; box-shadow: none; }
+    .perk-btns button:disabled::after { display: none; }
+    /* 「최대」까지 찍은 줄 — 초록이 아니라 금색으로 마무리된 느낌
+       (포인트가 없어 못 찍는 것과는 다른 상태다) */
+    .perk-btns .up.maxed:disabled {
+      border-color: rgba(232,197,89,.3); color: var(--gold);
+      background: linear-gradient(180deg, rgba(232,197,89,.1), rgba(0,0,0,.22));
+      opacity: .7;
+    }
+    #perk-foot { display: flex; gap: 8px; margin-top: 14px; justify-content: flex-end; }
+    /*
+     * 돌아가기 버튼.
+     *
+     * 금색 덩어리(.menubtn)를 그대로 쓰니 화면에서 제일 강한 요소가 「나가기」가 됐다.
+     * 테두리만 남긴 조용한 버튼으로 낮추고, 화살표만 살짝 움직여 방향을 알린다.
+     */
+    #perk-foot .menubtn {
+      background: linear-gradient(180deg, rgba(255,246,225,.07), rgba(0,0,0,.2));
+      color: var(--dim); border: 1px solid rgba(255,246,225,.16);
+      border-radius: 999px; padding: 9px 20px 9px 16px; font-weight: 600; letter-spacing: .3px;
+      box-shadow: inset 0 1px 0 rgba(255,255,255,.08);
+      display: inline-flex; align-items: center; gap: 8px;
+      transition: color .16s, border-color .16s, background .16s, box-shadow .16s;
+    }
+    #perk-foot .menubtn .arw {
+      display: inline-block; transition: transform .18s ease; font-size: 13px; line-height: 1;
+    }
+    #perk-foot .menubtn:hover:not(:disabled) {
+      color: var(--gold); border-color: rgba(232,197,89,.5); filter: none;
+      background: linear-gradient(180deg, rgba(232,197,89,.12), rgba(0,0,0,.18));
+      box-shadow: inset 0 1px 0 rgba(255,255,255,.12), 0 3px 14px rgba(232,197,89,.16);
+    }
+    #perk-foot .menubtn:hover:not(:disabled) .arw { transform: translateX(-3px); }
+    #perk-foot .menubtn:active:not(:disabled) { transform: translateY(1px); }
+    /* 영웅 강화 — 설명이 길어도 어색하지 않게: 행 최소 높이를 통일하고
+       본문이 길면 행이 자연스럽게 자란다 (아이콘·버튼은 세로 가운데 유지) */
+    #eh2-list .perk-row { min-height: 78px; padding: 12px 14px; }
+    #eh2-list .perk-desc { line-height: 1.5; }
+    /* 「무엇을 하는가」 한 줄 — 수치보다 먼저 읽히도록 조금 밝게, 이탤릭으로 */
+    /* 설명(툴팁)이 달린 줄 — 점선 밑줄로 「올려보면 더 있다」를 알린다 */
+    /* 설명이 딸린 줄 — 눌러서 펼친다 (브라우저 title 툴팁 대신) */
+    .eh-stat.has-tip { cursor: pointer; }
+    .eh-stat.has-tip:hover > span { color: var(--text, #efe6d5); }
+    .eh-stat .caret {
+      display: inline-block; font-style: normal; font-size: 9px; margin-left: 5px;
+      color: rgba(232,197,89,.75); transition: transform .16s ease; transform-origin: 50% 55%;
+    }
+    .eh-stat .caret.on { transform: rotate(180deg); }
+    .eh-stat-detail {
+      font-size: 11.5px; line-height: 1.55; color: rgba(226,236,214,.82);
+      background: rgba(0,0,0,.3); border-left: 2px solid rgba(232,197,89,.45);
+      border-radius: 0 6px 6px 0; padding: 7px 10px; margin: 0 0 5px; word-break: keep-all;
+    }
+    .eh-stat-detail.hidden { display: none; }
+    .eh-stat-detail .ret {
+      display: inline-flex; align-items: center; gap: 5px; margin: 0 10px 4px 0;
+      color: var(--text, #efe6d5);
+    }
+    .eh-stat-detail .ret img { width: 20px; height: 20px; object-fit: contain; image-rendering: pixelated; }
+    .eh-stat-detail .ret b { color: #9fe07a; }
+    .eh-stat-detail .note { color: var(--dim); margin-top: 3px; }
+    .hu-what {
+      font-size: 11.5px; line-height: 1.45; color: rgba(226,236,214,.78);
+      font-style: italic; margin: 2px 0 3px; word-break: keep-all;
+    }
+    /* ── 강화 패널 (통합) — 상단 유닛 카드 + 하단 상세 3열 ── */
+    #eh-panel {
+      width: min(1160px, 97vw); max-height: calc(100vh - 24px); overflow-y: auto;
+      background: linear-gradient(168deg, rgba(255,246,225,.07), rgba(20,14,8,.42));
+      backdrop-filter: blur(16px) saturate(1.25);
+      -webkit-backdrop-filter: blur(16px) saturate(1.25);
+      border: 1px solid rgba(255,246,225,.16); border-radius: 14px; padding: 14px 16px;
+      box-shadow: inset 0 1px 0 rgba(255,255,255,.12), 0 14px 38px rgba(0,0,0,.5);
+      text-align: left;
+    }
+    #eh-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+    #eh-head h2 { margin: 0; font-size: 20px; }
+    #eh-tabs { display: flex; gap: 6px; margin-left: 8px; }
+    #eh-tabs button {
+      padding: 5px 15px; border-radius: 999px; font-size: 12px; font-weight: bold;
+      letter-spacing: 1px; cursor: pointer;
+      border: 1px solid var(--gl-line); background: transparent; color: var(--dim);
+      transition: background .12s, color .12s, border-color .12s;
+    }
+    #eh-tabs button:hover:not(.on) { color: var(--text, #efe6d5); border-color: rgba(232,197,89,.35); }
+    #eh-tabs button.on {
+      border-color: rgba(120,200,90,.55); color: #dfffc0;
+      background: linear-gradient(180deg, rgba(120,200,90,.20), rgba(120,200,90,.05));
+      box-shadow: inset 0 1px 0 rgba(255,255,255,.10);
+    }
+    /* max-width 520px·가운데 정렬이 #overlay p 에서 내려온다 — 그보다 센 선택자로 편다 */
+    #overlay p#eh-sub {
+      color: var(--dim); font-size: 12px; margin: 6px 0 10px; word-break: keep-all;
+      max-width: none; text-align: left;
+    }
+    #eh-cards {
+      display: flex; gap: 10px; overflow-x: auto; padding: 4px 2px 8px;
+      scrollbar-width: thin;
+    }
+    .eh-card {
+      flex: none; width: 108px; cursor: pointer; text-align: center;
+      background: var(--gl-btn); border: 1px solid var(--gl-line); border-radius: 10px;
+      padding: 8px 6px 7px; box-shadow: var(--gl-hi); color: var(--text, #efe6d5);
+      transition: border-color .12s;
+    }
+    .eh-card:hover { border-color: rgba(232,197,89,.5); }
+    .eh-card.sel { border-color: rgba(120,200,90,.85); box-shadow: 0 0 12px rgba(120,200,90,.25), var(--gl-hi); }
+    .eh-card img { width: 64px; height: 64px; object-fit: contain; image-rendering: pixelated; }
+    .eh-card .stars { color: var(--gold); font-size: 10px; letter-spacing: 1px; }
+    .eh-card .nm { font-size: 12px; font-weight: bold; margin-top: 2px; }
+    .eh-card .st { font-size: 10px; color: var(--dim); }
+    .eh-card.lock { opacity: .55; filter: grayscale(.7); cursor: default; }
+    #eh-band {
+      display: flex; align-items: center; gap: 9px; margin: 4px 0 12px;
+      border: 1px solid var(--gl-line); border-radius: 9px; padding: 7px 12px;
+      background: rgba(0,0,0,.22); color: var(--dim); font-size: 12px;
+    }
+    #eh-band b { color: #cdeaa8; }
+    #eh-body { display: grid; grid-template-columns: 190px minmax(190px, 1fr) minmax(250px, 1.25fr) 235px; gap: 12px; align-items: start; margin-top: 16px; }
+    @media (max-width: 980px) { #eh-body { grid-template-columns: 1fr 1fr; } }
+    .eh-col {
+      background: linear-gradient(180deg, rgba(255,246,225,.04), rgba(0,0,0,.22));
+      border: 1px solid rgba(255,246,225,.12); border-radius: 10px; padding: 10px 12px;
+      box-shadow: inset 0 1px 0 rgba(255,255,255,.07);
+    }
+    .eh-col h3 {
+      margin: -10px -12px 10px; padding: 7px 12px; font-size: 13px; color: var(--gold);
+      background: rgba(0,0,0,.28); border-bottom: 1px solid var(--gl-line); border-radius: 10px 10px 0 0;
+    }
+    #eh-portrait { text-align: center; }
+    #eh-portrait img { width: 132px; height: 132px; object-fit: contain; image-rendering: pixelated; }
+    #eh-portrait .nm { font-weight: bold; font-size: 16px; margin-top: 4px; }
+    #eh-portrait .tags { color: var(--dim); font-size: 11px; margin-top: 2px; }
+    #eh-portrait .slots { margin-top: 8px; font-size: 12px; color: #cdeaa8; }
+    .eh-stat { display: flex; justify-content: space-between; font-size: 13px; padding: 4px 0; border-bottom: 1px dashed rgba(255,255,255,.06); }
+    .eh-stat span:first-child { color: var(--dim); }
+    .eh-stat b small { color: #9fe07a; font-weight: bold; margin-left: 4px; }
+    .eh-trait { margin-top: 10px; font-size: 12px; color: var(--dim); line-height: 1.5; }
+    .eh-trait b { color: #cdeaa8; }
+    /*
+     * 강화 선택 표시.
+     *
+     * 예전엔 테두리 색만 바뀌어서 고른 것과 안 고른 것이 잘 안 갈렸다.
+     * 단서를 넷으로 겹친다 — 왼쪽 금색 띠 · 배경 · 밝기 대비 · 채워진 버튼.
+     */
+    /* 강화 전용 그림 아이콘 — 타일 배경을 꽉 채운다 */
+    .boon-ico { padding: 0; overflow: hidden; }
+    .boon-ico img { width: 100%; height: 100%; object-fit: cover; display: block; border-radius: 8px; }
+    .eh-boon { cursor: pointer; position: relative; overflow: hidden; transition: background .12s, opacity .12s; }
+    .eh-boon:hover { background: rgba(255,246,225,.06); }
+    /* 안 고른 것은 한 단 가라앉힌다 — 고른 쪽이 저절로 떠오른다.
+       (영웅 강화 행은 다음 단계 안내를 읽어야 하므로 제외) */
+    .eh-boon.eh-pick:not(.sel) { opacity: .6; filter: saturate(.6); }
+    .eh-boon.eh-pick:not(.sel):hover { opacity: .9; filter: none; }
+    .eh-boon.sel {
+      border-color: rgba(232,197,89,.8);
+      background: linear-gradient(90deg, rgba(232,197,89,.16), rgba(232,197,89,.05) 42%, var(--gl-btn) 78%);
+      box-shadow: 0 0 14px rgba(232,197,89,.22), var(--gl-hi);
+    }
+    /* 왼쪽 금색 띠 — 목록을 훑을 때 제일 먼저 눈에 들어온다 */
+    .eh-boon.sel::before {
+      content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 4px;
+      background: linear-gradient(180deg, #f5dd93, var(--gold));
+      box-shadow: 0 0 8px rgba(232,197,89,.6);
+    }
+    .eh-boon.sel .perk-ico {
+      border-color: rgba(232,197,89,.7);
+      box-shadow: inset 0 1px 0 rgba(255,255,255,.25), 0 0 10px rgba(232,197,89,.35);
+    }
+    /* 번호 자리에 체크 — 숫자와 색이 아니라 「모양」이 달라진다 */
+    .eh-boon.sel .eh2-num {
+      color: #1a1206; background: var(--gold); border-color: rgba(255,246,225,.7);
+    }
+    .eh-boon .pick { min-width: 52px; }
+    .eh-boon.sel .pick {
+      background: linear-gradient(180deg, rgba(232,197,89,.9), rgba(190,152,58,.9));
+      border-color: rgba(255,246,225,.6); color: #1a1206; font-weight: bold;
+    }
+    /* ── 강화 패널: 우측 세로 탭 내비 (목업 사이드바) ── */
+    #eh-wrap { display: flex; gap: 12px; align-items: flex-start; justify-content: center; }
+    #eh-nav {
+      position: relative;
+      flex: none; display: flex; flex-direction: column; gap: 4px;
+      background: linear-gradient(168deg, rgba(255,246,225,.06), rgba(20,14,8,.40));
+      backdrop-filter: blur(16px) saturate(1.25);
+      -webkit-backdrop-filter: blur(16px) saturate(1.25);
+      border: 1px solid rgba(255,246,225,.16); border-radius: 14px; padding: 8px;
+      box-shadow: inset 0 1px 0 rgba(255,255,255,.12), 0 14px 38px rgba(0,0,0,.5);
+    }
+    /* 선택 표시 「불」 — 칸마다 켜졌다 꺼지는 게 아니라 조각 하나가 옮겨 다닌다.
+       위치·크기는 JS(syncNavPill)가 현재 칸에 맞춰 넣어 준다. */
+    #eh-nav-pill {
+      position: absolute; left: 8px; top: 0; width: 118px; height: 0;
+      pointer-events: none; z-index: 0; opacity: 0;
+      border-radius: 8px; border: 1px solid rgba(120,200,90,.30);
+      background: linear-gradient(90deg, rgba(120,200,90,.16), rgba(120,200,90,.02));
+      box-shadow: 0 0 18px rgba(120,200,90,.16), inset 0 1px 0 rgba(200,247,156,.14);
+      transition: transform .34s cubic-bezier(.32,1.32,.5,1),
+                  height .34s cubic-bezier(.32,1.32,.5,1),
+                  width .2s ease, left .2s ease, opacity .18s ease;
+      will-change: transform;
+    }
+    #eh-nav-pill.lit { opacity: 1; }
+    /* 왼쪽 불빛 막대 — 조각과 함께 미끄러진다 */
+    #eh-nav-pill::before {
+      content: ''; position: absolute; left: -2px; top: 7px; bottom: 7px; width: 3px;
+      border-radius: 2px; background: linear-gradient(180deg, #c8f79c, #5f8a3a);
+      box-shadow: 0 0 9px rgba(140,220,100,.65);
+    }
+    #eh-nav button {
+      position: relative; z-index: 1;
+      display: flex; align-items: center; gap: 10px; width: 118px;
+      padding: 12px 15px; border-radius: 8px; font-size: 14px; font-weight: bold;
+      letter-spacing: 3px; white-space: nowrap; cursor: pointer;
+      border: 1px solid transparent; background: transparent; color: var(--dim);
+      transition: background .14s, color .22s ease, border-color .14s;
+    }
+    /* 아이콘마다 이모지 폭이 달라 글자 시작점이 들쭉날쭉했다 — 아이콘 칸을 고정폭으로 */
+    #eh-nav button > span:first-child {
+      flex: none; width: 22px; text-align: center; letter-spacing: normal;
+      font-size: 15px; line-height: 1;
+    }
+    #eh-nav button > span:last-child { line-height: 1; }
+    #eh-nav button:hover:not(.on) { background: rgba(255,246,225,.05); color: var(--text, #efe6d5); }
+    /* 배경·불빛 막대는 #eh-nav-pill 이 들고 있다 — 버튼은 글자색만 바뀐다 */
+    #eh-nav button.on { color: #e4ffc8; }
+    /* 애니메이션을 꺼 둔 사용자에겐 그냥 즉시 옮겨 놓는다 */
+    @media (prefers-reduced-motion: reduce) {
+      #eh-nav-pill { transition: opacity .18s ease; }
+    }
+    /* ── 예쁜 스크롤바 ── */
+    #eh-panel::-webkit-scrollbar, #eh-cards::-webkit-scrollbar { width: 9px; height: 9px; }
+    #eh-panel::-webkit-scrollbar-track, #eh-cards::-webkit-scrollbar-track {
+      background: rgba(0,0,0,.25); border-radius: 8px; margin: 6px;
+    }
+    #eh-panel::-webkit-scrollbar-thumb, #eh-cards::-webkit-scrollbar-thumb {
+      background: linear-gradient(180deg, #7a6038, #4a3722);
+      border: 1px solid rgba(232,197,89,.35); border-radius: 8px;
+    }
+    #eh-panel::-webkit-scrollbar-thumb:hover, #eh-cards::-webkit-scrollbar-thumb:hover {
+      background: linear-gradient(180deg, #97794a, #5c452b); border-color: rgba(232,197,89,.6);
+    }
+    #eh-panel, #eh-cards { scrollbar-width: thin; scrollbar-color: #6a5433 rgba(0,0,0,.25); }
+    /* ── 초상 생동감: 둥실거림 + 프레임 애니메이션은 JS 가 돌린다 ── */
+    @keyframes eh-bob { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-4px); } }
+    #eh-portrait img { animation: eh-bob 2.6s ease-in-out infinite; }
+    /* ── 개편 레이아웃: [필터 레일 + 카드 그리드] [상세] [자원 열] ── */
+    #eh2 { display: flex; gap: 12px; align-items: stretch; margin-top: 10px; min-height: 540px; }
+    #eh2-left { flex: none; width: 356px; display: flex; gap: 10px; }
+    #eh2-rail { display: flex; flex-direction: column; gap: 6px; flex: none; }
+    #eh2-rail button {
+      width: 62px; padding: 12px 4px; border-radius: 9px; font-size: 12px; font-weight: bold;
+      letter-spacing: 1px; border: 1px solid var(--gl-line); background: rgba(0,0,0,.18);
+      color: var(--dim); cursor: pointer; transition: color .12s, border-color .12s;
+    }
+    #eh2-rail button:hover:not(.on) { color: var(--text, #efe6d5); }
+    #eh2-rail button.on {
+      color: #dfffc0; border-color: rgba(120,200,90,.6);
+      background: linear-gradient(180deg, rgba(120,200,90,.18), rgba(0,0,0,.2));
+      box-shadow: 0 0 10px rgba(120,200,90,.18);
+    }
+    #eh2-grid {
+      flex: 1; display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px;
+      align-content: start; overflow-y: auto; max-height: 540px; padding: 2px 6px 2px 0;
+      scrollbar-width: thin; scrollbar-color: #6a5433 rgba(0,0,0,.25);
+    }
+    #eh2-grid .eh-card { width: auto; }
+    #eh2-grid .eh-card img { width: 76px; height: 76px; }
+    #eh2-right { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 10px; }
+    #eh2-hero {
+      display: flex; gap: 14px; align-items: center;
+      background: linear-gradient(180deg, rgba(255,246,225,.04), rgba(0,0,0,.22));
+      border: 1px solid rgba(255,246,225,.12); border-radius: 10px; padding: 12px 14px;
+      box-shadow: inset 0 1px 0 rgba(255,255,255,.07);
+    }
+    #eh2-hero img {
+      width: 96px; height: 96px; object-fit: contain; image-rendering: pixelated;
+      animation: eh-bob 2.6s ease-in-out infinite;
+    }
+    #eh2-hero .hd { flex: 1; min-width: 0; }
+    #eh2-hero .nm { font-size: 18px; font-weight: bold; }
+    #eh2-hero .stars { color: var(--gold); letter-spacing: 3px; font-size: 12px; margin: 3px 0; }
+    #eh2-hero .blurb { color: var(--dim); font-size: 12px; word-break: keep-all; }
+    #eh2-stats {
+      display: flex; background: rgba(0,0,0,.22); border: 1px solid rgba(255,246,225,.12);
+      border-radius: 10px; padding: 9px 0; box-shadow: inset 0 1px 0 rgba(255,255,255,.06);
+    }
+    #eh2-stats .st { flex: 1; text-align: center; border-left: 1px solid rgba(255,246,225,.08); }
+    #eh2-stats .st:first-child { border-left: none; }
+    #eh2-stats .st .ic { font-size: 15px; }
+    #eh2-stats .st .lb { color: var(--dim); font-size: 10px; margin-top: 1px; }
+    #eh2-stats .st .vl { font-weight: bold; font-size: 13px; margin-top: 1px; }
+    #eh2-stats .st .vl small { color: #9fe07a; font-size: 10px; margin-left: 2px; }
+    #eh2-tabs { display: flex; gap: 6px; }
+    #eh2-tabs button {
+      padding: 7px 20px; border-radius: 8px; font-size: 13px; font-weight: bold;
+      letter-spacing: 1px; border: 1px solid var(--gl-line); background: rgba(0,0,0,.16);
+      color: var(--dim); cursor: pointer; transition: color .12s, border-color .12s;
+    }
+    /*
+     * 탭에 달리는 잔여 포인트 배지.
+     *
+     * 예전엔 --gold 로 꽉 채워서, 타이틀 아트마다 달라지는 강조색이 그대로 튀었다.
+     * 속을 비우고 테두리와 옅은 바탕만 남긴다 — 있다는 건 알겠되 소리치지 않는다.
+     */
+    #eh2-tabs button .tabpts {
+      display: inline-flex; align-items: center; justify-content: center;
+      min-width: 16px; height: 16px; margin-left: 6px; padding: 0 4px;
+      border-radius: 999px; font-size: 10px; font-weight: 600; font-style: normal;
+      vertical-align: middle; letter-spacing: 0;
+      color: rgba(255,246,225,.72);
+      background: rgba(255,246,225,.09);
+      border: 1px solid rgba(255,246,225,.22);
+      box-shadow: inset 0 1px 0 rgba(255,255,255,.08);
+      transition: color .16s, border-color .16s, background .16s;
+    }
+    /* 지금 보고 있는 탭에서만 살짝 따뜻해진다 */
+    #eh2-tabs button.on .tabpts {
+      color: #eafbd8; background: rgba(150,205,120,.16); border-color: rgba(150,205,120,.4);
+    }
+    #eh2-tabs button:hover .tabpts { border-color: rgba(255,246,225,.4); }
+    /* 갈래별 남은 포인트 머리줄 */
+    .eh-grouppts {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 7px 12px; border-radius: 9px; font-size: 12px;
+      background: rgba(0,0,0,.24); border: 1px solid var(--gl-line); color: var(--dim);
+    }
+    .eh-grouppts.has {
+      border-color: rgba(150,205,120,.32);
+      color: rgba(226,240,214,.92);
+      background: linear-gradient(180deg, rgba(150,205,120,.08), rgba(0,0,0,.2));
+    }
+    .eh-grouppts b { font-size: 13px; }
+    #eh2-tabs button.on {
+      color: #dfffc0; border-color: rgba(120,200,90,.5);
+      background: linear-gradient(180deg, rgba(120,200,90,.16), rgba(0,0,0,.12));
+    }
+    #eh2-list {
+      /* 높이 고정 — 강화가 2개인 유닛과 3개인 유닛 사이에서 패널이 출렁이지 않는다 */
+      flex: none; overflow-y: auto; height: 356px; display: flex; flex-direction: column;
+      gap: 8px; padding-right: 5px;
+      scrollbar-width: thin; scrollbar-color: #6a5433 rgba(0,0,0,.25);
+    }
+    .eh2-num {
+      flex: none; width: 26px; height: 28px; display: flex; align-items: center; justify-content: center;
+      font-size: 12px; font-weight: bold; color: var(--gold);
+      background: rgba(0,0,0,.42); border: 1px solid rgba(232,197,89,.4);
+      clip-path: polygon(50% 0, 100% 25%, 100% 75%, 50% 100%, 0 75%, 0 25%);
+    }
+    #eh2-res { flex: none; width: 176px; display: flex; flex-direction: column; gap: 8px; }
+    #eh2-res .box {
+      background: rgba(0,0,0,.22); border: 1px solid rgba(255,246,225,.12);
+      border-radius: 10px; padding: 10px 12px; box-shadow: inset 0 1px 0 rgba(255,255,255,.06);
+    }
+    #eh2-res h4 { margin: 0 0 8px; font-size: 12px; color: var(--gold); text-align: center; letter-spacing: 3px; }
+    #eh2-res .r { display: flex; justify-content: space-between; font-size: 12px; padding: 4px 0; }
+    #eh2-res .r span:first-child { color: var(--dim); }
+    /* ── 영웅 탭: [영웅 레일] [중앙 쇼케이스] [강화 목록] (영웅패널개편_1_1) ── */
+    #eh3 { display: flex; gap: 12px; margin-top: 10px; min-height: 560px; align-items: stretch; }
+    #eh3-rail { flex: none; width: 92px; display: flex; flex-direction: column; gap: 8px; overflow-y: auto; }
+    .eh3-card {
+      text-align: center; background: var(--gl-btn); border: 1px solid var(--gl-line);
+      border-radius: 10px; padding: 8px 4px; cursor: pointer; box-shadow: var(--gl-hi);
+      transition: border-color .12s;
+    }
+    .eh3-card img { width: 56px; height: 56px; object-fit: contain; image-rendering: pixelated; }
+    .eh3-card .nm { font-size: 11px; font-weight: bold; margin-top: 3px; }
+    .eh3-card .lv { font-size: 10px; color: var(--gold); }
+    .eh3-card:hover:not(.lock) { border-color: rgba(232,197,89,.5); }
+    .eh3-card.sel { border-color: rgba(120,200,90,.85); box-shadow: 0 0 12px rgba(120,200,90,.3), var(--gl-hi); }
+    .eh3-card.lock { opacity: .45; filter: grayscale(.8); cursor: default; color: var(--dim); }
+    #eh3-center {
+      flex: 1.15; min-width: 0; display: flex; flex-direction: column; gap: 10px; text-align: center;
+      position: relative; overflow: hidden;
+      background: linear-gradient(180deg, rgba(255,246,225,.04), rgba(0,0,0,.24));
+      border: 1px solid rgba(255,246,225,.12); border-radius: 12px; padding: 18px 16px 14px;
+      box-shadow: inset 0 1px 0 rgba(255,255,255,.07), inset 0 0 60px rgba(0,0,0,.45);
+    }
+    /* 영웅발판 배경 — 별도 레이어에 깔고 투명도 0.6 으로, 위의 글씨가 잘 읽히게.
+       165% 확대 + 아래 정렬로 돌단상을 영웅 발치까지 끌어올린다. */
+    #eh3-center::before {
+      content: ''; position: absolute; inset: 0; z-index: 0; pointer-events: none;
+      background:
+        linear-gradient(180deg, rgba(8, 10, 6, 0) 55%, rgba(8, 10, 6, .5) 80%, rgba(8, 10, 6, .7)),
+        url('/assets/ui/hero_stage.png') center bottom / auto 165% no-repeat;
+      opacity: .6;
+    }
+    #eh3-center > * { position: relative; z-index: 1; }
+    #eh3-center .big-nm {
+      font-size: 26px; font-weight: bold; letter-spacing: 8px; color: #efe6c8;
+      text-shadow: 0 0 16px rgba(200,240,150,.4);
+    }
+    #eh3-center .stars { color: var(--gold); letter-spacing: 5px; font-size: 14px; }
+    #eh3-center .role { color: var(--dim); font-size: 12px; letter-spacing: 1px; }
+    /* 영웅을 발판(돌단상) 위에 세운다 — 위 여백으로 발 위치를 단상 상면에 맞춘다 */
+    #eh3-center .stage-art { padding: 34px 0 0; }
+    /* 밝은 단상 위에 걸치는 스탯 줄은 바탕을 진하게 눌러 가독성을 지킨다 */
+    #eh3-center #eh2-stats { background: rgba(10, 12, 8, .74); }
+    #eh3-center .pts-bar .track { background: rgba(10, 12, 8, .7); }
+    #eh3-center .stage-art img {
+      width: 150px; height: 150px; object-fit: contain; image-rendering: pixelated;
+      animation: eh-bob 2.6s ease-in-out infinite;
+      filter: drop-shadow(0 16px 12px rgba(0,0,0,.55));
+    }
+    .pts-bar { display: flex; align-items: center; gap: 10px; }
+    .pts-bar .lb { color: var(--gold); font-size: 12px; font-weight: bold; flex: none; }
+    .pts-bar .track {
+      position: relative; flex: 1; height: 18px; background: rgba(0,0,0,.4);
+      border: 1px solid rgba(255,246,225,.14); border-radius: 9px; overflow: hidden;
+    }
+    .pts-bar .track i {
+      position: absolute; inset: 0; width: 0;
+      background: linear-gradient(180deg, #8cc763, #3f6b2e);
+    }
+    .pts-bar .track span {
+      position: relative; font-size: 11px; line-height: 18px; color: #fff; text-shadow: 0 1px 2px #000;
+    }
+    #eh3-center .intro {
+      text-align: left; background: rgba(0,0,0,.22); border: 1px solid rgba(255,246,225,.10);
+      border-radius: 10px; padding: 10px 12px; font-size: 12px; color: var(--dim);
+      display: flex; align-items: center; gap: 10px;
+    }
+    #eh3-center .intro b { color: #cdeaa8; }
+    #eh3-center .intro > div { flex: 1; word-break: keep-all; line-height: 1.5; }
+    #eh3-right { flex: 1; min-width: 300px; display: flex; flex-direction: column; gap: 10px; }
+    /*
+     * 영웅 탭의 강화 목록: 좌측 쇼케이스가 행 높이를 결정하고, 목록은 그 높이를
+     * 넘지 못한다 — 절대배치 래퍼라 목록의 내용 높이가 행 높이에 관여하지 않고,
+     * 넘치면 목록 안에서만 세로 스크롤이 생긴다.
+     */
+    /* 영웅 이름을 누르면 우측 패널이 스토리로 바뀐다 — 글자 폭만큼만 눌린다.
+       호버하면 글자에서 빛이 번져 나온다 (밑줄 없이 발광만으로 알린다). */
+    #eh3-center .big-nm .nm-txt { display: inline-block; }
+    #eh3-center .big-nm .nm-txt.can-story {
+      cursor: pointer; position: relative;
+      transition: color .22s ease, text-shadow .22s ease;
+    }
+    /* 글자 뒤에 깔리는 빛무리 — 호버할 때 부풀며 떠오른다 */
+    #eh3-center .big-nm .nm-txt.can-story::before {
+      content: ''; position: absolute; left: -14%; right: -14%; top: -30%; bottom: -30%;
+      background: radial-gradient(ellipse at 50% 50%, rgba(240,225,150,.34), rgba(200,240,150,.14) 45%, transparent 72%);
+      opacity: 0; transform: scale(.82); pointer-events: none;
+      transition: opacity .24s ease, transform .24s ease;
+    }
+    #eh3-center .big-nm .nm-txt.can-story:hover::before { opacity: 1; transform: scale(1); }
+    #eh3-center .big-nm .nm-txt.can-story:hover {
+      color: #fffdf0;
+      text-shadow:
+        0 0 8px rgba(255,246,210,.95),
+        0 0 20px rgba(232,197,89,.75),
+        0 0 38px rgba(180,230,130,.55);
+      animation: nmGlow 2.2s ease-in-out infinite;
+    }
+    @keyframes nmGlow {
+      0%, 100% {
+        text-shadow:
+          0 0 8px rgba(255,246,210,.95),
+          0 0 20px rgba(232,197,89,.75),
+          0 0 38px rgba(180,230,130,.55);
+      }
+      50% {
+        text-shadow:
+          0 0 12px rgba(255,250,225,1),
+          0 0 28px rgba(232,197,89,.9),
+          0 0 52px rgba(180,230,130,.7);
+      }
+    }
+    #hero-story { text-align: left; padding: 2px 2px 8px; }
+    #hero-story .top { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; }
+    #hero-story .top .close {
+      margin-left: auto; align-self: flex-start; flex: none; cursor: pointer;
+      background: rgba(0,0,0,.3); border: 1px solid var(--gl-line); border-radius: 7px;
+      color: var(--dim); font-size: 11px; padding: 6px 10px; white-space: nowrap;
+      transition: color .12s, border-color .12s;
+    }
+    #hero-story .top .close:hover { color: var(--text, #efe6d5); border-color: rgba(232,197,89,.5); }
+    #hero-story .top img {
+      width: 88px; height: 88px; flex: none; image-rendering: pixelated; border-radius: 10px;
+      border: 1px solid rgba(232,197,89,.45); background: rgba(0,0,0,.35);
+      box-shadow: 0 0 16px rgba(150,220,100,.18);
+    }
+    #hero-story .who .nm { font-size: 17px; font-weight: bold; color: #efe6c8; letter-spacing: 1px; }
+    #hero-story .who .ttl { font-size: 12px; color: var(--gold); margin-top: 3px; }
+    #hero-story .quote {
+      font-size: 12.5px; font-style: italic; color: #cdeaa8; line-height: 1.6;
+      border-top: 1px solid rgba(255,246,225,.10); border-bottom: 1px solid rgba(255,246,225,.10);
+      padding: 9px 4px; margin-bottom: 12px; text-align: center; word-break: keep-all;
+    }
+    #hero-story .sec { margin-bottom: 12px; }
+    #hero-story .sec h5 {
+      margin: 0 0 4px; font-size: 12px; color: var(--gold); letter-spacing: 1px;
+    }
+    #hero-story .sec h5::before { content: '✦ '; color: rgba(232,197,89,.6); }
+    /* text-align 은 #overlay p 규칙을 이겨야 한다 (상속은 직접 규칙에 진다) */
+    #hero-story .sec p {
+      margin: 0; font-size: 12.5px; line-height: 1.75; color: rgba(226,236,214,.86);
+      word-break: keep-all; text-align: left; max-width: none;
+    }
+    #eh3-listwrap { flex: 1; position: relative; min-height: 0; }
+    #eh3-listwrap #eh2-list { position: absolute; inset: 0; height: auto; flex: none; }
+    /* ── 축복 탭: 세계수 쇼케이스 (세계수의축복 목업) ── */
+    #tree-wrap { display: flex; gap: 12px; margin-top: 10px; }
+    #tree-left { flex: 1.05; min-width: 0; display: flex; flex-direction: column; gap: 10px; }
+    /* 세계수 그림은 배경을 투명하게 뺀 PNG — 뒤에 검은 판을 깔지 않고
+       패널 위에 그대로 띄운다 (발치에 은은한 초록 빛만 남긴다). */
+    #tree-stage {
+      position: relative; border-radius: 12px; overflow: hidden;
+      background: radial-gradient(ellipse at 50% 78%, rgba(150,220,110,.10), transparent 62%);
+    }
+    #tree-stage img { width: 100%; display: block; }
+    /* 목업의 잎 메달 — 세계수 발치 중앙, Lv 배지 위 */
+    #tree-stage .medal {
+      position: absolute; left: 50%; bottom: 40px; transform: translateX(-50%);
+      width: 74px; height: auto; pointer-events: none;
+      filter: drop-shadow(0 0 14px rgba(150, 220, 100, .55));
+    }
+    #tree-stage .lvbadge {
+      position: absolute; left: 50%; bottom: 10px; transform: translateX(-50%);
+      background: rgba(10,14,8,.8); border: 1px solid rgba(232,197,89,.5);
+      border-radius: 999px; padding: 4px 18px; font-weight: bold; color: var(--gold);
+      font-size: 14px; box-shadow: 0 0 14px rgba(150,220,100,.25);
+    }
+    #tree-xp { background: rgba(0,0,0,.24); border: 1px solid rgba(255,246,225,.12); border-radius: 10px; padding: 10px 12px; }
+    #tree-xp .row { display: flex; justify-content: space-between; font-size: 12px; margin-bottom: 6px; }
+    #tree-xp .row b { color: var(--gold); }
+    #tree-xp .track {
+      position: relative; height: 16px; background: rgba(0,0,0,.45);
+      border: 1px solid rgba(255,246,225,.14); border-radius: 8px; overflow: hidden;
+    }
+    #tree-xp .track i { position: absolute; inset: 0; width: 0; background: linear-gradient(180deg, #8cc763, #3f6b2e); }
+    #tree-xp .track span { position: relative; display: block; text-align: center; font-size: 10px; line-height: 16px; color: #fff; text-shadow: 0 1px 2px #000; }
+    #tree-xp .next { color: var(--dim); font-size: 11px; margin-top: 6px; text-align: center; word-break: keep-all; }
+    #tree-fx { background: rgba(0,0,0,.24); border: 1px solid rgba(255,246,225,.12); border-radius: 10px; padding: 10px 12px; }
+    #tree-fx h4 { margin: 0 0 8px; font-size: 12px; color: var(--gold); letter-spacing: 2px; }
+    #tree-fx .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 3px 16px; }
+    #tree-fx .r { display: flex; justify-content: space-between; font-size: 12px; padding: 3px 0; border-bottom: 1px dashed rgba(255,255,255,.05); }
+    #tree-fx .r span:first-child { color: var(--dim); }
+    #tree-fx .r b { color: #9fe07a; }
+    #tree-right { flex: 1; min-width: 300px; display: flex; flex-direction: column; gap: 8px; }
+    #tree-right h3 {
+      display: flex; align-items: center; margin: 0; padding: 8px 12px; font-size: 13px; color: var(--gold);
+      background: rgba(0,0,0,.26); border: 1px solid rgba(255,246,225,.12); border-radius: 10px;
+    }
+    #tree-right h3 .pts { margin-left: auto; font-size: 12px; color: #cdeaa8; display: flex; align-items: center; gap: 4px; }
+    #tree-right h3 .pts b { color: #9fe07a; font-size: 13px; }
+    .leaf-ico { width: 17px; height: 17px; object-fit: contain; filter: drop-shadow(0 0 4px rgba(150,220,100,.5)); }
+    #tree-fx .fx-ico { width: 16px; height: 16px; object-fit: contain; vertical-align: -3px; margin-right: 6px; }
+    /* 유저 아이콘 시트에서 잘라 낸 강화 아이콘 — 목업의 어두운 슬롯 느낌 */
+    .perk-ico.art {
+      background: linear-gradient(180deg, rgba(22, 30, 14, .92), rgba(6, 10, 4, .95));
+      border-color: rgba(201, 168, 106, .5); padding: 3px;
+    }
+    .perk-ico.art img { width: 100%; height: 100%; object-fit: contain; display: block; }
+    #tree-list { display: flex; flex-direction: column; gap: 8px; overflow-y: auto; max-height: 560px; padding-right: 4px; scrollbar-width: thin; }
+    .perk-row.locked { opacity: .5; filter: grayscale(.5); }
+
+
+    #eh2-grid::-webkit-scrollbar, #eh2-list::-webkit-scrollbar { width: 9px; }
+    #eh2-grid::-webkit-scrollbar-track, #eh2-list::-webkit-scrollbar-track { background: rgba(0,0,0,.25); border-radius: 8px; }
+    #eh2-grid::-webkit-scrollbar-thumb, #eh2-list::-webkit-scrollbar-thumb {
+      background: linear-gradient(180deg, #7a6038, #4a3722);
+      border: 1px solid rgba(232,197,89,.35); border-radius: 8px;
+    }
+    #eh-body.three {
+      grid-template-columns: 200px minmax(200px, 1fr) minmax(270px, 1.3fr);
+      /* 유닛마다 설명 길이가 달라도 패널이 들썩이지 않게 바닥 높이를 고정한다 */
+      align-items: stretch; min-height: 420px;
+    }
     .camp-stage .num { color: var(--gold, #e8c559); font-weight: bold; width: 2.2em; flex: none; }
     .camp-stage .done { color: #6fce62; flex: none; }
     .camp-act { color: var(--gold, #c9a86a); font-size: 13px; margin: 8px 0 2px; }
     /* ── 전투 중 캠페인 목표 배너 ── */
     #campaign-goal {
       position: fixed; top: 46px; left: 50%; transform: translateX(-50%); z-index: 40;
-      background: rgba(20,15,8,.85); border: 1px solid var(--gold, #c9a86a);
-      color: var(--text, #efe6d5); font-size: 13px; padding: 5px 14px; pointer-events: none;
+      background: linear-gradient(168deg, rgba(48,36,21,.95), rgba(18,12,7,.97));
+      border: 1px solid rgba(232,197,89,.45); border-radius: 999px;
+      box-shadow: 0 6px 20px rgba(0,0,0,.5), var(--gl-hi);
+      color: var(--text, #efe6d5); font-size: 13px; padding: 5px 16px; pointer-events: none;
       max-width: 92vw; text-align: center;
     }
     #campaign-goal.hidden { display: none; }
@@ -649,26 +1589,48 @@
 </head>
 <body>
   <div id="topbar">
-    <div class="basebars">
-      <div class="bar" id="bar-n0"><i></i><span></span></div>
-      <div class="bar tower" id="bar-t0"><i></i><span></span></div>
+    <!-- 윗줄은 「전황」만 — 우리 넥서스 / 다음 출정까지 / 상대 넥서스.
+         조작 버튼은 아래 #tb-tools 로 내려 접을 수 있게 했다. -->
+    <div id="tb-main">
+      <div class="nexus" id="nx-0">
+        <div class="nx-crest"></div>
+        <div class="nx-body">
+          <div class="nx-head"><span class="nx-name">1팀 넥서스</span><b class="nx-hp">—</b></div>
+          <div class="bar" id="bar-n0"><i></i></div>
+          <div class="bar tower" id="bar-t0" title="수호탑"><i></i></div>
+        </div>
+      </div>
+      <div id="wave-zone">
+        <div id="wave"><span id="wave-label">준비 시간</span><b id="wave-timer">--</b></div>
+        <!-- 두 갈래 맵에서만 뜬다: 지금 어느 길로 출정하는지 + 눌러서 바꾸는 버튼 -->
+        <button id="btn-lane" style="display:none" title="출정할 길을 바꾼다 (전장의 빈 땅을 눌러도 바뀐다)">
+          <span id="lane-name">서쪽 숲길</span><small>눌러서 길 바꾸기</small>
+        </button>
+      </div>
+      <div class="nexus mirror" id="nx-1">
+        <div class="nx-crest"></div>
+        <div class="nx-body">
+          <div class="nx-head"><span class="nx-name">2팀 넥서스</span><b class="nx-hp">—</b></div>
+          <div class="bar" id="bar-n1"><i></i></div>
+          <div class="bar tower" id="bar-t1" title="수호탑"><i></i></div>
+        </div>
+      </div>
+      <button id="btn-tools" title="메뉴 접기/펼치기" aria-label="메뉴 접기/펼치기">▴</button>
     </div>
-    <div id="wave"><span id="wave-label">준비 시간</span><b id="wave-timer">--</b></div>
-    <div class="basebars">
-      <div class="bar" id="bar-n1"><i></i><span></span></div>
-      <div class="bar tower" id="bar-t1" style="margin-left:auto"><i></i><span></span></div>
-    </div>
-    <div id="sfx">
-      <button id="sfx-toggle" title="소리 켜기/끄기">🔊</button>
-      <input id="sfx-volume" type="range" min="0" max="100" value="60" title="효과음 볼륨">
-    </div>
-    <button id="btn-roster" title="참여자 목록" style="display:none">명단</button>
-    <button id="btn-chat" title="채팅 (Enter)" style="display:none">채팅</button>
-    <button id="btn-shop" class="on" title="상점 접기/펼치기" style="display:none">상점</button>
-    <button id="btn-quit" title="게임에서 나가기" style="display:none">나가기</button>
-    <button id="btn-pause" title="일시정지 (P / Space)">⏸ 일시정지</button>
-    <div id="speed">
-      <button data-speed="1" class="on">×1</button><button data-speed="2">×2</button><button data-speed="4">×4</button>
+    <div id="tb-tools">
+      <div id="sfx">
+        <button id="sfx-toggle" title="소리 켜기/끄기">🔊</button>
+        <input id="sfx-volume" type="range" min="0" max="100" value="60" title="효과음 볼륨">
+      </div>
+      <button id="btn-roster" title="참여자 목록" style="display:none">명단</button>
+      <button id="btn-chat" title="채팅 (Enter)" style="display:none">채팅</button>
+      <button id="btn-shop" class="on" title="상점 접기/펼치기" style="display:none">상점</button>
+      <button id="btn-retry" title="이 스테이지를 처음부터 다시" style="display:none">다시하기</button>
+      <button id="btn-quit" title="게임에서 나가기" style="display:none">나가기</button>
+      <button id="btn-pause" title="일시정지 (P / Space)">⏸ 일시정지</button>
+      <div id="speed">
+        <button data-speed="1" class="on">×1</button><button data-speed="2">×2</button><button data-speed="4">×4</button>
+      </div>
     </div>
   </div>
   <div id="stage">
@@ -683,8 +1645,8 @@
     <div id="economy">
       <div id="money">0</div>
       <div id="income">+30 / 5초</div>
-      <button id="btn-income">인컴 업그레이드 (200)</button>
-      <button id="btn-tech">테크 2 연구 (300)</button>
+      <button id="btn-income" data-key="Z" title="클릭: 지금 구매 · 우클릭(길게 누르기): 가능해지면 자동 구매 예약">인컴 업그레이드 (200)</button>
+      <button id="btn-tech" data-key="X" title="클릭: 지금 연구 · 우클릭(길게 누르기): 가능해지면 자동 연구 예약">테크 2 연구 (300)</button>
       <div style="color:var(--dim);font-size:11px">유닛 우클릭: 업그레이드</div>
     </div>
     <div id="shop"></div>
@@ -754,7 +1716,11 @@
     <p>전장의 먼지가 가라앉았습니다.<br/>탭을 닫으면 완전히 종료됩니다.</p>
     <button id="btn-fw-back" class="menubtn alt">← 타이틀로</button>
   </div>
-  <div id="overlay">
+  <!--
+    처음엔 숨겨 둔다. JS 가 어느 화면을 띄울지 정하기 전까지 아무것도 안 보여야
+    한다 — 안 그러면 「캠페인 목록으로」로 돌아올 때 대전 메뉴가 한 번 번쩍인다.
+  -->
+  <div id="overlay" class="hidden">
     <h1>DESERTLIKE<small id="overlay-sub"></small></h1>
     <div id="authbar" class="hidden">
       <img id="auth-pic" alt="" />

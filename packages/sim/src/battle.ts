@@ -8,9 +8,9 @@
  */
 import {
   GUARDIAN_OF, DEFS, MAP, ZONE_DEFS, FOREST_BUFFS, WEAKEN_PCT, CHILL_PCT, SLEEP_BREAK_HITS,
-  FREEZE_IMMUNE_TAGS, FX_ZONE_TICKS, TIER_RANK, CHARM_MIN_RANK, effectiveDef, laneCenterY, clampLaneY,
+  FREEZE_IMMUNE_TAGS, FX_ZONE_TICKS, TIER_RANK, CHARM_MIN_RANK, effectiveDef, laneCenterY, clampLaneY, isWalkable, flowStep, flowStepTo,
 } from './data.ts';
-import { dist2, idiv, isqrt, clamp, tiles } from './math.ts';
+import { dist2, idiv, isqrt, clamp, tiles, TICK_HZ } from './math.ts';
 import { nextChance, nextInt } from './rng.ts';
 import { isCombatTag } from './types.ts';
 import type { ActiveSkill, CombatTeam, Entity, EntityDef, Game, TeamId } from './types.ts';
@@ -40,6 +40,7 @@ function isFlying(g: Game, e: Entity): boolean {
 
 function canHit(g: Game, attacker: EntityDef, target: Entity): boolean {
   if (g.tick < target.buriedUntil) return false; // 「토끼굴」 땅속엔 닿지 않는다
+  if (g.tick < target.vanishUntil) return false; // 「커튼콜」 무대 밖 — 존재하지 않는 것과 같다
   const w = attacker.weapon;
   if (!w) return false;
   // 영구 무적(둥지 수호탑): 어차피 피해가 안 들어가므로 아예 조준하지 않는다 —
@@ -63,7 +64,9 @@ function isShielded(g: Game, t: Entity): boolean {
 
 /** 수호자(중간보스)는 모든 상태이상에 면역이다. */
 function isStatusImmune(e: Entity): boolean {
-  return def(e).tier === 'guardian';
+  const d = def(e);
+  // warded: 에버그린 「숲의 가호」를 나눠 받은 아군 (판이 끝날 때까지 유지)
+  return d.tier === 'guardian' || d.statusImmune === true || e.warded;
 }
 
 /**
@@ -76,21 +79,68 @@ function blocksStatus(g: Game, e: Entity): boolean {
 
 /** 행동 불가 상태 (기절·수면·빙결). */
 function isIncapacitated(g: Game, e: Entity): boolean {
+  if (g.tick < e.vanishUntil) return true; // 「커튼콜」 무대 밖 — 아무것도 못 한다
   return g.tick < e.stunnedUntil || g.tick < e.sleepUntil || g.tick < e.frozenUntil;
 }
 
 /** 「큐어」 대상 판정: 하나라도 해로운 상태가 걸려 있는가. */
+/**
+ * 이 액티브를 지금 쓸 수 있는가.
+ * 차지 스킬(엘로윈 「비전 축적」)은 남은 차지가 있어야 하고, 연달아 쏘는
+ * 간격(chargeGap)만큼은 쉬어야 한다 — 그 간격도 skillCds 로 잰다.
+ */
+function skillReady(e: Entity, i: number, a: ActiveSkill): boolean {
+  if (e.skillCds[i]! > 0) return false;
+  if (a.charges) return (e.skillCharges[i] ?? 0) > 0;
+  return true;
+}
+
+/** 액티브를 썼다 — 차지 스킬이면 차지를 한 장 쓰고 짧은 간격만 두고, 아니면 통쿨. */
+function spendSkill(e: Entity, i: number, a: ActiveSkill): void {
+  if (a.charges) {
+    e.skillCharges[i] = Math.max(0, (e.skillCharges[i] ?? 0) - 1);
+    e.skillCds[i] = a.chargeGap ?? SEC3;
+    // 가득 찬 상태에서 처음 한 장을 썼다면 그때부터 재충전이 돈다
+    if (e.skillRegen[i] === 0) e.skillRegen[i] = a.cooldown;
+    return;
+  }
+  e.skillCds[i] = a.cooldown;
+}
+
+/**
+ * 이번 스윙이 끝난 뒤의 평타 쿨 (틱).
+ * 「가속 시전」(엘로윈)처럼 사이클이 있으면 쏠 때마다 다음 칸으로 넘어간다 —
+ * 1.4 → 1.2 → 1.0 → 0.8 → 0.6 → 0.8 → … 처럼 빨라졌다 느려지기를 반복한다.
+ */
+function swingCooldown(e: Entity, d: EntityDef): number {
+  const cyc = d.cadence;
+  if (!cyc || cyc.length === 0) return d.weapon!.cooldown;
+  const cd = cyc[e.cadenceIdx % cyc.length]!;
+  e.cadenceIdx = (e.cadenceIdx + 1) % cyc.length;
+  return cd;
+}
+
+/** 차지 스킬의 기본 연사 간격 (3초). */
+const SEC3 = TICK_HZ * 3;
+
 function hasDebuff(g: Game, e: Entity): boolean {
   return g.tick < e.slowedUntil || g.tick < e.dotUntil || g.tick < e.rootedUntil
     || g.tick < e.stunnedUntil || g.tick < e.confusedUntil
     || g.tick < e.weakenedUntil || g.tick < e.sleepUntil
     || g.tick < e.frozenUntil || g.tick < e.groundedUntil
     || g.tick < e.chilledUntil || g.tick < e.fearedUntil
-    || g.tick < e.seducedUntil;
+    || g.tick < e.seducedUntil || g.tick < e.burnUntil || g.tick < e.chokedUntil;
 }
 
 /** 걸려 있는 해로운 상태를 전부 지운다 (버프는 유지). */
-function clearDebuffs(e: Entity): void {
+/**
+ * 「질식」 중에는 어떤 해제도 통하지 않는다 — 큐어를 받아도 그대로다.
+ * 질식 자체는 시간이 지나야만 풀린다.
+ */
+function clearDebuffs(g: Game, e: Entity): void {
+  if (g.tick < e.chokedUntil) return;
+  e.burnUntil = 0;
+  e.burnDps = 0;
   e.slowedUntil = 0;
   e.dotUntil = 0;
   e.dotDps = 0;
@@ -118,9 +168,43 @@ function noteSleepHit(g: Game, victim: Entity): void {
 }
 
 /** 수호자는 앵커 기준으로만 적을 무는다 (리쉬). */
+/**
+ * 암살 조준 — 은신 중에는 앞줄을 지나쳐 뒤를 노린다.
+ *
+ * 지원가(치유·강화) > 원거리 > 지금 체력이 가장 적은 적 순으로 고른다.
+ * 같은 등급이면 체력이 적은 쪽, 그래도 같으면 배열 앞쪽이 이긴다 (결정론).
+ * 은신 중엔 반격을 안 받으므로 평소보다 두 배 멀리 본다 — 그래야 후열까지 닿는다.
+ */
+function findAssassinTarget(g: Game, e: Entity, d: EntityDef): number {
+  const origin = acquireOrigin(e, d);
+  const reach = d.acquireRange * 2 + d.radius;
+  let bestId = -1;
+  let bestRank = 0;
+  let bestHp = 0;
+  for (const v of g.entities) {
+    if (!v.alive || v.team === e.team || !canHit(g, d, v)) continue;
+    if (g.tick < v.stealthUntil || g.tick < v.buriedUntil || g.tick < v.vanishUntil) continue;
+    const vd = def(v);
+    if (vd.tier === 'structure') continue; // 건물은 암살할 것이 없다
+    const r = reach + vd.radius;
+    if (dist2(origin.x, origin.y, v.x, v.y) > r * r) continue;
+    const rank = isSupportFoe(vd) ? 0
+      : (vd.weapon !== undefined && vd.weapon.range >= tiles(2) ? 1 : 2);
+    if (bestId < 0 || rank < bestRank || (rank === bestRank && v.hp < bestHp)) {
+      bestId = v.id;
+      bestRank = rank;
+      bestHp = v.hp;
+    }
+  }
+  return bestId;
+}
+
 function acquireOrigin(e: Entity, d: EntityDef): { x: number; y: number } {
   return d.leashed ? { x: e.anchorX, y: e.anchorY } : { x: e.x, y: e.y };
 }
+
+/** 어떤 두 유닛의 반경 합보다도 큰 값 — 거리 선검사용 (최대 반경 1.4타일 x 2). */
+const SEP_MAX = 2800;
 
 /** 이 유닛(정의)이 공중을 때릴 수 있는가. */
 function canTargetAir(d: EntityDef): boolean {
@@ -142,8 +226,16 @@ function findTarget(g: Game, e: Entity, d: EntityDef, skipStructures = false, ra
   // 「하늘 우선」 조준 후보
   let bestPref = -1;
   let bestPrefD2 = -1;
+  // 사거리 밖은 좌표 뺄셈만으로 걷어낸다 — 아래 canHit/isShielded/def 는
+  // 쌍마다 함수 호출이라, 후반에 수백 기가 몰리면 조준 한 번에 그게 다 돈다.
+  // 어떤 유닛의 반경도 SEP_MAX/2 를 넘지 않으므로 결과는 달라지지 않는다.
+  const coarse = acquire + d.radius + SEP_MAX / 2;
   for (const t of g.entities) {
     if (!t.alive || t.team === e.team) continue;
+    const cdx = t.x - origin.x;
+    if (cdx > coarse || cdx < -coarse) continue;
+    const cdy = t.y - origin.y;
+    if (cdy > coarse || cdy < -coarse) continue;
     if (!canHit(g, d, t) || isShielded(g, t)) continue;
     const td = def(t);
     if (skipStructures && td.tier === 'structure') continue;
@@ -163,8 +255,13 @@ function findTarget(g: Game, e: Entity, d: EntityDef, skipStructures = false, ra
       bestPref = t.id;
       bestPrefD2 = d2;
     }
+    // 「땅 우선」(오베론): 하늘도 때리지만 목표는 늘 지상부터
+    if (d.weapon?.preferGround && !isFlying(g, t) && (bestPref === -1 || d2 < bestPrefD2)) {
+      bestPref = t.id;
+      bestPrefD2 = d2;
+    }
   }
-  if (d.weapon?.preferAir && bestPref !== -1) return bestPref;
+  if ((d.weapon?.preferAir || d.weapon?.preferGround) && bestPref !== -1) return bestPref;
   return d.flying && bestAA !== -1 ? bestAA : best;
 }
 
@@ -239,12 +336,39 @@ function dropFxZone(
 ): void {
   g.zones.push({
     id: g.nextZoneId++, team, kind, x, y, radius,
-    untilTick: g.tick + FX_ZONE_TICKS, followId: -1,
+    untilTick: g.tick + FX_ZONE_TICKS, followId: -1, dpsOverride: 0,
   });
 }
 
 function isSlowed(g: Game, e: Entity): boolean {
   return g.tick < e.slowedUntil;
+}
+
+/**
+ * 정의에서 은신 스킬을 찾는다 (유닛당 최대 1개 가정).
+ * 은신 중 붙는 보너스(공격력·이속·암살 조준)를 여기서 읽는다.
+ */
+function stealthSkillOf(d: EntityDef): ActiveSkill | undefined {
+  return d.actives?.find((a) => a.kind === 'stealth');
+}
+
+/** 지금 은신해 있고, 그 은신에 이 보너스가 달려 있는가. */
+function hidden(g: Game, e: Entity, d: EntityDef): ActiveSkill | undefined {
+  if (g.tick >= e.stealthUntil) return undefined;
+  return stealthSkillOf(d);
+}
+
+/**
+ * 아군을 살리거나 북돋우는 유닛 — 암살 1순위.
+ * 「그림자 도약」(오베론)과 같은 기준으로 support 태그를 먼저 본다.
+ * 태그가 안 붙은 유닛도 있어서 치유 능력과 지원형 액티브를 함께 따진다.
+ */
+const SUPPORT_KINDS = new Set<ActiveSkill['kind']>([
+  'allybuff', 'allyarmor', 'cure', 'regenAura', 'wardShield', 'hasteAlly', 'critAura',
+]);
+function isSupportFoe(d: EntityDef): boolean {
+  if (d.tags.includes('support') || d.heal) return true;
+  return d.actives?.some((a) => SUPPORT_KINDS.has(a.kind)) ?? false;
 }
 
 /** 정의에서 selfbuff 스킬을 찾는다 (유닛당 최대 1개 가정). */
@@ -323,13 +447,62 @@ function atkSpeedPctOf(g: Game, e: Entity, d: EntityDef): number {
   return pct;
 }
 
-function moveToward(g: Game, e: Entity, d: EntityDef, tx: number, ty: number, slowed: boolean): void {
+/**
+ * 그 x 에서 노릴 y — 보통은 중앙선이지만, 격자 마스크 맵에서는
+ * 지금 서 있는 줄에서 가장 가까운 「밟을 수 있는」 자리를 고른다.
+ */
+function aimY(g: Game, x: number, curY: number): number {
+  const c = laneCenterY(g.map, x);
+  if (!g.map.mask) return c;
+  // 중앙선이 곧 「그림에 그려진 길」이다. 그 자리가 막혀 있을 때만 근처로 비킨다.
+  if (isWalkable(g.map, x, c)) return c;
+  return clampLaneY(g.map, x, curY);
+}
+
+/**
+ * 이 유닛이 격자 마스크(나무·물·바위)에 막히는가.
+ * 비행은 지형을 넘어가므로 마스크를 무시한다 — 강 위·숲 위를 그대로 난다.
+ */
+function blockedByTerrain(g: Game, d: EntityDef): boolean {
+  return !!g.map.mask && !d.flying;
+}
+
+/** 벽 안에 끼인 유닛이 길로 빠져나오는 한 틱 분량. */
+const UNSTICK_STEP = tiles(0.4);
+
+/**
+ * 벽(나무·물·바위) 안에 들어가 버린 지상 유닛을 길 쪽으로 조금씩 밀어낸다.
+ *
+ * 예전엔 clampLaneY 로 「가장 가까운 길」에 한 번에 붙여 놨는데, 그 길이 몇
+ * 타일 밖이면 유닛이 나무 지대를 가로질러 순간이동한 것처럼 보였다.
+ * 한 틱에 0.4타일씩만 옮기면 벽에서 걸어 나오는 그림이 된다.
+ */
+function nudgeOntoPath(g: Game, e: Entity): void {
+  const cy = clampLaneY(g.map, e.x, e.y);
+  const dy = cy - e.y;
+  if (dy === 0) return;
+  if (dy > UNSTICK_STEP) e.y += UNSTICK_STEP;
+  else if (dy < -UNSTICK_STEP) e.y -= UNSTICK_STEP;
+  else e.y = cy;
+}
+
+function moveToward(
+  g: Game, e: Entity, d: EntityDef, tx: number, ty: number, slowed: boolean,
+  /** 추가 이속 보정(%) — 고립 도주처럼 이 이동에만 붙는 값. */
+  bonusPct = 0,
+): void {
   if (d.speed <= 0) return;
+  // 어떤 이유로든 막힌 칸에 있으면(밀침·소환 등) 먼저 길 위로 나온다
+  if (blockedByTerrain(g, d) && !isWalkable(g.map, e.x, e.y)) nudgeOntoPath(g, e);
   const dx = tx - e.x;
   const dy = ty - e.y;
   const len = isqrt(dx * dx + dy * dy);
   if (len === 0) return;
-  let step = slowed ? idiv(d.speed * 3, 5) : d.speed;
+  // 암살 은신(「덩굴 잠행」): 덩굴 사이로 파고드는 동안은 발이 빨라진다 —
+  // 둔화 계산 전에 얹어야 「느려진 상태에서도 은신이 도움이 되는」 그림이 된다
+  const hideMv = hidden(g, e, d)?.stealthSpeedAdd ?? 0;
+  const baseSpd = d.speed + hideMv;
+  let step = slowed ? idiv(baseSpd * 3, 5) : baseSpd;
   if (g.tick < e.chilledUntil) step = idiv(step * (100 - CHILL_PCT), 100); // 한기
   // 이속 버프 (태엽 감기 + 숲의 가호)
   {
@@ -339,11 +512,58 @@ function moveToward(g: Game, e: Entity, d: EntityDef, tx: number, ty: number, sl
     const fb = forestBuffOf(g, e);
     if (fb?.speedPct) pct += fb.speedPct;
     if (e.auraKind === 4) pct += 10; // 디멘터 「종말의 오라」
+    pct += bonusPct;
     if (pct) step = idiv(step * (100 + pct), 100);
   }
   if (step > len) step = len;
-  e.x = clamp(e.x + idiv(dx * step, len), 0, g.map.length);
-  e.y = clampLaneY(g.map, e.x, e.y + idiv(dy * step, len));
+  const nx = clamp(e.x + idiv(dx * step, len), 0, g.map.length);
+  const ny = e.y + idiv(dy * step, len);
+  // 격자 마스크가 있는 지형: 벽을 뚫지 않고 미끄러진다.
+  // 대각선이 막히면 한 축씩 시도해 벽을 따라 돌아간다 (간단한 슬라이딩 —
+  // 경로탐색 없이도 나무·물·울타리에 끼지 않고 길을 따라간다).
+  if (blockedByTerrain(g, d)) {
+    if (isWalkable(g.map, nx, ny)) {
+      e.x = nx;
+      e.y = ny;
+      return;
+    }
+    if (isWalkable(g.map, nx, e.y)) { // x 만 이동
+      e.x = nx;
+      return;
+    }
+    if (isWalkable(g.map, e.x, ny)) { // y 만 이동
+      e.y = ny;
+      return;
+    }
+    // 둘 다 막혔다: 벽을 따라 옆으로 비켜 본다.
+    // 좁은 길 입구를 놓치지 않게 여러 폭으로 훑는다 (가까운 쪽부터).
+    for (let k = 1; k <= 4; k++) {
+      const side = step * k;
+      for (const cand of [e.y - side, e.y + side]) {
+        if (isWalkable(g.map, e.x, cand) && isWalkable(g.map, nx, cand)) {
+          e.y = cand;
+          e.x = nx;
+          return;
+        }
+      }
+    }
+    // 전진이 도저히 안 되면 옆으로만이라도 (벽을 따라 흐른다)
+    for (let k = 1; k <= 4; k++) {
+      const side = step * k;
+      for (const cand of [e.y - side, e.y + side]) {
+        if (isWalkable(g.map, e.x, cand)) {
+          e.y = cand;
+          return;
+        }
+      }
+    }
+    return; // 완전히 갇혔으면 제자리
+  }
+  e.x = nx;
+  // 격자 마스크 맵에서 여기까지 온 것은 「비행」뿐이다 (지상은 위에서 처리하고 return).
+  // 그런 유닛에 clampLaneY 를 걸면 숲·강 위를 날다 말고 가장 가까운 길로
+  // 순간이동해 버린다 — 마스크 맵에선 y 를 건드리지 않는다.
+  e.y = g.map.mask ? ny : clampLaneY(g.map, e.x, ny);
 }
 
 /**
@@ -356,6 +576,102 @@ function moveToward(g: Game, e: Entity, d: EntityDef, tx: number, ty: number, sl
  */
 function separate(g: Game): void {
   for (let iter = 0; iter < 3; iter++) separatePass(g);
+  // 격자 마스크 지형: 밀려나다 벽 안으로 들어간 유닛을 길 위로 되돌린다.
+  // (겹침 해소는 지형을 모르기 때문에 나무 속으로 밀어 넣곤 한다)
+  if (g.map.mask) {
+    for (const e of g.entities) {
+      const d = def(e);
+      if (!e.alive || d.speed <= 0 || d.flying) continue; // 비행은 지형 위에 그대로 둔다
+      if (isWalkable(g.map, e.x, e.y)) continue;
+      nudgeOntoPath(g, e);
+    }
+  }
+  detectStuck(g);
+}
+
+/** 이 시간(틱) 넘게 제자리면 끼인 것으로 본다. */
+const STUCK_TICKS = 60;      // 3초
+/** 끼임 판정 후 서로를 통과하는 시간. */
+const PHASE_TICKS = 30;      // 1.5초
+/** 「움직였다」고 볼 최소 이동량. */
+const MOVE_EPS = 20;         // FP (0.02타일)
+
+/**
+ * 좁은 목에서 부대가 굳는 것을 푼다.
+ *
+ * 지형에 막히지 않아도, 앞뒤 유닛이 서로 밀며 버티면 아무도 못 지나가는
+ * 교착이 생긴다 (다리·성문 같은 한 칸짜리 길목). 3초 넘게 제자리인 유닛은
+ * 1.5초 동안 몸싸움을 끄고 서로를 통과시킨다 — RTS 에서 흔히 쓰는 처리다.
+ * 제자리에 서 있는 것이 「정상」인 유닛(속박·기절·주둔·수호자)은 세지 않는다.
+ */
+function detectStuck(g: Game): void {
+  for (const e of g.entities) {
+    if (!e.alive) continue;
+    const d = def(e);
+    if (d.speed <= 0) continue;
+    const moved = Math.abs(e.x - e.lastX) + Math.abs(e.y - e.lastY) > MOVE_EPS;
+    e.lastX = e.x;
+    e.lastY = e.y;
+    // 일부러 멈춰 있는 경우는 끼임이 아니다
+    const parked = g.tick < e.rootedUntil || isIncapacitated(g, e)
+      || (e.garrisonR > 0 && dist2(e.x, e.y, e.anchorX, e.anchorY) <= tiles(1) * tiles(1))
+      || (d.leashed && dist2(e.x, e.y, e.anchorX, e.anchorY) <= tiles(1) * tiles(1));
+    if (moved || parked) { e.stuckTicks = 0; continue; }
+    e.stuckTicks++;
+    if (e.stuckTicks >= STUCK_TICKS) {
+      e.stuckTicks = 0;
+      e.phaseUntil = g.tick + PHASE_TICKS;
+    }
+  }
+}
+
+/**
+ * 「거대 보스」의 상시 패시브 두 가지.
+ *
+ * pullAir  — 사거리 밖 하늘에서 안전하게 쏘는 조합을 자기 품으로 끌어내린다.
+ *            매 틱 조금씩 당기므로 도망은 갈 수 있지만 거리를 벌리기 어렵다.
+ * demolition — 몸에 붙어 패는 적을 초당 갈아낸다 (방어력 무시). 1초에 한 번
+ *            정수로 넣어 결정론을 지킨다.
+ */
+function bossFieldPass(g: Game): void {
+  for (const e of g.entities) {
+    if (!e.alive) continue;
+    const d = def(e);
+    if (!d.pullAir && !d.demolition) continue;
+    if (isIncapacitated(g, e)) continue; // 기절·수면 중엔 장이 꺼진다
+    const foe = enemyOf(e.team as TeamId);
+    for (const t of g.entities) {
+      if (!t.alive || t.id === e.id) continue;
+      if (t.team !== foe && t.team !== 2) continue;
+      const td = def(t);
+      if (td.tier === 'structure') continue;
+      const dx = e.x - t.x;
+      const dy = e.y - t.y;
+      const d2 = dx * dx + dy * dy;
+      // 끌어당기기: 공중만
+      if (d.pullAir && isFlying(g, t) && td.speed > 0) {
+        const r = d.pullAir.radius;
+        if (d2 <= r * r && d2 > 0) {
+          const len = isqrt(d2);
+          const step = d.pullAir.speed;
+          if (len > step) {
+            t.x = clamp(t.x + idiv(dx * step, len), 0, g.map.length);
+            t.y += idiv(dy * step, len);
+          }
+        }
+      }
+      // 데몰리션: 몸에 닿아 있는 적을 초당 갈아낸다
+      if (d.demolition && g.tick % TICK_HZ === 0) {
+        const r = d.demolition.radius + td.radius;
+        if (d2 <= r * r) {
+          if (g.tick < t.invulnUntil || isShielded(g, t)) continue;
+          if (g.tick < t.stealthUntil || g.tick < t.buriedUntil) continue;
+          t.hp -= soakShield(t, d.demolition.dps);
+          noteSleepHit(g, t);
+        }
+      }
+    }
+  }
 }
 
 function separatePass(g: Game): void {
@@ -367,9 +683,26 @@ function separatePass(g: Game): void {
     for (let j = i + 1; j < es.length; j++) {
       const b = es[j]!;
       if (!b.alive) continue;
+      /*
+       * 값싼 좌표 선검사 — 겹칠 수 없는 쌍은 뺄셈 두 번으로 걷어낸다.
+       *
+       * 아래 검사들(def 조회·isFlying·ghost)은 쌍마다 함수 호출이 붙는데,
+       * 후반 전선에 300기가 몰리면 4만 쌍을 그렇게 훑느라 이 함수 하나가
+       * 심 비용의 절반을 넘게 먹었다. 어떤 유닛도 반경이 SEP_MAX 의 절반을
+       * 넘지 않으므로, 이 거리 밖이면 결과에 영향 없이 건너뛸 수 있다.
+       */
+      const pdx = b.x - a.x;
+      if (pdx > SEP_MAX || pdx < -SEP_MAX) continue;
+      const pdy = b.y - a.y;
+      if (pdy > SEP_MAX || pdy < -SEP_MAX) continue;
       const db = def(b);
       // 유령 통행(보급 마차): 누구와도 몸싸움하지 않는다
       if (da.ghost || db.ghost) continue;
+      // 「바람의 춤」 중인 유닛도 누구와도 부딪히지 않는다 — 물러설 길이 막히면
+      // 거리를 되찾는다는 스킬 자체가 성립하지 않는다
+      if (da.kiteDance || db.kiteDance) continue;
+      // 끼임 탈출 중: 잠시 서로를 통과한다 (좁은 다리에서 부대가 굳는 것 방지)
+      if (g.tick < a.phaseUntil || g.tick < b.phaseUntil) continue;
       // 지상화(리버스그라비티)된 공중 유닛은 지상 레이어에서 몸싸움한다
       if (isFlying(g, a) !== isFlying(g, b)) continue;
       const minDist = da.radius + db.radius;
@@ -393,23 +726,66 @@ function separatePass(g: Game): void {
         overlap = minDist - dist;
       }
       const push = idiv(overlap, 2);
-      const aMobile = da.speed > 0;
-      const bMobile = db.speed > 0;
+      // immovable: 덩치로 버티는 보스는 밀리지 않는다 (남은 민다)
+      const aMobile = da.speed > 0 && !da.immovable;
+      const bMobile = db.speed > 0 && !db.immovable;
       const m = g.map;
+      /**
+       * 겹침을 풀며 유닛을 밀어낸다.
+       *
+       * 격자 마스크 맵의 지상 유닛은 **벽 안으로는 절대 밀리지 않는다**.
+       * 예전엔 일단 밀고 나서 clampLaneY 로 길에 붙였는데, 부대가 거점에
+       * 몰리면 뒷줄이 통째로 숲으로 밀려나 「나무 위에 서 있는」 그림이 됐다.
+       * 대각선이 막히면 한 축씩, 그것도 막히면 제자리 (다음 패스에서 다시 푼다).
+       */
+      // dx, dy 는 이미 나눗셈까지 끝낸 값을 받는다 — idiv 가 floor 라
+      // -idiv(v) 와 idiv(-v) 가 1 만큼 다르고, 그 차이가 시드 결과를 흔든다.
+      const shove = (e: Entity, dd: EntityDef, dx2: number, dy2: number): void => {
+        const nx2 = clamp(e.x + dx2, 0, m.length);
+        const ny2 = e.y + dy2;
+        if (!m.mask) { e.x = nx2; e.y = clampLaneY(m, nx2, ny2); return; }
+        if (dd.flying) { e.x = nx2; e.y = ny2; return; } // 비행은 지형 무시
+        if (isWalkable(m, nx2, ny2)) { e.x = nx2; e.y = ny2; return; }
+        if (isWalkable(m, nx2, e.y)) { e.x = nx2; return; }
+        if (isWalkable(m, e.x, ny2)) { e.y = ny2; return; }
+      };
       if (aMobile && bMobile) {
-        a.x = clamp(a.x - idiv(nx * push, 1000), 0, m.length);
-        a.y = clampLaneY(m, a.x, a.y - idiv(ny * push, 1000));
-        b.x = clamp(b.x + idiv(nx * push, 1000), 0, m.length);
-        b.y = clampLaneY(m, b.x, b.y + idiv(ny * push, 1000));
+        shove(a, da, -idiv(nx * push, 1000), -idiv(ny * push, 1000));
+        shove(b, db, idiv(nx * push, 1000), idiv(ny * push, 1000));
       } else if (aMobile) {
-        a.x = clamp(a.x - idiv(nx * overlap, 1000), 0, m.length);
-        a.y = clampLaneY(m, a.x, a.y - idiv(ny * overlap, 1000));
+        shove(a, da, -idiv(nx * overlap, 1000), -idiv(ny * overlap, 1000));
       } else if (bMobile) {
-        b.x = clamp(b.x + idiv(nx * overlap, 1000), 0, m.length);
-        b.y = clampLaneY(m, b.x, b.y + idiv(ny * overlap, 1000));
+        shove(b, db, idiv(nx * overlap, 1000), idiv(ny * overlap, 1000));
       }
     }
   }
+}
+
+/**
+ * 수호 오라 (영웅 강화 「수호의 맹세」).
+ *
+ * 반경 안 아군이 받을 피해의 일부를 수호자가 대신 받는다. 넘겨받는 쪽이
+ * 무적·은신·쓰러진 상태면 나누지 않는다 (무적으로 피해를 지우는 악용 방지).
+ * 수호자 자신이 맞을 때는 당연히 나누지 않는다.
+ *
+ * 반환값 = 피해자가 실제로 받을 피해.
+ */
+function shareToGuardian(g: Game, victim: Entity, dmg: number): number {
+  for (const gd of g.entities) {
+    if (!gd.alive || gd.team !== victim.team || gd.id === victim.id) continue;
+    const share = def(gd).guardShare;
+    if (!share) continue;
+    if (g.tick < gd.invulnUntil || isShielded(g, gd)) continue;
+    if (g.tick < gd.stealthUntil || g.tick < gd.buriedUntil || g.tick < gd.vanishUntil) continue;
+    const r = share.radius;
+    if (dist2(gd.x, gd.y, victim.x, victim.y) > r * r) continue;
+    const moved = idiv(dmg * share.pct, 100);
+    if (moved < 1) continue;
+    gd.hp -= soakShield(gd, moved);
+    noteSleepHit(g, gd);
+    return dmg - moved;
+  }
+  return dmg;
 }
 
 function applyDamage(g: Game, attacker: Entity, attackerDef: EntityDef, victim: Entity): void {
@@ -423,13 +799,28 @@ function applyDamage(g: Game, attacker: Entity, attackerDef: EntityDef, victim: 
   // 은신 중에는 어떤 평타도 맞지 않는다 (이미 날아온 투사체 포함)
   if (g.tick < victim.stealthUntil) return;
   if (g.tick < victim.buriedUntil) return; // 「토끼굴」 땅속
+  if (g.tick < victim.vanishUntil) return; // 「커튼콜」 무대 밖
   // 회피 (캠페인 강화): 평타만 피한다 — 마법·스킬·장판·독은 회피 불가
   if (vd.dodgePct && nextChance(g.rng, vd.dodgePct)) {
     victim.lastAttackerId = attacker.id;
     return;
   }
+  /*
+   * 「잎새의 장막」(에버그린): 얻어맞는 순간 잎에 몸을 숨긴다.
+   * 피해는 그대로 받되, 그 뒤로 잠깐 조준에서 사라진다 — 근접에 물렸을 때
+   * 한 번 끊고 빠져나갈 여지를 준다. 쿨타임이 있어 계속 숨을 수는 없다.
+   */
+  {
+    const veil = vd.veilOnHit;
+    if (veil && g.tick >= victim.veilReadyTick) {
+      victim.stealthUntil = g.tick + veil.durTicks;
+      victim.veilReadyTick = g.tick + veil.cooldown;
+    }
+  }
   // 공중 전용 피해 (모자장수: 하늘엔 강하고 땅엔 약하다)
   let dmg = (w.airDamage !== undefined && isFlying(g, victim)) ? w.airDamage : w.damage;
+  // 암살 은신(「덩굴 잠행」): 덩굴 뒤에서 찌르는 한 방은 더 깊게 들어간다
+  dmg += hidden(g, attacker, attackerDef)?.stealthDamageAdd ?? 0;
   // 막타 스택: 처치할 때마다 공격력이 붙는다 (지속이 끝나면 통째로 사라진다)
   const kst = attackerDef.killStack;
   if (kst && attacker.killStacks > 0 && g.tick < attacker.killStackUntil) {
@@ -439,6 +830,11 @@ function applyDamage(g: Game, attacker: Entity, attackerDef: EntityDef, victim: 
     for (const tag of vd.tags) if (isCombatTag(tag)) dmg += w.bonus[tag] ?? 0;
     if (vd.flying) dmg += w.bonus.flying ?? 0;
   }
+  // 거물 사냥(에버그린): 영웅·네임드에게 추가 피해.
+  // 「소환으로만 나오는 최종 티어」 = 캠페인 네임드·영웅이다.
+  if (attackerDef.bonusVsHero && vd.tier === 'final' && vd.summonOnly) {
+    dmg += attackerDef.bonusVsHero;
+  }
   // 제물 흡수 (인큐버스): 스택당 공격력 +10%
   if (attacker.sacrificeStacks > 0) dmg = idiv(dmg * (100 + attacker.sacrificeStacks * 10), 100);
   // 약화: 방어력 계산 전에 가하는 피해를 깎는다
@@ -446,12 +842,32 @@ function applyDamage(g: Game, attacker: Entity, attackerDef: EntityDef, victim: 
   if (!w.ignoreArmor) dmg -= armorOf(g, victim, vd);
   // 「정각의 일격」: 확률적으로 1.5배. 결정론 rng 를 쓰고, 터진 사실은
   // lastCritTick 에 남겨 렌더가 CRITICAL HIT!! 를 띄운다
-  if (dmg > 0 && g.tick < attacker.critUntil && attacker.critPct > 0
-      && nextChance(g.rng, attacker.critPct)) {
-    dmg = idiv(dmg * 3, 2);
-    g.crits.push({ x: victim.x, y: victim.y, tick: g.tick });
+  {
+    /*
+     * 치명타.
+     *  - 확률: 타고난 것(에버그린)과 일시 버프 중 높은 쪽. 0 이면 rng 를 건드리지
+     *    않는다 — 안 그러면 치명타가 없는 유닛들의 난수열까지 밀린다.
+     *  - 「치명상」이 걸린 적은 확률과 무관하게 무조건 치명타로 맞는다.
+     *  - 배율: 기본 150%. critMulRange 가 있으면 10% 단위로 무작위.
+     */
+    const buffCrit = g.tick < attacker.critUntil ? attacker.critPct : 0;
+    const critPct = Math.max(attackerDef.baseCritPct ?? 0, buffCrit);
+    const forced = g.tick < victim.mortalUntil;
+    const rolled = !forced && critPct > 0 && nextChance(g.rng, critPct);
+    if (dmg > 0 && (forced || rolled)) {
+      const range = attackerDef.critMulRange;
+      let mul = 150;
+      if (range) {
+        // [최소, 최대] 를 10% 단위로 — 균등 확률
+        const steps = idiv(range[1] - range[0], 10) + 1;
+        mul = range[0] + nextInt(g.rng, steps) * 10;
+      }
+      dmg = idiv(dmg * mul, 100);
+      g.crits.push({ x: victim.x, y: victim.y, tick: g.tick });
+    }
   }
   if (dmg < 1) dmg = 1;
+  dmg = shareToGuardian(g, victim, dmg);
   const before = victim.hp;
   victim.hp -= soakShield(victim, dmg);
   noteSleepHit(g, victim); // 수면 중이었다면 피격 횟수 누적
@@ -565,6 +981,7 @@ function pickNukeTarget(
 function applyStrike(g: Game, attacker: Entity, a: ActiveSkill, victim: Entity): void {
   if (g.tick < victim.stealthUntil) return; // 은신은 스킬 피해도 받지 않는다
   if (g.tick < victim.buriedUntil) return; // 「토끼굴」 도 마찬가지
+  if (g.tick < victim.vanishUntil) return; // 「커튼콜」 무대 밖
   if (g.tick < victim.invulnUntil || isShielded(g, victim)) {
     victim.lastAttackerId = attacker.id;
     return;
@@ -593,6 +1010,8 @@ function spawnBattleEntity(g: Game, defId: string, team: CombatTeam, owner: numb
     owner,
     ...(ov ? { defOv: ov } : {}),
     x, y,
+    garrisonR: 0,
+    lastX: x, lastY: y, stuckTicks: 0, phaseUntil: 0,
     anchorX: x, anchorY: y,
     hp: d.maxHp,
     cooldown: 0,
@@ -605,6 +1024,11 @@ function spawnBattleEntity(g: Game, defId: string, team: CombatTeam, owner: numb
     rootedUntil: 0,
     stunnedUntil: 0,
     skillCds: d.actives?.map(() => 0) ?? [],
+    // 차지 스킬은 가득 채운 채로 시작한다 (일반 스킬은 0 — 쓰이지 않는 칸)
+    skillCharges: d.actives?.map((a) => a.charges ?? 0) ?? [],
+    skillRegen: d.actives?.map(() => 0) ?? [],
+    cadenceIdx: 0,
+    resetStacks: 0,
     buffUntil: 0,
     confusedUntil: 0,
     atkBuffUntil: 0,
@@ -632,6 +1056,9 @@ function spawnBattleEntity(g: Game, defId: string, team: CombatTeam, owner: numb
     auraKind: 0,
     shieldHp: 0,
     shieldEverGranted: false,
+    graveReadyTick: 0,
+    puppetized: false,
+    vanishUntil: 0,
     shieldUntil: 0,
     shieldImmuneUntil: 0,
     critImmuneUntil: 0,
@@ -640,6 +1067,9 @@ function spawnBattleEntity(g: Game, defId: string, team: CombatTeam, owner: numb
     regenUntil: 0,
     regenImmuneUntil: 0,
     silencedUntil: 0,
+    burnUntil: 0,
+    burnDps: 0,
+    chokedUntil: 0,
     moonveilUntil: 0,
     killStacks: 0,
     killStackUntil: 0,
@@ -649,6 +1079,11 @@ function spawnBattleEntity(g: Game, defId: string, team: CombatTeam, owner: numb
     returnX: 0,
     returnY: 0,
     critPct: 0,
+    holyRotUntil: 0,
+    mortalUntil: 0,
+    veilReadyTick: 0,
+    wardGiven: false,
+    warded: false,
     critUntil: 0,
     buriedUntil: 0,
     timeLocked: false,
@@ -679,6 +1114,10 @@ function spawnGuardian(g: Game, team: TeamId, x: number, y: number): void {
 // 동률이면 우선순위(4 > 3 > 1·2)로 가른다.
 /** 티어 서열 (「멈춘 시계」가 '가장 강한 아군'을 고를 때 쓴다). */
 const TIER_ORDER: readonly string[] = ['basic', 'novice', 'mid', 'air', 'high', 'supreme', 'final', 'guardian'];
+/** 「뼈 무덤」이 부화하기까지 (20초) — 이 사이 부서지면 부활은 없다. */
+const BONE_GRAVE_TICKS = 20 * 20;
+/** 되살아난 본드래곤이 다시 무덤이 되기까지의 대기 (60초). */
+const BONE_GRAVE_COOLDOWN = 60 * 20;
 const DEMENTOR_ID = 'p_dementor';
 /** 적 탐지 범위. */
 const AURA_SCAN = tiles(15);
@@ -826,7 +1265,9 @@ export function stepCombat(g: Game): void {
   // 0) 상태이상·장판 (피해/회복은 1초에 1번 — tick % 20 === 0 에 적용)
   // 서큐버스 악마 변신 종료: 원래 모습으로 (체력은 원 최대치로 잘라낸다)
   for (const e of g.entities) {
-    if (!e.alive || e.transformUntil !== g.tick) continue;
+    // transformUntil 0 은 「변신한 적 없음」이다. g.tick 0 과 맞아떨어져
+    // 게임 첫 틱에 모든 유닛의 defOv(업그레이드 반영본)를 날려버렸다.
+    if (!e.alive || e.transformUntil === 0 || e.transformUntil !== g.tick) continue;
     const base = DEFS[e.defId]!;
     delete e.defOv;
     if (e.hp > base.maxHp) e.hp = base.maxHp;
@@ -838,12 +1279,12 @@ export function stepCombat(g: Game): void {
     if (!acts0) continue;
     for (let i = 0; i < acts0.length; i++) {
       const a = acts0[i]!;
-      if (a.kind !== 'purge' || e.skillCds[i]! > 0) continue;
+      if (a.kind !== 'purge' || !skillReady(e, i, a)) continue;
       if (a.requiresUpgrade && (e.owner < 0 || !g.players[e.owner]?.upgrades[a.requiresUpgrade])) continue;
       if (!hasDebuff(g, e)) continue;
-      clearDebuffs(e);
+      clearDebuffs(g, e);
       e.purgeImmuneUntil = g.tick + (a.durTicks ?? 400); // 기본 20초 면역
-      e.skillCds[i] = a.cooldown;
+      spendSkill(e, i, a);
     }
   }
   // 버프 종료 후유증 (태엽 감기 과열 등)
@@ -869,6 +1310,8 @@ export function stepCombat(g: Game): void {
       if (!e.alive) continue;
       // 독/화상은 방어 무시 (무적 중엔 면역)
       if (g.tick < e.dotUntil && e.dotDps > 0 && g.tick >= e.invulnUntil) e.hp -= e.dotDps;
+      // 화상(메테오)은 독과 별개로 쌓인다 — 둘 다 걸리면 둘 다 닳는다
+      if (g.tick < e.burnUntil && e.burnDps > 0 && g.tick >= e.invulnUntil) e.hp -= e.burnDps;
       // 재생: 숲의 가호 + 유닛 자체 재생(캠페인 강화)을 합산.
       // (둥지 자체 재생은 뺐다 — 방어 28 상대 잡몹 실피해가 1이라 사실상 무적이 된다.
       //  둥지 회복은 드루이드 치유로만.)
@@ -876,10 +1319,18 @@ export function stepCombat(g: Game): void {
       const auraRegen = g.tick < e.regenUntil ? e.regenPerSec : 0; // 드라이어드 「생명의 숨결」
       const regen = (fb?.regenPerSec ?? 0) + (def(e).regenPerSec ?? 0) + auraRegen;
       if (regen > 0) {
-        const max = def(e).maxHp;
-        if (e.hp < max) {
-          e.hp += regen;
-          if (e.hp > max) e.hp = max;
+        /*
+         * 「신성부식」(은빛 화살비): 언데드가 이 상태면 회복이 그대로 피해가 된다.
+         * 되살아나 버티는 망자 부대를 「회복할수록 무너지게」 뒤집는 상태이상이다.
+         */
+        if (g.tick < e.holyRotUntil && def(e).tags.includes('undead')) {
+          e.hp -= regen;
+        } else {
+          const max = def(e).maxHp;
+          if (e.hp < max) {
+            e.hp += regen;
+            if (e.hp > max) e.hp = max;
+          }
         }
       }
     }
@@ -907,7 +1358,19 @@ export function stepCombat(g: Game): void {
           // 공격성 장판은 기본 지상 전용. hitsAir 장판(망자의 만찬·사후의 경계)만 공중도 걸린다.
           if (isFlying(g, e) && !zd.hitsAir) continue;
           // 적: 지속피해 + 둔화 (장판 안에 있는 동안 갱신, 나가면 0.3초 뒤 풀림)
-          if (zd.dps && dmgTick && g.tick >= e.invulnUntil && g.tick >= e.stealthUntil) e.hp -= zd.dps;
+          const zdps = z.dpsOverride > 0 ? z.dpsOverride : (zd.dps ?? 0);
+          if (zdps && dmgTick && g.tick >= e.invulnUntil && g.tick >= e.stealthUntil) e.hp -= zdps;
+          /*
+           * 은빛 화살비에 한 번이라도 닿은 적은 두 낙인을 얻는다 (각 10초).
+           *  - 신성부식: 언데드가 회복하면 그 수치만큼 오히려 깎인다
+           *  - 치명상: 이 적에게 가하는 모든 공격이 치명타로 들어간다
+           * 수호자·면역 대상은 걸리지 않는다.
+           */
+          if (z.kind === 'silverrain' && !blocksStatus(g, e)) {
+            const until = g.tick + TICK_HZ * 10;
+            if (until > e.holyRotUntil) e.holyRotUntil = until;
+            if (until > e.mortalUntil) e.mortalUntil = until;
+          }
           if (zd.slow && d.speed > 0 && !isStatusImmune(e)) {
             const until = g.tick + 6;
             if (until > e.slowedUntil) e.slowedUntil = until;
@@ -1003,6 +1466,21 @@ export function stepCombat(g: Game): void {
       e.airTauntUntil = 0;
     }
 
+    /*
+     * 암살 (「덩굴 잠행」): 몸을 감춘 동안은 눈앞의 방패를 지나쳐 뒤를 문다.
+     * 은신 중엔 어차피 맞지 않으므로 보복 타겟팅보다 앞에 둔다.
+     */
+    {
+      const hide = hidden(g, e, d);
+      if (hide?.assassinate) {
+        const prey = findAssassinTarget(g, e, d);
+        if (prey >= 0) {
+          e.targetId = prey;
+          continue;
+        }
+      }
+    }
+
     const cur = e.targetId >= 0 ? byId.get(e.targetId) : undefined;
     let valid = false;
     // cur.team 체크: 혼란 중 조준했던 "자기 편"이 회복 후에도 타겟으로 남아
@@ -1053,6 +1531,18 @@ export function stepCombat(g: Game): void {
       }
     }
 
+    // 「땅 우선」(오베론): 하늘을 물고 있는데 지상이 사거리에 들어오면 그쪽으로 옮긴다
+    if (valid && d.weapon?.preferGround) {
+      const curT = byId.get(e.targetId);
+      if (curT && isFlying(g, curT)) {
+        const grd = findTarget(g, e, d);
+        if (grd >= 0) {
+          const gt = byId.get(grd);
+          if (gt && !isFlying(g, gt)) e.targetId = grd;
+        }
+      }
+    }
+
     // 「하늘 우선」: 지상을 물고 있는데 사거리 안에 뜬 것이 나타나면 그쪽으로 옮긴다
     if (valid && d.weapon?.preferAir) {
       const curT = byId.get(e.targetId);
@@ -1098,6 +1588,50 @@ export function stepCombat(g: Game): void {
       continue;
     }
 
+    /*
+     * 고립 도주 (에버그린): 곁에 아군이 하나도 없으면 싸움을 접고 기지로 물러난다.
+     * 물러나는 동안은 발이 빨라진다 — 혼자 남으면 죽지 않고 살아 돌아간다.
+     */
+    if (d.loneFlee) {
+      const rr = d.loneFlee.radius;
+      let friend = false;
+      for (const v of g.entities) {
+        if (!v.alive || v.id === e.id || v.team !== e.team) continue;
+        if (def(v).tier === 'structure') continue; // 건물은 동행으로 안 친다
+        if (dist2(e.x, e.y, v.x, v.y) <= rr * rr) { friend = true; break; }
+      }
+      if (!friend) {
+        const nx = g.map.nexusX[e.team === 2 ? 1 : e.team];
+        moveToward(g, e, d, nx, laneCenterY(g.map, nx), slowed, d.loneFlee.speedPct);
+        continue;
+      }
+    }
+
+    /*
+     * 바람의 춤 (에버그린): 최대 사거리보다 가까이 붙은 적이 있으면 물러나며 쏜다.
+     *
+     * 사거리 11~14타일짜리 저격수가 근접에 붙잡히면 아무것도 못 한다. 거리를 스스로
+     * 되찾게 해 「멀리서 계속 쏜다」는 정체성을 지킨다. 물러나는 동안은 발이 빨라지고
+     * 몸싸움을 하지 않는다 (separatePass 가 ghost 처럼 통과시킨다).
+     */
+    if (d.kiteDance && d.weapon) {
+      const reach = maxRangeOf(g, e, d);
+      let nearest = -1;
+      for (const v of g.entities) {
+        if (!v.alive || v.team === e.team) continue;
+        if (def(v).tier === 'structure') continue;
+        const d2v = dist2(e.x, e.y, v.x, v.y);
+        if (nearest < 0 || d2v < nearest) nearest = d2v;
+      }
+      // 사거리의 80% 안까지 들어왔으면 물러난다 (경계에서 앞뒤로 떠는 것 방지)
+      const keep = idiv(reach * 8, 10);
+      if (nearest >= 0 && nearest < keep * keep) {
+        const nx = g.map.nexusX[e.team === 2 ? 1 : e.team];
+        moveToward(g, e, d, nx, laneCenterY(g.map, nx), slowed, d.kiteDance.speedPct);
+        continue;
+      }
+    }
+
     // 매혹(서큐버스): 싸움을 잊고 적진 한가운데로 홀린 듯 걸어간다
     if (g.tick < e.seducedUntil) {
       const foeTeam = e.team === 2 ? 1 : enemyOf(e.team as TeamId);
@@ -1131,6 +1665,26 @@ export function stepCombat(g: Game): void {
     }
 
     const target = e.targetId >= 0 ? byId.get(e.targetId) : undefined;
+    /*
+     * 주둔 부대 — 진군하지 않고 자기 거점을 지킨다.
+     * 반경 안으로 들어온 적은 물지만, 밖으로 달아나면 쫓지 않고 제자리로 돌아온다.
+     * (일반 추격보다 먼저 판정해야 한다 — 안 그러면 적을 따라 맵 끝까지 간다)
+     */
+    if (e.garrisonR > 0) {
+      const r2 = e.garrisonR * e.garrisonR;
+      if (target && target.alive && d.weapon
+        && dist2(target.x, target.y, e.anchorX, e.anchorY) <= r2) {
+        const reach = rangeOf(g, e, d) + d.radius + def(target).radius;
+        if (dist2(e.x, e.y, target.x, target.y) > reach * reach) {
+          moveToward(g, e, d, target.x, target.y, slowed);
+        }
+        continue;
+      }
+      if (dist2(e.x, e.y, e.anchorX, e.anchorY) > tiles(0.8) * tiles(0.8)) {
+        moveToward(g, e, d, e.anchorX, e.anchorY, slowed);
+      }
+      continue;
+    }
     if (target && target.alive && d.weapon) {
       const td = def(target);
       const reach = rangeOf(g, e, d) + d.radius + td.radius;
@@ -1206,18 +1760,65 @@ export function stepCombat(g: Game): void {
       continue;
     }
     const distToNexus = dir > 0 ? nexusX - e.x : e.x - nexusX;
+    // 격자 마스크 지형: 흐름장이 알려주는 다음 칸으로 간다.
+    // 중앙선을 따라가면 굽은 길에서 벽을 향해 걷다 끼어 버린다 (실측: 중앙선
+    // 59지점 중 22곳이 마스크상 벽이었다).
+    // 호위전 집결: 팀 0 은 「지금 점령할 거점」으로 간다. 넥서스 직행 흐름장은
+    // 거점이 길 옆 공터에 있으면 그 앞을 스쳐 지나가 버린다 — 마차는 거점에
+    // 서는데 부대만 지나쳐 가는 그림이 됐다. 거점으로 향하는 흐름장을 따로 써서
+    // 부대가 마차와 같은 길로 거점을 하나씩 들르게 한다.
+    if (g.rallyX > 0 && e.team === 0 && g.map.mask) {
+      const rx = g.rallyX;
+      const ry = g.rallyY;
+      if (d.flying) {
+        moveToward(g, e, d, rx, ry, slowed);
+        continue;
+      }
+      const cellR = flowStepTo(g.map, rx, ry, e.x, e.y);
+      if (cellR) moveToward(g, e, d, cellR.x, cellR.y, slowed);
+      else moveToward(g, e, d, rx, ry, slowed); // 거점 칸에 닿았다 — 지점으로 모인다
+      continue;
+    }
+    if (g.map.mask && d.flying) {
+      // 비행은 지형을 무시하고 길 위를 그대로 가로질러 난다 (강·숲을 넘는다).
+      // 목표 x 는 nexusX — 전선이 걸려 있으면 거기서 멈춘다.
+      moveToward(g, e, d, nexusX, laneCenterY(g.map, nexusX), slowed);
+      continue;
+    }
+    if (g.map.mask) {
+      // 전선(호위전 holdLine / 수호탑 보호막 / 상점 점령)을 넘어서 진군하지 않는다.
+      // 흐름장은 목적지만 알 뿐 전선을 모르므로 x 를 여기서 직접 막아 준다 —
+      // 이게 없으면 부대가 거점을 그냥 지나쳐 적진으로 달려가 점령이 안 됐다.
+      const nextCell = flowStep(g.map, e.team === 0 ? 0 : 1, e.x, e.y);
+      if (nextCell) {
+        // 전선 너머로는 목표 x 를 잘라 낸다. 넘어가 있으면 목표가 뒤가 되어
+        // 다시 전선으로 물러난다 (겹침에 밀려 조금씩 앞으로 새는 것도 이걸로 잡힌다).
+        const tx = dir > 0
+          ? (nextCell.x < nexusX ? nextCell.x : nexusX)
+          : (nextCell.x > nexusX ? nextCell.x : nexusX);
+        moveToward(g, e, d, tx, nextCell.y, slowed);
+      } else {
+        moveToward(g, e, d, nexusX, e.y, slowed); // 목적지 줄에 닿았다 — 넥서스로
+      }
+      continue;
+    }
     if (distToNexus <= tiles(6)) {
       // 넥서스가 가까우면 직접 향한다
-      moveToward(g, e, d, nexusX, laneCenterY(m, nexusX), slowed);
+      moveToward(g, e, d, nexusX, aimY(g, nexusX, e.y), slowed);
     } else {
-      // 전방 4타일 지점의 중앙선을 향해 (경사 구간에서 자연스럽게 꺾임)
+      // 전방 4타일 지점을 향해 (경사·굽이에서 자연스럽게 꺾인다).
+      // 격자 마스크 맵에서는 「중앙선」이 아니라 그 지점에서 실제로 밟을 수 있는
+      // 가장 가까운 자리를 노린다 — 굽은 길을 벽에 부딪히지 않고 따라간다.
       const lookX = clamp(e.x + dir * tiles(4), 0, m.length);
-      moveToward(g, e, d, lookX, laneCenterY(m, lookX), slowed);
+      moveToward(g, e, d, lookX, aimY(g, lookX, e.y), slowed);
     }
   }
 
   // 3) 겹침 해소
   separate(g);
+
+  // 3-b) 덩치 보스 패시브 — 공중 끌어당기기 + 몸에 붙은 적 갈아내기
+  bossFieldPass(g);
 
   // 4) 공격 (+ 액티브 시전)
   for (const e of g.entities) {
@@ -1225,8 +1826,8 @@ export function stepCombat(g: Game): void {
     const d = def(e);
     // 무기가 없어도 액티브가 있으면 시전은 해야 한다 (소환사처럼 소환만 하는 유닛)
     if (!d.weapon && !d.actives) continue;
-    // 침묵(엘루리온 해금 패시브): 액티브를 못 쓴다 (평타는 가능)
-    const silenced = g.tick < e.silencedUntil;
+    // 침묵(엘루리온 해금 패시브)·질식(메테오): 액티브를 못 쓴다 (평타는 가능)
+    const silenced = g.tick < e.silencedUntil || g.tick < e.chokedUntil;
 
     if (d.weapon && e.cooldown > 0) {
       // 둔화 중엔 공속 절반: 짝수 틱에만 쿨다운이 준다.
@@ -1234,6 +1835,45 @@ export function stepCombat(g: Game): void {
     }
     for (let i = 0; i < e.skillCds.length; i++) {
       if (e.skillCds[i]! > 0) e.skillCds[i]!--;
+    }
+    /*
+     * 차지 재충전 (엘로윈 「비전 축적」): 스킬마다 따로 도는 타이머가 다 돌면
+     * 차지가 한 장 차오른다. 가득 차면 타이머는 멈춘다 (넘치지 않는다).
+     */
+    if (d.actives) {
+      for (let i = 0; i < d.actives.length; i++) {
+        const a = d.actives[i]!;
+        if (!a.charges) continue;
+        if ((e.skillCharges[i] ?? 0) >= a.charges) { e.skillRegen[i] = 0; continue; }
+        if (e.skillRegen[i]! > 0) e.skillRegen[i]!--;
+        if (e.skillRegen[i]! <= 0) {
+          e.skillCharges[i] = (e.skillCharges[i] ?? 0) + 1;
+          e.skillRegen[i] = (e.skillCharges[i] ?? 0) >= a.charges ? 0 : a.cooldown;
+        }
+      }
+    }
+
+    /*
+     * 「숲의 가호」 나눠주기 (에버그린 강화): 전투에 들어서면 곁의 아군 N명에게
+     * 상태이상 면역을 넘겨준다. 판당 딱 한 번 — 다시 태어나야 또 쓸 수 있다.
+     * 쿨타임이 아니라 1회성이라 스킬 목록이 아닌 여기서 직접 처리한다.
+     */
+    if (d.wardGrant && !e.wardGiven && e.targetId >= 0) {
+      const tgt = byId.get(e.targetId);
+      if (tgt && tgt.alive) {
+        e.wardGiven = true;
+        let left = d.wardGrant;
+        // 가까운 순서가 아니라 배열 순서 — 결정론을 위해 정렬하지 않는다
+        for (const v of g.entities) {
+          if (left <= 0) break;
+          if (!v.alive || v.id === e.id || v.team !== e.team || v.warded) continue;
+          const vd2 = def(v);
+          if (vd2.tier === 'structure' || vd2.summonOnly) continue;
+          if (dist2(e.x, e.y, v.x, v.y) > tiles(8) * tiles(8)) continue;
+          v.warded = true;
+          left--;
+        }
+      }
     }
 
     // 논스윙형 액티브 시전 (공격 쿨과 무관). 기절·수면·혼란 중엔 불가.
@@ -1243,8 +1883,9 @@ export function stepCombat(g: Game): void {
       for (let i = 0; i < acts.length; i++) {
         if (silenced) break; // 침묵 중엔 어떤 액티브도 나가지 않는다
         const a = acts[i]!;
-        if (a.kind === 'strike' || e.skillCds[i]! > 0) continue;
+        if (a.kind === 'strike' || !skillReady(e, i, a)) continue;
         // 해금형 스킬: 소유자가 업그레이드를 사기 전엔 봉인 (사면 즉시 전 유닛 사용 가능)
+        if (a.soloOnly && g.campaignMode) continue; // 캠페인에선 봉인된 스킬
         if (a.requiresUpgrade && (e.owner < 0 || !g.players[e.owner]?.upgrades[a.requiresUpgrade])) continue;
         const t = e.targetId >= 0 ? byId.get(e.targetId) : undefined;
         const inCombat = t !== undefined && t.alive;
@@ -1252,13 +1893,13 @@ export function stepCombat(g: Game): void {
           case 'selfbuff': // 교전 중 자가 강화
             if (inCombat) {
               e.buffUntil = g.tick + (a.durTicks ?? 0);
-              e.skillCds[i] = a.cooldown;
+              spendSkill(e, i, a);
             }
             break;
           case 'reflect': // 「가시 봉제」 교전 중 + 이미 맞고 있을 때 평타 반사막
             if (inCombat && e.hp < d.maxHp) {
               e.reflectUntil = g.tick + (a.durTicks ?? 0);
-              e.skillCds[i] = a.cooldown;
+              spendSkill(e, i, a);
             }
             break;
           case 'fear': { // 「자정의 종소리」 원거리 적 최우선으로 넓은 지역 공포
@@ -1292,7 +1933,7 @@ export function stepCombat(g: Game): void {
                 if (picks.length > cap) picks.pop();
               }
               for (const p of picks) if (until > p.v.fearedUntil) p.v.fearedUntil = until;
-              e.skillCds[i] = a.cooldown;
+              spendSkill(e, i, a);
             }
             break;
           }
@@ -1334,6 +1975,12 @@ export function stepCombat(g: Game): void {
                 id: g.nextZoneId++, team: e.team, kind: z.kind,
                 x: zx, y: zy, radius: z.radius, untilTick: g.tick + z.ticks,
                 followId: follow,
+                // 은빛 화살비: 강화 단계로 초당 피해가 달라진다 (즉발 피해의 약 36%)
+                // 은빛 화살비는 첫 피해(damage)에서 초당 피해를 역산하고,
+                // 나머지 장판은 zoneDps 로 직접 덮어쓴다 (0 = ZONE_DEFS 기본값)
+                dpsOverride: z.kind === 'silverrain'
+                  ? idiv((a.damage ?? 70) * 36, 100)
+                  : (a.zoneDps ?? 0),
               });
             }
             // 시전 순간의 즉발 피해 (망자의 만찬의 "첫 피해") — 장판 범위 안 전원
@@ -1346,7 +1993,7 @@ export function stepCombat(g: Game): void {
                 if (dist2(zx, zy, v.x, v.y) <= br * br) applyStrike(g, e, a, v);
               }
             }
-            e.skillCds[i] = a.cooldown;
+            spendSkill(e, i, a);
             break;
           }
           case 'ground': { // 「리버스그라비티」 범위 안 공중 적을 지상으로 끌어내림
@@ -1362,7 +2009,7 @@ export function stepCombat(g: Game): void {
                 if (until > v.groundedUntil) v.groundedUntil = until;
               }
               dropFxZone(g, e.team, 'gravity', aim.x, aim.y, r);
-              e.skillCds[i] = a.cooldown;
+              spendSkill(e, i, a);
             }
             break;
           }
@@ -1378,8 +2025,20 @@ export function stepCombat(g: Game): void {
                 if (dist2(aim.x, aim.y, v.x, v.y) > r * r) continue;
                 if (until > v.slowedUntil) v.slowedUntil = until;
               }
+              /*
+               * 「대지 파쇄」(엘로윈 강화): 둔화만 걸던 지진이 실제로 땅을 부순다.
+               * 둔화는 이동 가능한 적만 걸리지만 피해는 구조물·수호자도 받는다 —
+               * 그래서 슬로우 루프와 따로 돈다.
+               */
+              if (a.damage) {
+                for (const v of g.entities) {
+                  if (!v.alive || v.team === e.team || isFlying(g, v)) continue;
+                  if (dist2(aim.x, aim.y, v.x, v.y) > r * r) continue;
+                  applyStrike(g, e, a, v);
+                }
+              }
               dropFxZone(g, e.team, 'quake', aim.x, aim.y, r);
-              e.skillCds[i] = a.cooldown;
+              spendSkill(e, i, a);
             }
             break;
           }
@@ -1395,24 +2054,65 @@ export function stepCombat(g: Game): void {
               if (until > v.rootedUntil) v.rootedUntil = until;
               hit = true;
             }
-            if (hit) e.skillCds[i] = a.cooldown;
+            if (hit) spendSkill(e, i, a);
             break;
           }
           case 'freeze': { // 「블리자드」 대상 지역 빙결 (판금·거대·구조물 면역)
+            // 강화 단계마다 얼릴 수 있는 재질이 늘어난다 (freezeAlsoTags 는 면역에서 뺀다)
+            const hard = FREEZE_IMMUNE_TAGS.filter((t) => !(a.freezeAlsoTags ?? []).includes(t));
             const canFreeze = (v: Entity): boolean =>
-              !isStatusImmune(v) && !FREEZE_IMMUNE_TAGS.some((tag) => def(v).tags.includes(tag));
-            const aim = nearestFoeWithin(g, e, d, a.castRange ?? tiles(8), canFreeze);
+              !isStatusImmune(v) && !hard.some((tag) => def(v).tags.includes(tag));
+            // 피해까지 주는 강화형이면 얼릴 수 없는 적만 있어도 시전한다
+            const aim = a.damage
+              ? nearestFoeWithin(g, e, d, a.castRange ?? tiles(8), () => true)
+              : nearestFoeWithin(g, e, d, a.castRange ?? tiles(8), canFreeze);
             if (aim) {
               const r = a.splash ?? tiles(2.5);
               const until = g.tick + (a.durTicks ?? 0);
               for (const v of g.entities) {
-                if (!v.alive || v.team === e.team || !canFreeze(v)) continue;
-                if (g.tick < v.invulnUntil) continue;
+                if (!v.alive || v.team === e.team) continue;
                 if (dist2(aim.x, aim.y, v.x, v.y) > r * r) continue;
+                // 눈보라 피해는 지상·공중을 가리지 않는다 (빙결 면역이어도 맞는다)
+                if (a.damage) applyStrike(g, e, a, v);
+                if (!canFreeze(v) || g.tick < v.invulnUntil) continue;
                 if (until > v.frozenUntil) v.frozenUntil = until;
               }
               dropFxZone(g, e.team, 'frost', aim.x, aim.y, r);
-              e.skillCds[i] = a.cooldown;
+              spendSkill(e, i, a);
+            }
+            break;
+          }
+          case 'meteor': {
+            /*
+             * 「메테오 스트라이크」(엘로윈 최종기) — 넓은 하늘에서 운석이 쏟아진다.
+             * 피해·화상·질식은 시전 순간 한 번에 들어가고, 이후 7초 동안 남는
+             * 운석 장판은 그림만이다 (효과를 틱마다 다시 주면 겹겹이 쌓인다).
+             * 지상·공중을 가리지 않으며 완전면역 대상에겐 낙인이 붙지 않는다.
+             */
+            const mr = a.castRange ?? tiles(12);
+            const aim = nearestFoeWithin(g, e, d, mr, () => true);
+            if (aim) {
+              const r = a.splash ?? tiles(10);
+              const burnUntil = a.burn ? g.tick + a.burn.ticks : 0;
+              const chokeUntil = a.chokeTicks ? g.tick + a.chokeTicks : 0;
+              for (const v of g.entities) {
+                if (!v.alive || v.team === e.team) continue;
+                if (dist2(aim.x, aim.y, v.x, v.y) > r * r) continue;
+                applyStrike(g, e, a, v);
+                if (blocksStatus(g, v)) continue;
+                if (a.burn && burnUntil > v.burnUntil) {
+                  v.burnUntil = burnUntil;
+                  v.burnDps = Math.max(v.burnDps, a.burn.dps);
+                }
+                if (chokeUntil > v.chokedUntil) v.chokedUntil = chokeUntil;
+              }
+              g.zones.push({
+                id: g.nextZoneId++, team: e.team, kind: 'meteor',
+                x: aim.x, y: aim.y, radius: r,
+                untilTick: g.tick + (a.zone?.ticks ?? TICK_HZ * 7),
+                followId: -1, dpsOverride: 0,
+              });
+              spendSkill(e, i, a);
             }
             break;
           }
@@ -1429,7 +2129,7 @@ export function stepCombat(g: Game): void {
                 const sy2 = clampLaneY(g.map, sx2, e.y + (k % 2 === 0 ? 500 : -500) * (k + 1));
                 spawnBattleEntity(g, pick, e.team, e.owner, sx2, sy2, ov);
               }
-              e.skillCds[i] = a.cooldown;
+              spendSkill(e, i, a);
             }
             break;
           }
@@ -1452,7 +2152,7 @@ export function stepCombat(g: Game): void {
                 applyStrike(g, e, a, victim);
               }
               if (a.fxZone) dropFxZone(g, e.team, a.fxZone, victim.x, victim.y, a.splash ?? tiles(0.8));
-              e.skillCds[i] = a.cooldown;
+              spendSkill(e, i, a);
             }
             break;
           }
@@ -1479,17 +2179,18 @@ export function stepCombat(g: Game): void {
             if (best) {
               best.team = e.team;
               best.owner = e.owner;
+              best.puppetized = true; // 실에 매달린 인형 — 새까맣게 그려진다
               best.targetId = -1;
               best.lastAttackerId = -1;
               best.tauntedUntil = 0;
               best.tauntedBy = -1;
-              clearDebuffs(best);
+              clearDebuffs(g, best);
               // 전향한 유닛을 겨누던 참조를 전부 끊는다 (아군 오사 방지)
               for (const o of g.entities) {
                 if (o.targetId === best.id) o.targetId = -1;
                 if (o.lastAttackerId === best.id) o.lastAttackerId = -1;
               }
-              e.skillCds[i] = a.cooldown;
+              spendSkill(e, i, a);
             }
             break;
           }
@@ -1510,7 +2211,7 @@ export function stepCombat(g: Game): void {
             } else {
               tryConfuse(t!);
             }
-            if (hit > 0) e.skillCds[i] = a.cooldown;
+            if (hit > 0) spendSkill(e, i, a);
             break;
           }
           case 'allybuff': // 전투 중 주변 아군 공속 버프 (중복 없음 — 갱신만)
@@ -1522,13 +2223,15 @@ export function stepCombat(g: Game): void {
                 if (dist2(e.x, e.y, ally.x, ally.y) > r * r) continue;
                 if (until > ally.atkBuffUntil) ally.atkBuffUntil = until;
               }
-              e.skillCds[i] = a.cooldown;
+              spendSkill(e, i, a);
             }
             break;
           case 'invuln': // 전투 중 + 이미 피해를 입었을 때 무적
             if (inCombat && e.hp < d.maxHp) {
               e.invulnUntil = g.tick + (a.durTicks ?? 0);
-              e.skillCds[i] = a.cooldown;
+              // 발이 묶이는 방어 기술 — 무적인 동안 그 자리에 못 박힌다
+              if (a.rootsSelf) e.rootedUntil = g.tick + (a.durTicks ?? 0);
+              spendSkill(e, i, a);
             }
             break;
           case 'allyarmor': { // 「가호」 주변 아군 방어력 버프 (중복 없음 — 더 센 쪽·더 긴 쪽)
@@ -1547,7 +2250,7 @@ export function stepCombat(g: Game): void {
                 ally.armorBuffImmuneUntil = g.tick + a.cooldown;
               }
             }
-            e.skillCds[i] = a.cooldown;
+            spendSkill(e, i, a);
             break;
           }
           case 'weaken': { // 「날개짓」 주변 적 공격력 감소
@@ -1562,7 +2265,7 @@ export function stepCombat(g: Game): void {
               if (until > foe.weakenedUntil) foe.weakenedUntil = until;
               hit++;
             }
-            if (hit > 0) e.skillCds[i] = a.cooldown;
+            if (hit > 0) spendSkill(e, i, a);
             break;
           }
           case 'cure': { // 「큐어」 주변 아군 1기의 디버프를 통째로 해제
@@ -1576,8 +2279,8 @@ export function stepCombat(g: Game): void {
               break;
             }
             if (victim) {
-              clearDebuffs(victim);
-              e.skillCds[i] = a.cooldown;
+              clearDebuffs(g, victim);
+              spendSkill(e, i, a);
             }
             break;
           }
@@ -1599,13 +2302,15 @@ export function stepCombat(g: Game): void {
                   e.defOv = {
                     ...base,
                     maxHp: base.maxHp * 2,
+                    // 악마가 된 동안엔 날아오른다 — 지상 전용 공격은 닿지 않는다
+                    flying: true,
                     weapon: { ...w0, damage: w0.damage * 5 },
                   };
                   e.hp = base.maxHp * 2;
                   e.transformUntil = g.tick + 300; // 15초
                 }
               }
-              e.skillCds[i] = a.cooldown; // 빗나가도 쿨은 돈다 (확률기)
+              spendSkill(e, i, a); // 빗나가도 쿨은 돈다 (확률기)
             }
             break;
           }
@@ -1618,7 +2323,7 @@ export function stepCombat(g: Game): void {
             const mare = spawnBattleEntity(g, 'p_dream_mare', e.team, e.owner,
               clamp(e.x + 400, 0, g.map.length), clampLaneY(g.map, e.x, e.y + 400));
             e.mareId = mare.id;
-            e.skillCds[i] = a.cooldown;
+            spendSkill(e, i, a);
             break;
           }
           case 'leap': { // 「관짝 강습」(관짝지기) 후방 힐러·원거리에게 도약 — 도약 중 무적
@@ -1637,14 +2342,14 @@ export function stepCombat(g: Game): void {
               e.y = clampLaneY(g.map, e.x, jumpTo.y);
               e.invulnUntil = g.tick + 12; // 0.6초 — 도약 중 무적
               e.targetId = jumpTo.id;
-              e.skillCds[i] = a.cooldown;
+              spendSkill(e, i, a);
             }
             break;
           }
           case 'stealth': // 「은신」(인큐버스) 6초간 조준·피해에서 완전히 사라진다
             if (inCombat) {
               e.stealthUntil = g.tick + (a.durTicks ?? 120); // 기본 6초
-              e.skillCds[i] = a.cooldown;
+              spendSkill(e, i, a);
             }
             break;
           case 'legion': { // 「군세 소환」(인큐버스 해금) 고정 구성 대량 소환
@@ -1659,7 +2364,7 @@ export function stepCombat(g: Game): void {
                   k++;
                 }
               }
-              e.skillCds[i] = a.cooldown;
+              spendSkill(e, i, a);
             }
             break;
           }
@@ -1688,7 +2393,7 @@ export function stepCombat(g: Game): void {
             } else if (e.sacrificeStacks > 0) {
               e.sacrificeStacks--;
             }
-            e.skillCds[i] = a.cooldown;
+            spendSkill(e, i, a);
             break;
           }
           // ── 마리오네타 확장 로스터 ─────────────────────────────────────
@@ -1701,7 +2406,7 @@ export function stepCombat(g: Game): void {
               if (dist2(e.x, e.y, ally.x, ally.y) > r * r) continue;
               if (until > ally.atkBuffUntil) ally.atkBuffUntil = until;
             }
-            e.skillCds[i] = a.cooldown;
+            spendSkill(e, i, a);
             break;
           }
           case 'slowFoe': { // 「지각의 저주」 주변 적 공속·이속 (한기로 근사 — 중복 없음)
@@ -1715,7 +2420,7 @@ export function stepCombat(g: Game): void {
               if (until > foe.chilledUntil) foe.chilledUntil = until;
               hit++;
             }
-            if (hit > 0) e.skillCds[i] = a.cooldown;
+            if (hit > 0) spendSkill(e, i, a);
             break;
           }
           case 'burrow': { // 「토끼굴」 주변에 아군이 없으면 땅속으로 숨는다
@@ -1729,7 +2434,7 @@ export function stepCombat(g: Game): void {
             if (friends === 0) {
               e.buriedUntil = g.tick + (a.durTicks ?? 600);
               e.targetId = -1;
-              e.skillCds[i] = a.cooldown;
+              spendSkill(e, i, a);
             }
             break;
           }
@@ -1770,7 +2475,7 @@ export function stepCombat(g: Game): void {
               ally.critPct = pct;
               ally.critImmuneUntil = g.tick + a.cooldown;
             }
-            e.skillCds[i] = a.cooldown;
+            spendSkill(e, i, a);
             break;
           }
           case 'randomBuff': { // 모자장수 — 쓸 때마다 모자가 바뀐다
@@ -1780,7 +2485,7 @@ export function stepCombat(g: Game): void {
             e.hatKind = roll === 9 ? 4 : (roll % 3) + 1;
             e.hatUntil = g.tick + (a.durTicks ?? 200);
             e.hatSummonTick = g.tick;
-            e.skillCds[i] = a.cooldown;
+            spendSkill(e, i, a);
             break;
           }
           case 'summonAtFoe': { // 드로셀마이어 — 적 후열(원거리·지원가) 한가운데에 소환
@@ -1806,7 +2511,7 @@ export function stepCombat(g: Game): void {
               spawnBattleEntity(g, a.summonId ?? 'm_nutcracker', e.team, e.owner,
                 clamp(aim.x + ox, 0, g.map.length), clampLaneY(g.map, aim.x + ox, aim.y + oy));
             }
-            e.skillCds[i] = a.cooldown;
+            spendSkill(e, i, a);
             break;
           }
           case 'levitate': { // 주변 아군 원거리·지원가를 공중으로 띄운다
@@ -1824,7 +2529,7 @@ export function stepCombat(g: Game): void {
               ally.levitateUntil = until;
               lifted++;
             }
-            if (lifted > 0) e.skillCds[i] = a.cooldown;
+            if (lifted > 0) spendSkill(e, i, a);
             break;
           }
           case 'threadStorm': { // 「실의 폭풍」 광역 속박 → 3초 뒤 터지며 피해
@@ -1837,7 +2542,7 @@ export function stepCombat(g: Game): void {
             // 실이 깔린 자리를 그림으로 남긴다 (효과는 아래 속박·폭발이 직접 준다)
             g.zones.push({
               id: g.nextZoneId++, team: e.team, kind: 'threadstorm',
-              x: aim.x, y: aim.y, radius: r, untilTick: until, followId: -1,
+              x: aim.x, y: aim.y, radius: r, untilTick: until, dpsOverride: 0, followId: -1,
             });
             for (const foe of g.entities) {
               if (!foe.alive || foe.team === e.team || isFlying(g, foe)) continue;
@@ -1849,7 +2554,7 @@ export function stepCombat(g: Game): void {
               // 터질 때의 피해는 예약 없이 즉시 계산해 두고 지연 적용한다
               g.threadBooms.push({ x: foe.x, y: foe.y, tick: until, dmg: a.damage ?? 60, team: e.team, r: tiles(2) });
             }
-            e.skillCds[i] = a.cooldown;
+            spendSkill(e, i, a);
             break;
           }
           // ── 실바린 확장 로스터 ─────────────────────────────────────────
@@ -1880,7 +2585,7 @@ export function stepCombat(g: Game): void {
               ally.shieldImmuneUntil = g.tick + a.cooldown;
               given++;
             }
-            if (given > 0) e.skillCds[i] = a.cooldown;
+            if (given > 0) spendSkill(e, i, a);
             break;
           }
           case 'regenAura': { // 「생명의 숨결」 주변 아군 초당 회복
@@ -1899,7 +2604,7 @@ export function stepCombat(g: Game): void {
               ally.regenImmuneUntil = g.tick + a.cooldown;
               given++;
             }
-            if (given > 0) e.skillCds[i] = a.cooldown;
+            if (given > 0) spendSkill(e, i, a);
             break;
           }
           case 'selfShield': { // 엘루리온 「비늘 방벽」 — 다른 보호막 위에 얹힌다
@@ -1907,7 +2612,7 @@ export function stepCombat(g: Game): void {
             const amt = a.damage ?? 100;
             e.shieldHp += amt;          // 합산 (다만 이 스킬 자체는 쿨마다 100 고정)
             e.shieldUntil = Number.MAX_SAFE_INTEGER; // 지속시간 없음 — 다 닳으면 끝
-            e.skillCds[i] = a.cooldown;
+            spendSkill(e, i, a);
             break;
           }
           case 'airTaunt': { // 「창공의 포효」 대공이 되는 적만 이쪽을 보게 만든다
@@ -1925,12 +2630,14 @@ export function stepCombat(g: Game): void {
               foe.airTauntBy = e.id;
               hit++;
             }
-            if (hit > 0) e.skillCds[i] = a.cooldown;
+            if (hit > 0) spendSkill(e, i, a);
             break;
           }
-          case 'ram': { // 「들이받기」 대공 적에게 돌진 → 강타 → 제자리 복귀
+          case 'ram': { // 「들이받기」 하늘의 적에게 돌진 → 강타 → 제자리 복귀
             const range = a.castRange ?? tiles(8);
-            const aim = nearestFoeWithin(g, e, d, range, (v) => canTargetAir(def(v)));
+            // 「지상 유닛은 안 당한다」 — 대공이 되는지가 아니라 실제로 떠 있는지로 고른다.
+            // (canTargetAir 로 고르면 땅에 선 대공 유닛에게도 박아서 스펙과 어긋났다)
+            const aim = nearestFoeWithin(g, e, d, range, (v) => isFlying(g, v));
             if (!aim) break;
             e.returnX = e.x;
             e.returnY = e.y;
@@ -1942,7 +2649,7 @@ export function stepCombat(g: Game): void {
             // 제 몸도 상한다 — 남은 체력의 10%
             e.hp -= idiv(e.hp, 10);
             e.targetId = aim.id;
-            e.skillCds[i] = a.cooldown;
+            spendSkill(e, i, a);
             break;
           }
           case 'diveStrike': { // 오베론 「그림자 도약」 적 후열 강타 후 복귀
@@ -1962,7 +2669,7 @@ export function stepCombat(g: Game): void {
             e.y = clampLaneY(g.map, e.x, aim.y);
             applyStrike(g, e, a, aim);
             e.targetId = aim.id;
-            e.skillCds[i] = a.cooldown;
+            spendSkill(e, i, a);
             break;
           }
           case 'debuffZone': { // 오베론 「인분의 장막」 장판 — 지속딜 + 공속·사거리 감소
@@ -1971,9 +2678,61 @@ export function stepCombat(g: Game): void {
             g.zones.push({
               id: g.nextZoneId++, team: e.team, kind: a.zone?.kind ?? 'spores',
               x: e.x, y: e.y, radius: r, untilTick: g.tick + (a.durTicks ?? 140),
-              followId: -1,
+              dpsOverride: 0, followId: -1,
             });
-            e.skillCds[i] = a.cooldown;
+            spendSkill(e, i, a);
+            break;
+          }
+          case 'puppetShow': { // 「인형극」 주변 아군 기물을 복제해 무대에 올린다
+            if (!inCombat) break;
+            const r = a.auraRadius ?? tiles(6);
+            const want = a.summonCount ?? 5;
+            // 후보 수집 — 기물(construct) 아군만, 배열 순서 그대로 (결정론)
+            const cast: Entity[] = [];
+            for (const ally of g.entities) {
+              if (!ally.alive || ally.team !== e.team || ally.id === e.id) continue;
+              const ad = def(ally);
+              if (!ad.tags.includes('construct') || ad.tier === 'structure') continue;
+              if (ad.tier === 'final') continue; // 최종 유닛은 복제 불가 — 앨리스가 앨리스를 찍어낼 순 없다
+              if (dist2(e.x, e.y, ally.x, ally.y) > r * r) continue;
+              cast.push(ally);
+            }
+            if (cast.length === 0) break;
+            // 무작위로 골라 복제 (같은 개체가 두 번 뽑히지 않게 뒤에서 당겨 채운다)
+            const pool = [...cast];
+            const n = Math.min(want, pool.length);
+            for (let k = 0; k < n; k++) {
+              const pick = nextInt(g.rng, pool.length);
+              const src = pool[pick]!;
+              pool[pick] = pool[pool.length - 1]!;
+              pool.pop();
+              const copy = spawnBattleEntity(g, src.defId, e.team, e.owner,
+                clamp(src.x + (k - 2) * 300, 0, g.map.length),
+                clampLaneY(g.map, src.x, src.y + ((k % 2 === 0) ? 400 : -400)),
+                src.defOv);
+              copy.hp = def(copy).maxHp;   // 온전한 몸, 쿨다운 없는 새 유닛
+            }
+            spendSkill(e, i, a);
+            break;
+          }
+          case 'curtainCall': { // 「커튼콜」 적을 무대 중앙으로 빨아들였다 통째로 치운다
+            if (!inCombat) break;
+            const r = a.splash ?? tiles(5);
+            const range = a.castRange ?? tiles(7);
+            const aim = nearestFoeWithin(g, e, d, range, () => true);
+            if (!aim) break;
+            // 흡입 구간: 커튼이 열려 있는 동안 중앙으로 끌려온다 (사후의 경계 재활용)
+            const suck = a.durTicks ?? 120; // 기본 6초
+            g.zones.push({
+              id: g.nextZoneId++, team: e.team, kind: 'grave',
+              x: aim.x, y: aim.y, radius: r, untilTick: g.tick + suck, dpsOverride: 0, followId: -1,
+            });
+            // 커튼이 닫히는 순간(6초 뒤) 무대 위의 적을 6초간 치운다
+            g.curtainCalls.push({
+              x: aim.x, y: aim.y, r, closeTick: g.tick + suck,
+              hideTicks: a.executeBonus ?? 120, team: e.team,
+            });
+            spendSkill(e, i, a);
             break;
           }
           case 'sleep': // 「수면」 현재 목표를 재운다 (이미 자는 대상엔 낭비하지 않는다)
@@ -1981,7 +2740,7 @@ export function stepCombat(g: Game): void {
               && !isStatusImmune(t!)) {
               t!.sleepUntil = g.tick + (a.durTicks ?? 0);
               t!.sleepHits = 0;
-              e.skillCds[i] = a.cooldown;
+              spendSkill(e, i, a);
             }
             break;
           case 'taunt': // 주변 적이 나를 우선 공격하게 만든다 (나를 때릴 수 있는 적만)
@@ -2000,7 +2759,7 @@ export function stepCombat(g: Game): void {
                 foe.targetId = e.id;
                 hooked++;
               }
-              if (hooked > 0) e.skillCds[i] = a.cooldown;
+              if (hooked > 0) spendSkill(e, i, a);
             }
             break;
         }
@@ -2027,7 +2786,8 @@ export function stepCombat(g: Game): void {
       let fired = false;
       for (let i = 0; i < acts.length; i++) {
         const a = acts[i]!;
-        if (a.kind !== 'strike' || e.skillCds[i]! > 0) continue;
+        if (a.kind !== 'strike' || !skillReady(e, i, a)) continue;
+        if (a.soloOnly && g.campaignMode) continue; // 캠페인에선 봉인된 스킬
         if (a.requiresUpgrade && (e.owner < 0 || !g.players[e.owner]?.upgrades[a.requiresUpgrade])) continue;
         if (a.executeBelowPct !== undefined && target.hp * 100 > td.maxHp * a.executeBelowPct) continue;
         // 스킬 자체 대상 제한 (와이번 내리꽂기 = 지상 전용) — 대상이 안 맞으면 쿨을 태우지 않는다
@@ -2046,15 +2806,60 @@ export function stepCombat(g: Game): void {
         } else {
           applyStrike(g, e, a, target);
         }
-        e.skillCds[i] = a.cooldown;
-        e.cooldown = d.weapon.cooldown;
+        spendSkill(e, i, a);
+        e.cooldown = swingCooldown(e, d);
         fired = true;
         break;
       }
       if (fired) continue;
     }
 
-    if (d.weapon.airMultiTargets && isFlying(g, target)) {
+    if (d.weapon.crossTargets) {
+      /*
+       * 교차 사격 (엘로윈 「양손 시전」) — 사거리 안의 지상 하나와 공중 하나를
+       * 같은 스윙에 각각 정타로 맞힌다. 한쪽뿐이면 그쪽만 맞고, 그래도
+       * 「지상 하나 + 공중 하나」라 물량에 휩쓸리지는 않는다.
+       * 가장 가까운 쪽을 고르되 동률은 배열 앞쪽이 이긴다 (strict <, 결정론).
+       */
+      let gr: Entity | undefined;
+      let grD2 = 0;
+      let ai: Entity | undefined;
+      let aiD2 = 0;
+      const maxReach = maxRangeOf(g, e, d) + d.radius;
+      for (const v of g.entities) {
+        if (!v.alive || v.team !== target.team || v.id === e.id) continue;
+        if (!canHit(g, d, v) || isShielded(g, v)) continue;
+        const reach = maxReach + def(v).radius;
+        const d2v = dist2(e.x, e.y, v.x, v.y);
+        if (d2v > reach * reach) continue;
+        if (isFlying(g, v)) {
+          if (ai === undefined || d2v < aiD2) { ai = v; aiD2 = d2v; }
+        } else if (gr === undefined || d2v < grD2) { gr = v; grD2 = d2v; }
+      }
+      if (gr) applyDamage(g, e, d, gr);
+      if (ai) applyDamage(g, e, d, ai);
+    } else if (d.weapon.multiTargets) {
+      /*
+       * 다중 사격 — 사거리 안의 적을 가까운 순으로 N기까지 각각 정타로 맞힌다.
+       * 공중·지상을 가리지 않는다 (airMultiTargets 는 공중 목표일 때만).
+       * 정렬은 삽입 정렬 + strict < 로, 동률이면 배열 앞쪽이 이긴다 (결정론).
+       */
+      const n = d.weapon.multiTargets;
+      const maxReach = maxRangeOf(g, e, d) + d.radius;
+      const picks: { v: Entity; d2: number }[] = [];
+      for (const v of g.entities) {
+        if (!v.alive || v.team !== target.team || v.id === e.id) continue;
+        if (!canHit(g, d, v) || isShielded(g, v)) continue;
+        const reach = maxReach + def(v).radius;
+        const d2v = dist2(e.x, e.y, v.x, v.y);
+        if (d2v > reach * reach) continue;
+        let at = picks.length;
+        while (at > 0 && d2v < picks[at - 1]!.d2) at--;
+        picks.splice(at, 0, { v, d2: d2v });
+        if (picks.length > n) picks.pop();
+      }
+      for (const p of picks) applyDamage(g, e, d, p.v);
+    } else if (d.weapon.airMultiTargets && isFlying(g, target)) {
       // 다중 사격 (숲의 명궁): 공중 목표면 사거리 안 공중 적을 가까운 순 N기까지
       // 각각 정타로 맞힌다. 지상 목표는 아래의 일반 분기(단일)로 떨어진다.
       const n = d.weapon.airMultiTargets;
@@ -2107,11 +2912,11 @@ export function stepCombat(g: Game): void {
         g.zones.push({
           id: g.nextZoneId++, team: e.team, kind: z.kind,
           x: target.x, y: target.y, radius: z.radius, untilTick: g.tick + z.ticks,
-          followId: -1,
+          dpsOverride: 0, followId: -1,
         });
       }
     }
-    let cd = d.weapon.cooldown;
+    let cd = swingCooldown(e, d);
     // 공속 버프 (태엽 감기 + 숲의 가호 + 군세강화)
     const atkPct = atkSpeedPctOf(g, e, d);
     if (atkPct > 0) cd = Math.max(1, idiv(cd * 100, 100 + atkPct));
@@ -2142,13 +2947,60 @@ export function stepCombat(g: Game): void {
       }
       if (ally.healsInWindow >= 3) continue;
       ally.healsInWindow++;
-      ally.hp += d.heal.amount;
+      // 「생명의 그릇」: 이 대상이 받는 회복량을 늘린다 (영웅 강화)
+      const takenPct = def(ally).healTakenPct ?? 0;
+      ally.hp += takenPct > 0
+        ? d.heal.amount + idiv(d.heal.amount * takenPct, 100)
+        : d.heal.amount;
       const max = def(ally).maxHp;
       if (ally.hp > max) ally.hp = max;
       healedAny = true;
     }
     // 전원 상한에 걸렸으면 쿨 소모 없이 다음 틱에 재판정
     if (healedAny) e.healCooldown = d.heal.cooldown;
+  }
+
+  // 「커튼콜」 닫힘: 무대 위에 있던 적들이 그 상태 그대로 잠시 사라진다.
+  // 죽는 게 아니라 치워지는 것이라, 체력·버프·쿨다운을 그대로 안고 다시 나온다.
+  if (g.curtainCalls.length > 0) {
+    const pending: typeof g.curtainCalls = [];
+    for (const cc of g.curtainCalls) {
+      if (g.tick < cc.closeTick) { pending.push(cc); continue; }
+      for (const v of g.entities) {
+        if (!v.alive || v.team === cc.team) continue;
+        if (def(v).tier === 'structure') continue;   // 건물은 무대에 못 올린다
+        // 수호자·보스는 상태이상 전면 면역 — 무대에도 오르지 않는다.
+        // (흡입 단계도 이미 면역이라, 여기만 통하면 규칙이 어긋난다)
+        if (blocksStatus(g, v)) continue;
+        if (dist2(cc.x, cc.y, v.x, v.y) > cc.r * cc.r) continue;
+        v.vanishUntil = g.tick + cc.hideTicks;
+        v.targetId = -1;
+        // 사라진 것을 겨누던 참조를 끊는다 (허공을 때리지 않게)
+        for (const o of g.entities) {
+          if (o.targetId === v.id) o.targetId = -1;
+          if (o.lastAttackerId === v.id) o.lastAttackerId = -1;
+        }
+      }
+    }
+    g.curtainCalls = pending;
+  }
+
+  // 「뼈 무덤」 부화: 20초를 버틴 무덤에서 본드래곤이 온전한 몸으로 일어선다.
+  // 무덤이 먼저 부서지면 대기열에서 조용히 빠진다.
+  if (g.boneGraves.length > 0) {
+    const still: typeof g.boneGraves = [];
+    for (const bg of g.boneGraves) {
+      const grave = g.entities.find((q) => q.id === bg.graveId);
+      if (!grave || !grave.alive) continue; // 부서졌다 — 부활 없음
+      if (g.tick < bg.hatchTick) { still.push(bg); continue; }
+      grave.alive = false;
+      grave.hp = 0;
+      const born = spawnBattleEntity(g, 'p_bone_dragon', bg.team, bg.owner, grave.x, grave.y);
+      born.hp = def(born).maxHp;                    // 온전한 몸으로
+      born.graveReadyTick = g.tick + BONE_GRAVE_COOLDOWN; // 60초는 다시 무덤이 못 된다
+      g.events.push({ tick: g.tick, kind: 'boneRevive', x: born.x, y: born.y });
+    }
+    g.boneGraves = still;
   }
 
   // 부활 대기 처리: 시간이 되면 되살아난다
@@ -2174,6 +3026,43 @@ export function stepCombat(g: Game): void {
         e.invulnUntil = g.tick + rb.delayTicks; // 쓰러진 동안 무적
         e.stunnedUntil = g.tick + rb.delayTicks; // + 행동불능
         continue;
+      }
+    }
+    // 본드래곤 「뼈 무덤」: 쓰러진 자리에 무덤을 남긴다.
+    // 되살아난 직후 60초 동안은 그냥 죽는다 (graveReadyTick).
+    if (e.defId === 'p_bone_dragon' && g.tick >= e.graveReadyTick) {
+      const grave = spawnBattleEntity(g, 'c_bone_grave', e.team, e.owner, e.x, e.y);
+      g.boneGraves.push({
+        graveId: grave.id,
+        hatchTick: g.tick + BONE_GRAVE_TICKS,
+        team: e.team,
+        owner: e.owner,
+      });
+    }
+    /*
+     * 「마나 순환」(엘로윈 강화): 이 죽음을 반경 안에서 지켜본 적 진영의
+     * 시전자가 스택을 쌓는다. 가득 차면 스택이 0으로 돌아가며 액티브 쿨이
+     * 전부 씻긴다 (차지 스킬은 차지까지 가득 찬다).
+     * 「멈춘 시계」처럼 평생 한 번뿐인 스킬은 건드리지 않는다.
+     */
+    for (const w of g.entities) {
+      if (!w.alive || w.team === e.team) continue;
+      const wd = def(w);
+      const sr = wd.skillReset;
+      if (!sr) continue;
+      if (dist2(w.x, w.y, e.x, e.y) > sr.radius * sr.radius) continue;
+      w.resetStacks++;
+      if (w.resetStacks < sr.need) continue;
+      w.resetStacks = 0;
+      const wa = wd.actives ?? [];
+      for (let i = 0; i < wa.length; i++) {
+        const wact = wa[i]!;
+        if (wact.kind === 'timelock') continue; // 평생 한 번뿐인 스킬은 예외
+        w.skillCds[i] = 0;
+        if (wact.charges) {
+          w.skillCharges[i] = wact.charges;
+          w.skillRegen[i] = 0;
+        }
       }
     }
     e.alive = false;

@@ -6,7 +6,14 @@
  * + 대화 오버레이. 전투 자체는 기존 솔로(봇전) 엔진을 그대로 쓴다 —
  * 캠페인 레이어는 상점 필터·승리 조건·시드만 오버라이드한다.
  */
-import type { BotDifficulty, RaceId, TeamId } from '@desertlike/sim';
+import { FP } from '@desertlike/sim';
+import type { BotDifficulty, EntityDef, HeroPerks, RaceId, TeamId } from '@desertlike/sim';
+
+/** 영웅 강화가 정의를 갈아 끼울 때만 쓰는 얕은 가변 사본 타입. */
+type Mutable<T> = { -readonly [K in keyof T]: T[K] };
+/** 타일·초 — 영웅 강화 수치 계산용 (FP 는 타일 하나). */
+const TILE = FP;
+const SEC = 20;
 
 export interface DialogueLine {
   readonly who: string;   // 화자 이름 (PORTRAITS 키). '' = 내레이션
@@ -58,8 +65,42 @@ export interface CampaignStage {
     readonly cartDefId: string;
     /** 전 거점 확보 시 적 넥서스 앞에 등장하는 네임드 (연출 이벤트). */
     readonly onCompleteSpawn?: { readonly defId: string; readonly label: string };
+    /**
+     * 최종 보스와 함께 나타나는 호위 병력.
+     *
+     * 보스 하나만 세워 두면 쌓아 온 부대에 순식간에 녹는다 — 마지막 마디는
+     * 「보스전」이 아니라 「보스 군단전」이어야 한다.
+     */
+    readonly onCompleteRetinue?: readonly { readonly defId: string; readonly count: number }[];
     /** 전 거점 확보 시 전투를 멈추고 띄우는 컷신 대화. */
     readonly onCompleteDialogue?: readonly DialogueLine[];
+    /**
+     * 거점마다 처음부터 눌러앉아 있는 적 주둔 부대 (거점 순서대로).
+     * 진군하지 않고 그 자리를 지킨다 — 밀어내야 점령 게이지가 오른다.
+     * 생략하거나 빈 배열이면 그 거점은 무주공산.
+     */
+    readonly garrisons?: readonly (readonly { readonly defId: string; readonly count: number }[])[];
+    /** 주둔 부대가 지키는 반경 (타일). 이 밖으로는 적을 쫓지 않는다. */
+    readonly garrisonRadiusTiles?: number;
+    /**
+     * 거점을 확보할 때마다 도착하는 아군 지원군 (거점 순서대로).
+     *
+     * 이게 없으면 「버티며 인컴·테크만 올리는」 쪽이 언제나 이득이라,
+     * 초반 압박만으로 균형을 잡으려다 「약하면 그리디, 세면 아무것도 못 함」의
+     * 딜레마에 빠진다. 밀어붙이는 것 자체에 값을 붙여 정면으로 경쟁시킨다.
+     * 확보한 거점 자리에 바로 나타나므로 다음 거점 공략에 곧장 합류한다.
+     */
+    readonly captureReinforcements?: readonly (readonly { readonly defId: string; readonly count: number }[])[];
+    /**
+     * 확보한 거점이 「매 턴」 내보내는 부대 (거점 순서대로).
+     *
+     * captureReinforcements 는 확보하는 순간 한 번뿐이라, 뒤 거점을 밀 때쯤이면
+     * 그 보상이 이미 다 녹아 있었다. 확보한 거점이 계속 값을 하도록 매 턴
+     * 소규모 부대를 보낸다 — 확보 보상보다 훨씬 작게 잡는다 (화면이 터진다).
+     */
+    readonly pointWaveSquads?: readonly (readonly { readonly defId: string; readonly count: number }[])[];
+    /** 거점 하나당 사람 플레이어가 얻는 인컴 가산 (정산 1회당 골드). */
+    readonly pointIncomeAdd?: number;
   };
   /** boss 미션: 이 유닛을 처치하면 승리. 게임 시작 시 적 진영에 젠 된다. */
   readonly bossDefId?: string;
@@ -75,6 +116,10 @@ export interface CampaignStage {
   /** 인컴·테크 상한 (전원 공통 — 봇 포함). 생략 시 기본. */
   readonly incomeCap?: number;
   readonly techCap?: number;
+  /** 이 턴부터 적 봇이 1티어를 사지 않고, 그 시점의 1티어는 전액 환불된다. */
+  readonly enemyBasicCutoffWave?: number;
+  /** 편성 합치기 — 같은 유닛이 per 기 모이면 to 한 기로 접힌다 (봇 전용). */
+  readonly unitMerges?: readonly { readonly from: string; readonly per: number; readonly to: string }[];
   /** 적 봇이 압도적으로 선호하는 유닛 (스테이지 성향 — 예: 공중 스테이지). */
   readonly enemyPreferredUnits?: readonly string[];
   /** 적 유닛별 보유 상한 (팀 합산) — 최상급 유닛의 조기 물량화 방지. */
@@ -92,6 +137,13 @@ export interface CampaignStage {
    * 여기 적힌 유닛만 봇 생산·출현 이벤트·growth 에 다시 등장한다.
    */
   readonly unlockEnemyUnits?: readonly string[];
+  /**
+   * 두 갈래 맵의 출정 레인 — 빈 땅을 누르면 그쪽으로 부대를 보낸다.
+   * yTile = 중앙선 기준 오프셋(타일).
+   */
+  readonly deployLanes?: readonly { readonly yTile: number; readonly label: string }[];
+  /** 적 거점 설정 (다거점 스테이지). */
+  readonly enemyCamps?: readonly import('@desertlike/sim').EnemyCamp[];
   /** 적(팀1) 봇 인컴 배율 % (난이도 인컴 보너스 대체). */
   readonly enemyIncomePct?: number;
   /** 적 유닛별 최소 등장 웨이브 (이 턴 전엔 구매 불가). */
@@ -136,6 +188,8 @@ export interface CampaignStage {
     readonly label: string;      // 경고 배너에 뜨는 이름
     readonly atSec?: number;
     readonly everySec?: number;
+    /** 이 시각(초) 이후로는 더 나오지 않는다 — 후반에 다른 보스로 교체할 때. */
+    readonly untilSec?: number;
     readonly count?: number;     // 기본 1
     /**
      * 이 규칙이 스폰할 총 마릿수 상한 (생략 = 무제한).
@@ -150,11 +204,34 @@ export interface CampaignStage {
     readonly neutral?: boolean;
     /** 아군 스폰: 팀 0으로 등장 (엘로윈 참전 등). 생략 시 적(팀1). */
     readonly friendly?: boolean;
+    /** 함께 등장하는 호위 부대 (영웅이 부대를 이끌고 온다). 같은 팀으로 나온다. */
+    readonly withUnits?: readonly { readonly defId: string; readonly count: number }[];
+    /**
+     * 「죽고 나서 이만큼 뒤에 다시 온다」 (초). concurrentCap 과 함께 쓴다.
+     *
+     * everySec 만 쓰면 타이머가 살아 있는 동안에도 계속 돌아서, 쓰러진 순간이
+     * 마침 다음 차례면 곧바로 다시 나타난다 (실제로 카엘이 즉시 부활했다).
+     * 이 값이 있으면 상한에 막힐 때마다 시계를 지금부터 다시 잡는다.
+     */
+    readonly respawnAfterDeathSec?: number;
+    /** 이 등장과 함께 상점에 풀리는 유닛 (첫 등장 때 한 번). */
+    readonly unlockUnits?: readonly string[];
+    /** 첫 등장 때 한 번 띄우는 대화 (포트레이트 컷신). */
+    readonly onFirstDialogue?: readonly DialogueLine[];
     /**
      * 필드에 동시에 살아 있을 수 있는 최대 수. 이미 그만큼 있으면 이번 차례는 거른다.
      * "죽으면 다시 채워지는 상주 위협"을 만든다 (검은새).
      */
     readonly concurrentCap?: number;
+    /** 이 시각(초) 전에는 나오지 않는다. everySec 과 함께 쓰면 첫 등장이 이 시각. */
+    readonly fromSec?: number;
+    /**
+     * 이 거점(slot)이 살아 있는 동안만 나온다. 주둔지가 부서지면 증원도 끊긴다 —
+     * 「거점을 부수면 그쪽 압박이 사라진다」가 눈에 보이게 하는 장치.
+     */
+    readonly whileCampSlot?: number;
+    /** 이 거점(slot)이 부서지는 순간 딱 한 번 나온다 (거점 보스). */
+    readonly onCampDown?: number;
   }[];
   /**
    * 둥지 수호탑 (11스테이지): 게임 시작 시 아군 진영에 고정 배치되는 무적 수호수.
@@ -164,6 +241,11 @@ export interface CampaignStage {
     readonly defId: string;
     readonly xTile: number;
     readonly yOffTile: number;
+    /**
+     * 호위전 전용 — 이 번째 거점을 확보해야 세워진다 (1부터).
+     * 생략하면 게임 시작과 함께 선다. 「거점을 되찾아야 망루가 살아난다」 연출.
+     */
+    readonly afterCamp?: number;
   }[];
   /** 팀 0 진군 상한 (타일) — 디펜스전에서 부대가 수비선을 지킨다. */
   readonly holdLineXTile?: number;
@@ -205,8 +287,10 @@ export interface CampaignStage {
 /** 화자 → 포트레이트 이미지. 없는 화자는 이름만 표시(내레이션 포함). */
 export const PORTRAITS: Record<string, string> = {
   '카엘': '/assets/portraits/kael.png',
+  '에버그린': '/assets/portraits/evergreen.png',
   '엘로윈': '/assets/portraits/elowyn.png',
   '티아': '/assets/portraits/tia.png',
+  '아린': '/assets/portraits/arin.png',
   '브리아': '/assets/portraits/bria.png',
   '실피': '/assets/portraits/silphy.png',
   '앨리스': '/assets/portraits/alice.png',
@@ -227,11 +311,17 @@ export function speakerSide(who: string): 'left' | 'right' {
 }
 
 // 해금 누적 단계 (스테이지 데이터에서 참조)
+//
+// 「N 스테이지를 클리어하면 열리고 N+1 부터 뽑을 수 있다」가 규칙이다.
+// 그래서 UN 은 「N 스테이지에서 살 수 있는 목록」이고, N-1 클리어 보상이 들어 있다.
 const U1 = ['s_gouto', 's_elf_archer'];
-const U2 = [...U1, 's_vine_hunter'];
+// 2 스테이지는 새 유닛 없이 1 스테이지 로스터로 싸운다 — 피난 행렬 호위라
+// 새 병종을 배우는 판이 아니고, 화자도 궁수(아린) 본인이다.
+const U2 = U1;
 const U3 = [...U2, 's_marmot'];
 const U4 = [...U3, 's_druid', 's_mushroom_bomber'];
-const U5 = [...U4, 's_owl', 's_butterfly'];
+// 덩굴 사냥꾼은 4(독이 스민 숲) 클리어 보상 — 브리아의 정원을 지나며 배운 잠행이다
+const U5 = [...U4, 's_vine_hunter', 's_owl', 's_butterfly'];
 const U8 = [...U5, 's_thorn_witch'];
 const U11 = [...U8, 's_treekeeper', 's_wyvern', 's_unicorn', 's_fairy'];
 const U13 = [...U11, 's_marksman'];
@@ -276,14 +366,14 @@ export const SYLVARIN_CAMPAIGN: readonly CampaignStage[] = [
       { who: '', img: '/assets/cutscenes/cs11_hollow.png',
         text: '기사에게는 목이 없었다. 타오르는 이음매만이 어둠 속에서 이쪽을 「보고」 있었다.' },
       { who: '', text: '그 밤, 숲은 이름 하나를 공포로 새겼다 — 슬리피 할로우.\n데미리치 「발타르」의 망자 군단이 국경을 넘은 것이다.' },
-      { who: '카엘', img: '', text: '봉화가… 셋. 셋이면 전면 침공이잖아.' },
+      { who: '카엘', img: '', text: '보, 봉화가… 셋입니다. 셋이면 전면 침공이잖아요.' },
       { who: '엘로윈', text: '놈들이 노리는 건 마을이 아니다 — 세계수의 심장이다. 정면으로는 못 이겨. 우리는 시간을 벌며 물러나야 한다.' },
       { who: '엘로윈', text: '300년 만이군. 카엘, 궁수들을 깨워라. 오늘부터 너는 경비병이 아니라 지휘관이다.' },
       { who: '엘로윈', text: '유닛을 사면 부대에 영구 편성된다. 네 차례가 올 때마다 부대 전체가 출격하지. 오늘 임무는 정찰이다 — 적의 수호탑만 무너뜨려라.' },
       { who: '엘로윈', text: '탑이 무너지면 그 자리에 「문지기」가 깨어난다. 그놈과는 싸우지 마라. 아직은.' },
     ],
     outro: [
-      { who: '카엘', text: '탑이 무너지자… 목 없는 기사가 일어났다. 마을을 태운 게 저놈이야.' },
+      { who: '카엘', text: '탑이 무너지자… 목 없는 기사가 일어났습니다. 마을을 태운 게 저놈이에요.' },
       { who: '엘로윈', text: '(침묵) …철수한다. 잘 싸웠다, 카엘. 이건 척후일 뿐 — 재 냄새가 바람을 타고 온다.' },
     ],
   },
@@ -293,13 +383,14 @@ export const SYLVARIN_CAMPAIGN: readonly CampaignStage[] = [
     mission: 'survive', surviveSec: 900, seed: seedOf(2), noTowers: true, incomeCap: 3, techCap: 2,
     spawns: [{ defId: 'c_ash_revenant', label: '재의 원귀', everySec: 150 }],
     briefing: [
-      { who: '티아', text: '남쪽 마을이 전부 비었어요. 걷지 못하는 노목(老木)들은… 두고 왔대요.' },
-      { who: '카엘', text: '전부 데려간다. 숲은 누구도 버리지 않아.' },
+      { who: '아린', text: '척후 다녀왔습니다. 남쪽 마을이 전부 비었어요 — 걷지 못하는 노목(老木)들은… 두고 왔대요.' },
+      { who: '카엘', text: '전부 데려가겠습니다. 숲은… 누구도 버리지 않으니까요.' },
+      { who: '아린', text: '그럼 활 든 사람이 저희뿐이네요. 행렬 양옆은 제가 맡을게요.' },
     ],
     outro: [
-      { who: '티아', text: '고마워요. …근데 카엘, 저 재는 나무를 태운 재가 아니에요. 뼈를 간 가루예요.' },
-      { who: '티아', text: '아, 그리고 이거 — 피난민들이 세계수 수액을 나눠줬어요. 캠페인 화면의 「🌿 세계수의 축복」에서 힘을 나눠 받을 수 있어요.' },
-      { who: '티아', text: '스테이지를 깰 때마다 축복이 깊어지고, 언제든 공짜로 다시 나눌 수 있대요. 적이 강해질수록 이 힘이 필요할 거예요.' },
+      { who: '아린', text: '한 명도 안 잃었어요. …근데 대장님, 저 재는 나무를 태운 재가 아니에요. 뼈를 간 가루예요.' },
+      { who: '아린', text: '아, 그리고 이거 — 피난민들이 세계수 수액을 나눠줬어요. 캠페인 화면의 「🌿 세계수의 축복」에서 힘을 나눠 받을 수 있어요.' },
+      { who: '아린', text: '스테이지를 깰 때마다 축복이 깊어지고, 언제든 공짜로 다시 나눌 수 있대요. 적이 강해질수록 이 힘이 필요할 거예요.' },
     ],
   },
   {
@@ -312,7 +403,7 @@ export const SYLVARIN_CAMPAIGN: readonly CampaignStage[] = [
     ],
     briefing: [
       { who: '마멋 족장', text: '엘프의 전쟁에 왜 우리가 피를 흘리나!' },
-      { who: '카엘', text: '저들이 태우는 건 엘프의 숲이 아니라 모두의 숲이다. 굴도, 겨울잠도, 새끼들도.' },
+      { who: '카엘', text: '저들이 태우는 건 엘프의 숲이 아니라 모두의 숲입니다. 굴도, 겨울잠도, 새끼들도요.' },
       { who: '마멋 족장', text: '…버텨 봐라. 마멋은 강한 자의 말만 듣는다.' },
     ],
     outro: [
@@ -331,6 +422,7 @@ export const SYLVARIN_CAMPAIGN: readonly CampaignStage[] = [
     ],
     outro: [
       { who: '티아', text: '저 마녀, 말은 저래도… 독에 당한 애들 해독초를 두고 갔어요.' },
+      { who: '아린', text: '브리아의 정원을 지나면서 애들이 덩굴 타는 법을 익혔어요. 다음 판부터 덩굴 사냥꾼을 붙일 수 있습니다. (덩굴 사냥꾼 해금)' },
     ],
   },
   {
@@ -342,7 +434,7 @@ export const SYLVARIN_CAMPAIGN: readonly CampaignStage[] = [
     spawns: [{ defId: 'c_dread_gargoyle', label: '공포의 가고일', everySec: 120 }],
     briefing: [
       { who: '실피', text: '…하늘.' },
-      { who: '카엘', text: '하늘이 뭐? …저게 다 날아온다고?!' },
+      { who: '카엘', text: '하, 하늘이요? …저게 다 날아온다고요?!' },
     ],
     outro: [
       { who: '실피', text: '떨어지는 건 전부 맞은 거야. (실피 합류)' },
@@ -363,7 +455,7 @@ export const SYLVARIN_CAMPAIGN: readonly CampaignStage[] = [
       { who: '엘로윈', text: '카엘. 이길 수 없는 싸움이다. 버티는 것이 이기는 것이다. 모두를 물려라.' },
     ],
     outro: [
-      { who: '카엘', text: '…국경이 무너졌어. 내가 지휘했는데.' },
+      { who: '카엘', text: '…국경이 무너졌습니다. 제가 지휘했는데.' },
       { who: '엘로윈', text: '네가 지휘해서 모두 살아서 무너진 거다. 그 차이를 평생 기억해라.' },
       { who: '', text: '— 1막 끝. 실바린은 국경을 잃고 숲 심부로 퇴각한다. —' },
     ],
@@ -380,12 +472,12 @@ export const SYLVARIN_CAMPAIGN: readonly CampaignStage[] = [
         text: '숲은 불탔다. 재의 함락에서 대피 시간을 번 피난 행렬은 살아남은 이들을 이끌고 남쪽으로 달아났다.\n등 뒤로 재가 내렸다. 아무도 뒤를 돌아보지 않았다.' },
       { who: '', img: '/assets/cutscenes/cs21_gate.png',
         text: '발타르의 추격을 피해 지도에도 없는 국경을 넘은 순간 — 태엽 감기는 소리가 들려왔다.\n부서진 장난감이 나뒹구는 골목, 인형들의 왕국 마리오네타.' },
-      { who: '카엘', text: '남쪽 산맥을 넘어 발타르의 성을 우회한다. 이 나라를 지나가야만 해.' },
+      { who: '카엘', text: '남쪽 산맥을 넘어 발타르의 성을 우회합니다. 이 나라를 지나가야만 해요.' },
       { who: '티아', img: '/assets/cutscenes/cs21_dolls.png', text: '여긴… 장난감 마을? 근데 왜 전부 이쪽을 보고 있죠?' },
       { who: '광대 인형', text: '침・입・자. 여왕님의 골목. 통과 금지. 껴안아 주기. 터질 때까지.' },
     ],
     outro: [
-      { who: '카엘', text: '인형이 왜 국경을 지키지? 인형의 왕국에 대체 무슨 일이…' },
+      { who: '카엘', text: '인형이 왜 국경을 지키죠? 인형의 왕국에 대체 무슨 일이…' },
     ],
   },
   {
@@ -421,7 +513,7 @@ export const SYLVARIN_CAMPAIGN: readonly CampaignStage[] = [
     spawns: [{ defId: 'c_mad_ballerina', label: '미친 발레리나', everySec: 120 }],
     briefing: [
       { who: '브리아', text: '통행료 받으러 왔어. 어머, 전멸 직전이네? 할인해 줄게.' },
-      { who: '카엘', text: '…왜 도와주는 건데.' },
+      { who: '카엘', text: '…왜 도와주는 겁니까.' },
       { who: '브리아', text: '내 정원 태운 게 쟤네 윗선이거든. 가시엔 가시. (가시 마녀 합류!)' },
     ],
     outro: [
@@ -502,10 +594,10 @@ export const SYLVARIN_CAMPAIGN: readonly CampaignStage[] = [
       { who: '마몬', text: '전쟁은 최고의 장사지! 실바린엔 방어구를, 발타르에겐 뼈를 팔았다네. 아 물론 너희들의 뼈를.' },
       { who: '브리아', text: '어머, 동종업계. 근데 나는 선은 안 넘어.' },
       { who: '마몬', text: '계곡 한복판에 내 상점이 있네. 먼저 깃발을 꽂는 쪽에게 팔지 — 기사, 리치, 타나토스, 전부 특별가일세!' },
-      { who: '카엘', text: '중앙을 장악한 쪽이 용병을 산다… 전선 싸움이 곧 돈 싸움이군. (🚩 상점 주변을 점령하면 💰용병 구매 가능!)' },
+      { who: '카엘', text: '중앙을 장악한 쪽이 용병을 산다… 전선 싸움이 곧 돈 싸움이군요. (🚩 상점 주변을 점령하면 💰용병 구매 가능!)' },
     ],
     outro: [
-      { who: '카엘', text: '용병 장부를 손에 넣었다. …발타르가 사들인 게 뼈만이 아니야. 「세계수 심장의 열쇠」?' },
+      { who: '카엘', text: '용병 장부를 손에 넣었습니다. …발타르가 사들인 게 뼈만이 아니에요. 「세계수 심장의 열쇠」?' },
     ],
   },
   {
@@ -558,6 +650,8 @@ export const SYLVARIN_CAMPAIGN: readonly CampaignStage[] = [
     // 수비 모드: 부대가 둥지 주변에 대기하다 침입 방향으로 자동 요격한다
     defendNexus: true,
     // 둥지 수호탑: 세 갈래 입구에 하나씩 (평타만 — 타워)
+    // ⚠ 여기는 nest 맵(길이 96타일·halfW 5·둥지 x48)이다. 13/14 의 망루 좌표를
+    //   그대로 붙이면 전부 길 밖·맵 밖으로 나간다 — 한 번 그렇게 섞인 적이 있다.
     nestGuards: [
       { defId: 'c_nest_wyvern', xTile: 48, yOffTile: -7 },  // 12시 입구
       { defId: 'c_nest_unicorn', xTile: 43, yOffTile: 1 },  // 8시 입구
@@ -659,7 +753,7 @@ export const SYLVARIN_CAMPAIGN: readonly CampaignStage[] = [
     briefing: [
       { who: '마몬', text: '배신? 아니지, 더 좋은 조건이 왔을 뿐! 발타르 님이 너희 숲을 통째로 주신다더군!' },
       { who: '', text: '계곡 끝에서 거대한 그림자가 일어선다. 발타르가 아끼는 선봉장 — 사령장군 카르가스.' },
-      { who: '카엘', text: '마몬이 저걸 데려온 건가… 넥서스가 문제가 아니야. 저 장군을 쓰러뜨려야 길이 열린다.' },
+      { who: '카엘', text: '마몬이 저걸 데려온 겁니까… 넥서스가 문제가 아닙니다. 저 장군을 쓰러뜨려야 길이 열려요.' },
       { who: '앨리스', text: '내 국경에서 장사하면서 자릿세를 안 냈네? …전부 부숴. (앨리스의 군단이 함께 싸운다!)' },
     ],
     outro: [
@@ -672,34 +766,89 @@ export const SYLVARIN_CAMPAIGN: readonly CampaignStage[] = [
   // ═══ 3막 「자정의 세계수」 ═══
   {
     id: 13, act: 3, title: '세계수 뿌리 탈환', goal: '🛞 생명수 마차를 호위하라 — 보급 거점 5개를 차례로 점령',
-    allowedUnits: U13, enemies: ['pandemonium', 'pandemonium'], allies: ['sylvarin'], botDifficulty: 'normal',
-    allyNote: '🤝 숲의 잔존 병력이 합류했다!',
-    mission: 'destroy', seed: seedOf(13), mapId: 'ashroad',
+    // 숲의 명궁은 처음엔 못 산다 — 14턴에 에버그린이 데려오면서 풀린다
+    // 호위전은 1인 팀이다.
+    // 아군 봇을 두면 팀 인원(2명)으로 출정 로테이션이 돌아 내 부대가 한 턴 걸러
+    // 나갔다 — 마차 곁을 계속 지켜야 하는 판에서 그 공백이 그대로 상실이 됐다.
+    // 병력 보강은 엘로윈이 데려오는 부대와 출현 이벤트가 맡는다.
+    allowedUnits: U11, enemies: ['pandemonium', 'pandemonium'], allies: [], botDifficulty: 'normal',
+    /*
+     * 편성 합치기 — 물량이 쌓이면 알아서 상위 유닛으로 접힌다.
+     * 후반에 잡졸이 무한히 늘어 화면이 뒤덮이는 것을 막으면서 전투력은 올린다.
+     * (목없는 기사 12기 → 마몬 1 + 기사 2)
+     */
+    unitMerges: [
+      { from: 'p_headless_knight', per: 10, to: 'p_mammon' },
+      { from: 'p_banshee', per: 10, to: 'p_demilich' },
+    ],
+    mission: 'destroy', seed: seedOf(13), enemyBasicCutoffWave: 11, mapId: 'ashroad',
     enemySkin: 'bone',
     noTowers: true, // 수호탑 대신 — 전 거점 확보 시 슬리피 할로우가 직접 나타난다
     // 앨리스의 지원 병력: 사람 플레이어만 살 수 있다 (race: null — 봇 구매 풀 제외)
     mercUnits: ['c_alice_soldier', 'c_alice_teddy'],
-    // 물량 상한 — 마몬·데미리치가 무한히 쌓여 후반이 벽이 되는 것 방지
-    enemyUnitCaps: { p_mammon: 30, p_demilich: 20 },
+    /*
+     * 물량 상한 (팀 합산). 28턴에 통째로 풀린다.
+     *  마몬 — 후반에 무한히 쌓여 벽이 되는 것 방지.
+     * 밴시는 상한을 두지 않는다 — 대신 생산 개방을 10턴으로 늦춰서 조절한다.
+     * 데미리치는 growth(확정 편입)로 10기까지 늘고, 28턴에 상한이 통째로 풀린다.
+     */
+    enemyUnitCaps: { p_mammon: 30 },
+    enemyCapsUntilWave: 28, // 28턴부터 적 유닛 상한 전부 해제
+    // 처음부터 4티어를 열어 두고, 실제 등장 시점은 아래 거점 phases 로만 통제한다
+    enemyStartTech: 4,
+    // 전역 잠금(LOCKED_ENEMY_UNITS)을 이 판에서만 푼다 — 안 풀면 아래 구간표와
+    // 확정 편입이 통째로 무시된다 (봇 구매·growth·출현 이벤트 전부 막힌다)
+    unlockEnemyUnits: ['p_demilich', 'p_mammon'],
     // 아군 봇의 세이지 금지 — 마법 화력은 엘로윈(스폰 이벤트) 단 한 명뿐
     allyUnitCaps: { s_sage: 0 },
-    // 숲의 망루(무적 포탑, 현자의 비전 화살): 캠프에 하나씩 + 사잇길에 외딴 망루 —
-    // 옛 국경 감시선이 길을 따라 띄엄띄엄 남아 있는 그림
+    /*
+     * 적 생산 구간표. 팀1 봇 두 기 모두 같은 표를 쓴다.
+     *
+     *  ~9턴  망자병·시체사냥개·해골투척병   (1티어 물량. 6턴에 인컴 0 → 5 해제)
+     * 10턴~  목없는 기사·리치              (1티어 잠금 — 물량에서 질로)
+     * 17턴~  + 밴시                        (하늘이 열린다)
+     * 22턴~  시체골렘·타나토스·밴시        (기사·리치가 빠진다)
+     * 28턴~  타나토스·데미리치·마몬        (상한 해제 + 총력전)
+     */
+    enemyCamps: [0, 1].map((slot) => ({
+      slot,
+      // 인컴 0단계로 출발하고, 6턴 전까지는 스스로 못 올린다 (상한 0).
+      // 시작 자금도 기본값 그대로 — 1000 을 쥐여 줬더니 초반부터 너무 두꺼웠다.
+      startIncome: 0,
+      incomeCap: 0,
+      phases: [
+        { fromWave: 1, units: ['p_deadman', 'p_hound', 'p_bone_thrower'] },
+        { fromWave: 10, units: ['p_headless_knight', 'p_lich'] },
+        { fromWave: 17, units: ['p_headless_knight', 'p_lich', 'p_banshee'] },
+        { fromWave: 22, units: ['p_corpse_golem', 'p_thanatos', 'p_banshee'] },
+        { fromWave: 28, units: ['p_thanatos', 'p_demilich', 'p_mammon'], preferred: ['p_demilich'] },
+      ],
+      // 6턴에 잠금이 풀린다: 시스템이 5단계까지 올려 주고 상한은 8 —
+      // 6→8 은 봇이 스스로 번 돈으로 올린다 (한 번에 8을 주면 감당이 안 됐다)
+      incomeUnlocks: [{ fromWave: 6, cap: 8, setLevel: 5 }],
+      // 턴 보너스 자금은 쓰지 않는다 — 6턴부터 +300 을 주니 인컴 개방과 겹쳐
+      // 물량이 감당이 안 됐다. 압박은 인컴 개방(6턴 상한 8)만으로 만든다.
+      spendAll: true,
+    })),
+    // 숲의 망루 (무적 포탑, 현자의 비전 화살) — 손으로 고른 다섯 자리.
+    // 전부 길 밖 어깨에 세운다 (ghost 라 몸싸움은 안 하지만, 길 한복판에 서면
+    // 유닛이 통과해 지나가는 그림이 나온다).
+    // yOffTile 은 중앙선 기준이라 실제 y 를 주석에 같이 적어 둔다.
     nestGuards: [
-      // 가장자리 전용 + 캠프 천막 무리에서 몇 타일 떨어뜨려 세운다
-      { defId: 'c_sage_watchtower', xTile: 20, yOffTile: -4.3 },
-      { defId: 'c_sage_watchtower', xTile: 24.5, yOffTile: 4.4 },
-      { defId: 'c_sage_watchtower', xTile: 36, yOffTile: -4.4 },
-      { defId: 'c_sage_watchtower', xTile: 51, yOffTile: -4.5 },
-      { defId: 'c_sage_watchtower', xTile: 56, yOffTile: 4.3 },
-      { defId: 'c_sage_watchtower', xTile: 70.8, yOffTile: 4.4 },
-      { defId: 'c_sage_watchtower', xTile: 76, yOffTile: -4.3 },
-      { defId: 'c_sage_watchtower', xTile: 84.6, yOffTile: -4.4 },
-      { defId: 'c_sage_watchtower', xTile: 103.2, yOffTile: 4.4 },
+      // 전부 「화면상 완전한 숲 타일」 + 길에서 2~4칸 떨어진 자리다.
+      // 길가 어깨에 세우면 Wang 코너 규칙 때문에 그 칸에도 흙이 번져 그려져서,
+      // 실제로는 숲인데 화면에선 길 한복판에 선 것처럼 보였다.
+      // 본진 망루만 처음부터 서 있다. 나머지는 옛 국경 감시선의 잔해라,
+      // 그 앞 거점을 되찾아야 다시 불을 밝힌다 (afterCamp).
+      { defId: 'c_sage_watchtower', xTile: 10.5, yOffTile: 11.4 },   // 본진 6시 숲 (y 10.5)
+      { defId: 'c_sage_watchtower', xTile: 43.5, yOffTile: -9.4, afterCamp: 2 },   // 캠프1↔2 사이 (y -3.5)
+      { defId: 'c_sage_watchtower_s', xTile: 66.5, yOffTile: -14.0, afterCamp: 3 }, // 캠프3 3시 숲 (y -9.5)
+      { defId: 'c_sage_watchtower_s', xTile: 79.5, yOffTile: 11.4, afterCamp: 5 },  // 캠프5 9시 숲 (y 8.5)
+      { defId: 'c_sage_watchtower', xTile: 87.5, yOffTile: -9.7, afterCamp: 5 },   // 캠프5 12시 숲 (y -3.5)
     ],
-    // 엘로윈 참전: 4분에 등장(대사와 함께), 쓰러지면 잠시 후 다시 온다 (동시 1명)
+    // 엘로윈 참전 컷신 — 실제 등장(9턴)과 같은 시각에 띄운다
     cutscenes: [{
-      atSec: 240,
+      atSec: 540, // 엘로윈이 실제로 참전하는 9턴에 맞춘다
       lines: [
         { who: '엘로윈', text: '(지팡이 끝이 빛난다) 이 길은 300년 전에도 내가 걸었다. …늙은이가 앞장서마.' },
         { who: '티아', text: '스승님?! 전선에 직접 나오시는 건 처음 봐요!' },
@@ -709,12 +858,67 @@ export const SYLVARIN_CAMPAIGN: readonly CampaignStage[] = [
     // 호위전: 마차가 거점에 서 있는 동안(아군 부대 동반 필수) 점령 게이지가 오른다.
     // 적이 거점을 되찾으면 마차는 직전 거점으로 후퇴 — 오버워치 화물 밀기.
     escort: {
-      pointsXTile: [28, 48, 68, 88, 106],
+      // 그림의 공터 다섯 곳 (양 끝 본거지 제외, 좌→우).
+      // 신 지형에 그려 놓은 전방 캠프와 같은 자리 — 거점 = 눈에 보이는 캠프다.
+      pointsXTile: [32.4, 46.2, 57, 79.2, 89.4],
       captureSec: 60,
       loseSec: 12,
       radiusTiles: 4.5,
       cartDefId: 'c_supply_cart',
+      /**
+       * 거점 주둔군 — 처음부터 눌러앉아 있는 적 부대. 진군하지 않고 그 자리를
+       * 지키므로, 밀어내지 않으면 점령 게이지가 시작조차 하지 않는다.
+       * 뒤로 갈수록 두껍게 — 예전엔 엘로윈과 아군 증원만으로 5거점까지 그냥
+       * 흘러갔다 (플레이어가 한 기도 안 뽑아도).
+       */
+      garrisonRadiusTiles: 6.5,
+      /*
+       * 거점을 되찾을 때마다 숲의 잔존 병력이 합류한다.
+       * 「밀어붙이면 부대가 커진다」 — 버티며 인컴만 올리는 쪽과 경쟁시키는 축.
+       * 뒤로 갈수록 상위 티어가 온다 (5거점 = 고대 트렌트 + 세계수의 사도).
+       */
+      captureReinforcements: [
+        [{ defId: 's_elf_archer', count: 5 }, { defId: 's_gouto', count: 10 }],
+        [{ defId: 's_druid', count: 2 }, { defId: 's_treekeeper', count: 3 },
+          { defId: 's_mushroom_bomber', count: 2 }],
+        [{ defId: 's_butterfly', count: 3 }, { defId: 's_owl', count: 3 }],
+        [{ defId: 's_thorn_witch', count: 2 }, { defId: 's_marksman', count: 2 }],
+        [{ defId: 's_treant', count: 1 }, { defId: 's_apostle', count: 1 }],
+      ],
+      /** 거점 하나당 인컴 +5 (기본 30 기준). 다섯 곳이면 +25. */
+      pointIncomeAdd: 5,
+      garrisons: [
+        // 거점 1 — 전초. 초반 부대로 밀 수 있는 정도
+        [{ defId: 'p_skeleton', count: 5 }, { defId: 'p_bone_thrower', count: 2 }],
+        // 거점 2 — 기사가 섞인다
+        [{ defId: 'p_skeleton', count: 6 }, { defId: 'p_bone_thrower', count: 3 },
+          { defId: 'p_headless_knight', count: 2 }],
+        // 거점 3 — 시체골렘이 앞을 막는다
+        [{ defId: 'p_skeleton', count: 6 }, { defId: 'p_bone_thrower', count: 4 },
+          { defId: 'p_headless_knight', count: 3 }, { defId: 'p_corpse_golem', count: 1 }],
+        /*
+         * 거점 4·5 — 수가 아니라 질로 막는다.
+         * 잡졸을 잔뜩 세우면 화면이 유닛으로 뒤덮여 렉이 걸린다. 소수의
+         * 데미리치·마몬으로 같은 벽을 세우고, 3거점을 확보해야 비로소 나타난다.
+         */
+        [{ defId: 'p_skeleton', count: 7 }, { defId: 'p_bone_thrower', count: 4 },
+          { defId: 'p_headless_knight', count: 3 }, { defId: 'p_corpse_golem', count: 2 },
+          { defId: 'p_demilich', count: 5 }, { defId: 'p_mammon', count: 3 }],
+        // 거점 5 — 마지막 마디. 마법 캐논이 길목을 때린다
+        [{ defId: 'p_skeleton', count: 8 }, { defId: 'p_bone_thrower', count: 5 },
+          { defId: 'p_headless_knight', count: 4 }, { defId: 'p_corpse_golem', count: 3 },
+          { defId: 'p_demilich', count: 5 }, { defId: 'p_mammon', count: 5 },
+          { defId: 'p_thanatos', count: 2 }, { defId: 'c_bone_cannon', count: 2 }],
+      ],
       onCompleteSpawn: { defId: 'hollow', label: '⚔ 슬리피 할로우' },
+      // 할로우 혼자서는 너무 쉽게 무너졌다 — 이 판의 네임드 셋과 상급진을 함께 세운다
+      onCompleteRetinue: [
+        { defId: 'c_bone_colossus', count: 1 },
+        { defId: 'c_void_necromancer', count: 1 },
+        { defId: 'c_radamanthus', count: 1 },
+        { defId: 'p_demilich', count: 8 },
+        { defId: 'p_mammon', count: 5 },
+      ],
       onCompleteDialogue: [
         { who: '', img: '/assets/cutscenes/cs13_hollow.png',
           text: '다섯 번째 마디에 생명수가 스며든 순간 — 길 끝의 어둠에서, 태엽 감기는 소리가 들려왔다.' },
@@ -722,67 +926,83 @@ export const SYLVARIN_CAMPAIGN: readonly CampaignStage[] = [
         { who: '앨리스', img: '', text: '저 걸음걸이… 저 검. 잠깐. 잠깐만.' },
         { who: '앨리스', text: '오빠…? 오웬?! 나야, 알리시아야! 왜 네가 저놈들 편에— 아니, 어떻게 살아서—' },
         { who: '엘로윈', text: '(창백해진다) 오웬. …300년 전, 세계수 앞에서 스러진 초대 숲의 기사다. 시신은 끝내 찾지 못했지. 발타르가… 그를 주워다 문지기로 세웠구나.' },
-        { who: '카엘', text: '우리가 넘어야 할 상대가… 아군이었던 사람이라고?' },
+        { who: '카엘', text: '우리가 넘어야 할 상대가… 아군이었던 사람이라고요?' },
         { who: '슬리피 할로우', text: '(태엽 소리가 어긋난다) ……알, 리…' },
         { who: '앨리스', text: '숲지기, 계획 변경이야. 저 애를 부수지 마. — 되찾아 줘.' },
       ],
     },
-    // 불타는 숲 장애물 — 길 가장자리에 붙여 세운다. 중앙 통행로는 열어 두되
-    // 어깨가 좁아져 진형이 자연스럽게 눌린다 (비행 유닛은 넘어간다)
-    obstacles: [
-      { defId: 'c_ember_tree2', xTile: 22, yOffTile: -4.5 },
-      { defId: 'c_ember_tree', xTile: 24, yOffTile: 4.5 },
-      { defId: 'c_burning_log', xTile: 33, yOffTile: -4.2 },
-      { defId: 'c_ember_tree', xTile: 41, yOffTile: -2.6 },
-      { defId: 'c_ember_tree2', xTile: 44, yOffTile: 2.6 },
-      { defId: 'c_burning_log', xTile: 55, yOffTile: -4.5 },
-      { defId: 'c_ember_tree2', xTile: 58, yOffTile: 4.3 },
-      { defId: 'c_ember_tree', xTile: 64, yOffTile: -4.4 },
-      { defId: 'c_burning_log', xTile: 72, yOffTile: 4.4 },
-      { defId: 'c_ember_tree2', xTile: 78, yOffTile: -4.5 },
-      { defId: 'c_ember_tree', xTile: 82, yOffTile: 4.2 },
-      { defId: 'c_burning_log', xTile: 91, yOffTile: -2.7 },
-      { defId: 'c_ember_tree', xTile: 93, yOffTile: 2.7 },
-      { defId: 'c_ember_tree', xTile: 100, yOffTile: -4.4 },
-      { defId: 'c_ember_tree2', xTile: 102, yOffTile: 4.4 },
-      // 실바린 캠프 — 천막은 캠프 마당(링 안쪽)에 띄엄띄엄, 서로 붙지 않게.
-      // 가장자리는 망루 전용이다.
-      // 캠프 1 (28): 살림 많은 본진 캠프 — 천막 3동·모닥불·보급 상자·군기
-      { defId: 'c_sylvarin_tent', xTile: 26.4, yOffTile: 3.0 },
-      { defId: 'c_sylvarin_tent', xTile: 29.6, yOffTile: 3.4 },
-      { defId: 'c_sylvarin_tent2', xTile: 30.6, yOffTile: -2.8 },
-      { defId: 'c_camp_fire', xTile: 28.2, yOffTile: 2.0 },
-      { defId: 'c_camp_crates', xTile: 27.2, yOffTile: -3.2 },
-      { defId: 'c_sylvarin_banner', xTile: 25.4, yOffTile: -2.6 },
-      // 캠프 2 (48): 지휘소 — 지휘 천막 + 부속 천막 2동, 군기
-      { defId: 'c_sylvarin_tent2', xTile: 49.6, yOffTile: -2.8 },
-      { defId: 'c_sylvarin_tent', xTile: 46.8, yOffTile: -3.2 },
-      { defId: 'c_sylvarin_tent', xTile: 48.4, yOffTile: 3.0 },
-      { defId: 'c_sylvarin_banner', xTile: 46, yOffTile: 2.6 },
-      { defId: 'c_camp_fire', xTile: 47.8, yOffTile: -1.6 },
-      // 캠프 3 (68): 보급 캠프 — 상자 더미 사이 천막 2동
-      { defId: 'c_camp_crates', xTile: 66.2, yOffTile: 2.8 },
-      { defId: 'c_camp_crates', xTile: 67.8, yOffTile: 3.3 },
-      { defId: 'c_sylvarin_tent', xTile: 69.4, yOffTile: -2.6 },
-      { defId: 'c_sylvarin_tent', xTile: 66.4, yOffTile: -3.0 },
-      { defId: 'c_camp_fire', xTile: 68, yOffTile: -1.6 },
-      // 캠프 4 (88): 전선 캠프 — 지휘 천막 + 천막 2동, 모닥불
-      { defId: 'c_sylvarin_tent2', xTile: 86.6, yOffTile: 2.8 },
-      { defId: 'c_sylvarin_tent', xTile: 89.2, yOffTile: 3.2 },
-      { defId: 'c_sylvarin_tent', xTile: 87.2, yOffTile: -3.0 },
-      { defId: 'c_camp_fire', xTile: 88.4, yOffTile: 1.8 },
-      { defId: 'c_sylvarin_banner', xTile: 90.2, yOffTile: -2.6 },
-      // 캠프 5 (106): 최전방 전초 — 천막 2동, 군기가 먼저 보인다
-      { defId: 'c_sylvarin_banner', xTile: 104.6, yOffTile: 2.6 },
-      { defId: 'c_sylvarin_tent', xTile: 108.2, yOffTile: 3.0 },
-      { defId: 'c_sylvarin_tent', xTile: 105.4, yOffTile: -3.0 },
-      { defId: 'c_camp_crates', xTile: 106.6, yOffTile: -3.4 },
-      { defId: 'c_camp_fire', xTile: 107.4, yOffTile: -1.8 },
+    // 소품은 두지 않는다 — 지형 타일이 마스크를 따라 침엽수·바위를 직접 심고,
+    // 캠프·다리·천막은 mapdeco.ts 의 MAP_PROPS 가 그림 그대로 놓는다.
+    /*
+     * 확정 편입 — 봇이 사든 말든 매 턴 출정에 얹힌다.
+     * 전부 once: 그 턴에 한 번만 편성에 넣고 이후로는 늘지 않는다
+     * (편성은 누적이라 한 번 넣어두면 매 턴 그만큼 계속 나온다).
+     *  6턴~  목없는 기사 1
+     * 10턴~  밴시 3 + 망령 3
+     * 15턴~  데미리치 1
+     */
+    growth: [
+      { defId: 'p_headless_knight', label: '목없는 기사', fromWave: 6, amount: 1, once: true },
+      { defId: 'p_banshee', label: '밴시 무리', fromWave: 10, amount: 3, once: true },
+      { defId: 'p_wraith', label: '망령 무리', fromWave: 10, amount: 3, once: true },
+      { defId: 'p_demilich', label: '💀 데미리치', fromWave: 15, amount: 1, once: true },
     ],
     spawns: [
-      { defId: 'c_bone_colossus', label: '뼈 거상', everySec: 170 },
-      // 엘로윈: 아군 진영에서 등장해 부대와 함께 전진. 항상 1명 (쓰러지면 재등장)
-      { defId: 'c_elowyn', label: '🧙 세이지 엘로윈 참전!', everySec: 240, concurrentCap: 1, atXTile: 14, friendly: true },
+      // 16턴(900초)부터 뼈 거상이 물러나고 라다만토스가 그 자리를 대신한다
+      // 뼈 거상: 끝까지 계속 (170초마다)
+      { defId: 'c_bone_colossus', label: '🦴 뼈 거상', everySec: 170 },
+      // 15턴(840초)부터 공허 강령술사 — 잡졸 10기를 20초마다 게워 낸다
+      { defId: 'c_void_necromancer', label: '🕯 공허 강령술사', atSec: 840, everySec: 170 },
+      // 19턴(1080초)부터 라다만토스 — 동시 1기만
+      { defId: 'c_radamanthus', label: '☠ 라다만토스', atSec: 1080, everySec: 170, concurrentCap: 1 },
+      /*
+       * 엘로윈: 9턴(540초)부터. 올 때마다 숲의 부대를 이끌고 온다.
+       *
+       * 아군 봇을 없애 내 부대가 매 턴 나가게 되자 초반이 너무 헐거워졌다 —
+       * 엘로윈까지 처음부터 붙어 있으면 에버그린이 오기도 전에 판이 끝난다.
+       * 초반은 카엘 하나로 버티고, 증원은 중반부터 들어온다.
+       */
+      { defId: 'c_elowyn', label: '🧙 현자 엘로윈 참전!', fromSec: 540, everySec: 240,
+        respawnAfterDeathSec: 240, concurrentCap: 1,
+        atXTile: 14, friendly: true,
+        withUnits: [
+          { defId: 's_treekeeper', count: 5 },
+          { defId: 's_druid', count: 3 },
+          { defId: 's_elf_archer', count: 5 },
+        ] },
+      // 에버그린: 14턴(840초)부터. 항상 1기만, 쓰러지면 170초 뒤에 다시 온다.
+      // 첫 등장에 명궁 셋·나무지기 둘·드루이드 하나를 이끌고 오고,
+      // 그때부터 숲의 명궁이 상점에도 풀린다.
+      { defId: 'c_evergreen', label: '🏹 신궁 에버그린 참전!', fromSec: 840, everySec: 170,
+        concurrentCap: 1, respawnAfterDeathSec: 170, atXTile: 14, friendly: true,
+        withUnits: [
+          { defId: 's_marksman', count: 3 },
+          { defId: 's_treekeeper', count: 2 },
+          { defId: 's_druid', count: 1 },
+        ],
+        unlockUnits: ['s_marksman'],
+        onFirstDialogue: [
+          { who: '엘로윈', img: '', text: '활시위 소리다. 이 숲에서 저 소리를 내는 건 하나뿐이야.' },
+          { who: '에버그린', text: '늦었나? 북쪽 능선을 훑고 오느라 길이 길었다.' },
+          { who: '카엘', text: '에, 에버그린?! 살아… 살아 있었구나! 며, 명궁대는?!' },
+          { who: '에버그린', text: '여섯 남았다. 그거면 충분해. 셋씩 묶어 쏘면 스무 놈 몫은 하니까.' },
+          { who: '엘로윈', text: '명궁대가 돌아왔다. 이제 뒤를 걱정하지 말고 마차를 밀어라.' },
+        ] },
+      /*
+       * 세계수의 사도·트렌트 — 15턴(900초)부터 60초마다 숲이 직접 병력을 보낸다.
+       * 22턴(1320초)부터는 규모가 커진다 (앞 규칙은 untilSec 으로 끊는다).
+       */
+      { defId: 's_apostle', label: '🌳 세계수의 사도', fromSec: 900, everySec: 60, untilSec: 1320,
+        count: 1, atXTile: 14, friendly: true },
+      { defId: 's_treant', label: '🌳 트렌트', fromSec: 900, everySec: 60, untilSec: 1320,
+        count: 1, atXTile: 14, friendly: true },
+      { defId: 's_apostle', label: '🌳 세계수의 사도 (증편)', fromSec: 1320, everySec: 60,
+        count: 2, atXTile: 14, friendly: true },
+      { defId: 's_treant', label: '🌳 트렌트 (증편)', fromSec: 1320, everySec: 60,
+        count: 3, atXTile: 14, friendly: true },
+      // 카엘: 첫 턴부터 전선에 선다. 쓰러져도 100초 뒤 다시 (동시 1기)
+      { defId: 'c_kael', label: '🛡 숲지기 카엘 참전!', everySec: 100, concurrentCap: 1,
+        respawnAfterDeathSec: 100, atXTile: 14, friendly: true },
     ],
     briefing: [
       { who: '', img: '/assets/cutscenes/cs13_road.png',
@@ -797,6 +1017,11 @@ export const SYLVARIN_CAMPAIGN: readonly CampaignStage[] = [
       { who: '앨리스', text: '잠깐, 숲지기. …선물이야. 내 태엽 병정이랑 테디 몇, 마차에 실어 뒀어. 상점에서 꺼내 쓰면 돼.' },
       { who: '카엘', text: '웬일로 공짜를…?' },
       { who: '앨리스', text: '공짜 아니야, 투자야. 이 길의 끝에… 확인해 보고 싶은 게 있어.' },
+      { who: '카엘', text: '(방패를 고쳐 쥔다) …손 떨리는 건 추워서입니다. 진짜예요. 아침이라 그래요.' },
+      { who: '엘로윈', text: '카엘. 무리하지 마라. 네가 무너지면 마차도 함께 무너진다.' },
+      { who: '카엘', text: '안 무너집니다. 저 딴 건 몰라도 방패 하나는… 그, 잘 들어서요. 각도 계산도 해 뒀습니다.' },
+      { who: '티아', text: '카엘 님, 방패 끈 풀렸어요.' },
+      { who: '카엘', text: '…알고 있었습니다.' },
       { who: '엘로윈', text: '적이 마디를 되찾으면 마차는 물러설 수밖에 없다. 서두르지 마라 — 한 마디씩, 확실하게.' },
     ],
     outro: [
@@ -807,17 +1032,139 @@ export const SYLVARIN_CAMPAIGN: readonly CampaignStage[] = [
     ],
   },
   {
-    id: 14, act: 3, title: '걸어가는 숲', goal: '협공 돌파 — 후방의 주둔지를 걷어내고 적 넥서스를 파괴하라',
-    allowedUnits: U14, enemies: ['pandemonium', 'marionetta'], allies: ['sylvarin'], botDifficulty: 'normal',
-    allyNote: '🤝 걸어가는 숲이 뒤를 따른다!',
-    mission: 'destroy', seed: seedOf(14),
-    warcamp: { everySec: 80, units: ['p_deadman', 'p_deadman', 'p_skeleton', 'p_hound'] },
-    spawns: [{ defId: 'c_ash_revenant', label: '재의 원귀', everySec: 150, count: 2 }],
+    id: 14, act: 3, title: '걸어가는 숲', goal: '세계수 줄기의 적 주둔지를 걷어내라 — 두 갈래 숲길 (적 거점 5곳)',
+    allowedUnits: U14, botDifficulty: 'normal',
+    // 적은 다섯 곳에서 쏟아진다 — 성 · 전초 A·B · 전방기지 C·D. 사실상 1:5.
+    enemies: ['pandemonium', 'pandemonium', 'pandemonium', 'pandemonium', 'pandemonium'],
+    allies: [],
+    mission: 'destroy', seed: seedOf(14), mapId: 'greatroot',
+    enemySkin: 'bone',
+    noTowers: true,
+    enemyStartTech: 3,
+    // 이 판에 나올 수 있는 판데모니엄 유닛 (거점별 구간 제한이 이 안에서 다시 걸린다)
+    enemyAllowedUnits: [
+      'p_hound', 'p_bone_thrower', 'p_summoner', 'p_headless_knight',
+      'p_corpse_golem', 'p_thanatos', 'p_dementor', 'p_wraith', 'p_banshee',
+      'p_demilich', 'p_bone_dragon',
+    ],
+    // 성 전용으로 디멘터·데미리치·본드래곤을 푼다 (전역 잠금 해제)
+    unlockEnemyUnits: ['p_dementor', 'p_demilich', 'p_bone_dragon'],
+    // 두 갈래 — 빈 땅을 누르면 그쪽으로 부대를 보낸다
+    deployLanes: [
+      { yTile: -9.0, label: '서쪽 숲길 (C → A)' },
+      { yTile: 10.3, label: '동쪽 숲길 (D → B)' },
+    ],
+    enemyCamps: [
+      {
+        // ── 발타르의 성 (12시) — 가장 부유하고 가장 강하다
+        slot: 0, label: '발타르의 성', x: 53 * FP, y: 0,
+        startIncome: 5, startMoney: 500, spendAll: true,
+        phases: [
+          { fromWave: 1, units: ['p_hound', 'p_bone_thrower'] },
+          { fromWave: 5, units: ['p_hound', 'p_bone_thrower', 'p_headless_knight'], preferred: ['p_headless_knight'] },
+          { fromWave: 13, units: ['p_headless_knight', 'p_bone_thrower', 'p_corpse_golem', 'p_banshee'], preferred: ['p_banshee', 'p_corpse_golem'] },
+          { fromWave: 21, units: ['p_thanatos', 'p_banshee', 'p_bone_dragon', 'p_demilich'] },
+          { fromWave: 25, units: ['p_thanatos', 'p_banshee', 'p_bone_dragon', 'p_demilich', 'p_dementor'] },
+        ],
+        // 21턴부터 매 턴 최소 2기 확정 편입, 25턴부터 디멘터도 섞인다
+        forcedGrowth: [
+          { fromWave: 21, units: ['p_thanatos', 'p_banshee', 'p_bone_dragon', 'p_demilich'], perWave: 2 },
+          { fromWave: 25, units: ['p_dementor'], perWave: 1 },
+        ],
+      },
+      {
+        // ── 전초 A (북쪽 중간)
+        // A~D 는 스스로 생산하지 않는다 (인컴 0) — 정해진 주기로 「출현」만 한다.
+        // 물량 압박을 봇 경제에 맡기면 턴이 갈수록 걷잡을 수 없이 불어난다.
+        slot: 1, label: '전초 A', x: 42.2 * FP, y: -8.3 * FP, nexusDefId: 'c_demon_camp',
+        startIncome: 0, incomeCap: 0, startMoney: 0,
+        phases: [{ fromWave: 1, units: ['p_skeleton'] }],
+      },
+      {
+        slot: 2, label: '전초 B', x: 41.5 * FP, y: 10.3 * FP, nexusDefId: 'c_demon_camp',
+        startIncome: 0, incomeCap: 0, startMoney: 0,
+        phases: [{ fromWave: 1, units: ['p_skeleton'] }],
+      },
+      {
+        slot: 3, label: '전방기지 C', x: 29.8 * FP, y: -9.0 * FP, nexusDefId: 'c_demon_camp',
+        startIncome: 0, incomeCap: 0, startMoney: 0,
+        phases: [{ fromWave: 1, units: ['p_skeleton'] }],
+      },
+      {
+        slot: 4, label: '전방기지 D', x: 29.5 * FP, y: 10.3 * FP, nexusDefId: 'c_demon_camp',
+        startIncome: 0, incomeCap: 0, startMoney: 0,
+        phases: [{ fromWave: 1, units: ['p_skeleton'] }],
+      },
+    ],
+    // 야영지를 지키는 엘프 망루 3기 — 길목이 아니라 「길가」에 선다.
+    // (길 한복판에 세우면 부대가 지나다니는 길처럼 안 보인다)
+    nestGuards: [
+      { defId: 'c_elf_watchtower', xTile: 6, yOffTile: -9.0 },  // 9시 — 서쪽 길가
+      { defId: 'c_elf_watchtower', xTile: 6, yOffTile: 9.0 },   // 3시 — 동쪽 길가
+      { defId: 'c_elf_watchtower', xTile: 11, yOffTile: 1.5 },  // 12시 — 야영지 앞
+    ],
+    spawns: [
+      // ── 영웅: 1턴부터 함께 걷는다 (야영지에서 출전, 쓰러져도 다시 온다) ──
+      { defId: 'c_kael', label: '🛡 숲지기 카엘 참전!', fromSec: 0, everySec: 110,
+        concurrentCap: 1, respawnAfterDeathSec: 110, atXTile: 9, friendly: true },
+      { defId: 'c_elowyn', label: '🧙 현자 엘로윈 참전!', fromSec: 0, everySec: 240,
+        concurrentCap: 1, respawnAfterDeathSec: 240, atXTile: 9, friendly: true },
+      { defId: 'c_evergreen', label: '🏹 신궁 에버그린 참전!', fromSec: 0, everySec: 170,
+        concurrentCap: 1, respawnAfterDeathSec: 170, atXTile: 9, friendly: true },
+      // 15턴에 합류하는 신규 영웅 — 200초마다 야영지에서 다시 나선다
+      { defId: 'c_alice_hero', label: '🎭 인형사 앨리스 참전!', fromSec: 840, everySec: 200,
+        concurrentCap: 1, respawnAfterDeathSec: 200, atXTile: 9, friendly: true },
+      // ── A~D 증원: 80초마다 「출현」. 거점이 무너지면 그쪽은 영구히 끊긴다 ──
+      { defId: 'p_skeleton', label: '전초 A 증원', count: 2, everySec: 80, untilSec: 840,
+        atXTile: 42.2, yOffTile: -8.3, whileCampSlot: 1 },
+      { defId: 'p_bone_thrower', label: '전초 A 증원', count: 3, everySec: 80, untilSec: 840,
+        atXTile: 42.2, yOffTile: -8.3, whileCampSlot: 1 },
+      { defId: 'p_skeleton', label: '전초 B 증원', count: 2, everySec: 80, untilSec: 840,
+        atXTile: 41.5, yOffTile: 10.3, whileCampSlot: 2 },
+      { defId: 'p_bone_thrower', label: '전초 B 증원', count: 3, everySec: 80, untilSec: 840,
+        atXTile: 41.5, yOffTile: 10.3, whileCampSlot: 2 },
+      { defId: 'p_skeleton', label: '전방기지 C 증원', count: 2, everySec: 80, untilSec: 840,
+        atXTile: 29.8, yOffTile: -9.0, whileCampSlot: 3 },
+      { defId: 'p_bone_thrower', label: '전방기지 C 증원', count: 3, everySec: 80, untilSec: 840,
+        atXTile: 29.8, yOffTile: -9.0, whileCampSlot: 3 },
+      { defId: 'p_skeleton', label: '전방기지 D 증원', count: 2, everySec: 80, untilSec: 840,
+        atXTile: 29.5, yOffTile: 10.3, whileCampSlot: 4 },
+      { defId: 'p_bone_thrower', label: '전방기지 D 증원', count: 3, everySec: 80, untilSec: 840,
+        atXTile: 29.5, yOffTile: 10.3, whileCampSlot: 4 },
+      // ── 15턴부터: 전방기지는 수를 늘리고, 전초는 정예로 갈아탄다 ──
+      { defId: 'p_skeleton', label: '전방기지 C 증원', count: 5, everySec: 80, fromSec: 840,
+        atXTile: 29.8, yOffTile: -9.0, whileCampSlot: 3 },
+      { defId: 'p_bone_thrower', label: '전방기지 C 증원', count: 5, everySec: 80, fromSec: 840,
+        atXTile: 29.8, yOffTile: -9.0, whileCampSlot: 3 },
+      { defId: 'p_skeleton', label: '전방기지 D 증원', count: 5, everySec: 80, fromSec: 840,
+        atXTile: 29.5, yOffTile: 10.3, whileCampSlot: 4 },
+      { defId: 'p_bone_thrower', label: '전방기지 D 증원', count: 5, everySec: 80, fromSec: 840,
+        atXTile: 29.5, yOffTile: 10.3, whileCampSlot: 4 },
+      { defId: 'p_headless_knight', label: '전초 A 정예', count: 2, everySec: 80, fromSec: 840,
+        atXTile: 42.2, yOffTile: -8.3, whileCampSlot: 1 },
+      { defId: 'p_wraith', label: '전초 A 정예', count: 2, everySec: 80, fromSec: 840,
+        atXTile: 42.2, yOffTile: -8.3, whileCampSlot: 1 },
+      { defId: 'p_headless_knight', label: '전초 B 정예', count: 2, everySec: 80, fromSec: 840,
+        atXTile: 41.5, yOffTile: 10.3, whileCampSlot: 2 },
+      { defId: 'p_wraith', label: '전초 B 정예', count: 2, everySec: 80, fromSec: 840,
+        atXTile: 41.5, yOffTile: 10.3, whileCampSlot: 2 },
+      // ── 전방기지가 무너지면 그 자리에서 구울 군주가 기어 나온다 ──
+      { defId: 'c_ghoul_lord', label: '💀 구울 군주', onCampDown: 3, atXTile: 29.8, yOffTile: -9.0 },
+      { defId: 'c_ghoul_lord', label: '💀 구울 군주', onCampDown: 4, atXTile: 29.5, yOffTile: 10.3 },
+      // ── 성에서 이따금 내려오는 뼈 용 ──
+      { defId: 'c_skullrender', label: '🐉 스컬렌더', everySec: 180, fromSec: 840, atXTile: 53, concurrentCap: 2 },
+    ],
     briefing: [
-      { who: '사도', text: '숲은 도망치는 법을 잊었다. 이제 걸어가는 법을 기억해낼 것이다. (사도·고대 트렌트 합류!)' },
+      { who: '사도', text: '뿌리는 되찾았다. 허나 놈들은 이미 줄기를 타고 올라갔다 — 세계수의 몸에 못을 박은 채로.' },
+      { who: '사도', text: '숲은 도망치는 법을 잊었다. 이제 걸어가는 법을 기억해낼 것이다. (세계수의 사도·고대 트렌트 합류!)' },
+      { who: '티아', text: '벌목장이에요… 세계수 가지를 잘라서 태우고 있어요. 저것들 때문에 뿌리가 말랐던 거예요.' },
+      { who: '엘로윈', text: '강을 건너는 다리는 둘뿐이다. 서쪽으로 가면 서쪽만, 동쪽으로 가면 동쪽만 — 가운데 물은 날개 달린 것만 넘는다.' },
+      { who: '엘로윈', text: '주둔지를 부숴라. 하나 무너질 때마다 그쪽에서 오던 증원이 끊긴다 — 넷을 다 걷어내면 성만 남는다.' },
     ],
     outro: [
       { who: '티아', text: '나무들이… 행진해요. 태어나서 이런 건 처음 봐요.' },
+      { who: '사도', text: '못이 뽑혔다. 줄기가 다시 숨을 쉰다.' },
+      { who: '앨리스', text: '여기까진 왔네. 이제 진짜 문제는 저 위야 — 발타르의 성.' },
     ],
   },
   {
@@ -832,7 +1179,7 @@ export const SYLVARIN_CAMPAIGN: readonly CampaignStage[] = [
       { who: '실피', text: '…시끄러운 뼈다귀.' },
     ],
     outro: [
-      { who: '카엘', text: '(상자를 연다) …투구 속에서, 300년 동안 감지 못한 눈이 우리를 본다.' },
+      { who: '카엘', text: '(상자를 연다) …투구 속에서, 300년 동안 감지 못한 눈이 우리를 봅니다.' },
     ],
   },
   {
@@ -883,7 +1230,7 @@ export const SYLVARIN_CAMPAIGN: readonly CampaignStage[] = [
     ],
     briefing: [
       { who: '발타르', text: '11시 59분. 이 밤의 다음은 없다. 봄도, 부활도, 너희도.' },
-      { who: '카엘', text: '숲은 겨울마다 죽어. 그리고 매번 돌아와. 그게 우리와 너의 차이다.' },
+      { who: '카엘', text: '숲은 겨울마다 죽습니다. 그리고 매번 돌아오죠. 그게 우리와 당신의 차이입니다.' },
     ],
     outro: [
       { who: '오웬', text: '(투구를 벗으며 — 300년 만의 얼굴) …알리시아. 많이 컸구나.' },
@@ -904,12 +1251,24 @@ export function setProgressListener(fn: () => void): void {
 }
 
 /** 현재 로컬 진행 상황 스냅샷 (클라우드 세이브와 같은 모양). */
-export function localSave(): { cleared: number; perks: Record<string, number>; boons: Record<string, string>; updatedAt: number } {
-  return { cleared: campaignCleared(), perks: perkAlloc(), boons: boonChoices(), updatedAt: Date.now() };
+export function localSave(): { cleared: number; perks: Record<string, number>; boons: Record<string, string[]>; updatedAt: number } {
+  // 서버는 cleared/perks/boons 만 저장한다 — 세계수 경험치는 perks 에 편승시킨다.
+  // (perkAlloc 은 PERKS 목록에 있는 id 만 통과시키므로 되읽을 때 자동으로 걸러진다)
+  return {
+    cleared: campaignCleared(),
+    perks: { ...perkAlloc(), _treeXp: treeXpTotal() },
+    boons: boonChoices(),
+    updatedAt: Date.now(),
+  };
 }
 
 /** 클라우드에서 받은 진행 상황을 로컬에 통째로 덮어쓴다 (동기화). */
-export function applySave(save: { cleared: number; perks: Record<string, number>; boons: Record<string, string> }): void {
+// boons 는 예전 저장본(문자열 하나)일 수도 있다 — 읽는 쪽(boonChoices)이 감싸 준다
+export function applySave(save: { cleared: number; perks: Record<string, number>; boons: Record<string, string | string[]> }): void {
+  const tx = save.perks['_treeXp'];
+  if (typeof tx === 'number' && Number.isFinite(tx) && tx >= 0) {
+    localStorage.setItem(TREE_KEY, String(Math.floor(tx)));
+  }
   localStorage.setItem(SAVE_KEY, String(Math.max(0, Math.floor(save.cleared))));
   localStorage.setItem(PERK_KEY, JSON.stringify(save.perks ?? {}));
   localStorage.setItem(BOON_KEY, JSON.stringify(save.boons ?? {}));
@@ -938,13 +1297,125 @@ export interface PerkDef {
   readonly icon: string;
   readonly desc: string;   // 1포인트당 효과
   readonly max: number;
+  /** 이 스테이지를 클리어해야 해금된다 (생략 = 처음부터). */
+  readonly requiresStage?: number;
 }
 
 export const PERKS: readonly PerkDef[] = [
-  { id: 'sap', name: '생명의 수액', icon: '🌿', desc: '내 유닛 최대체력 +3%', max: 5 },
-  { id: 'thorn', name: '가시 세례', icon: '⚔', desc: '내 유닛 공격력 +2%', max: 5 },
-  { id: 'fruit', name: '풍요의 열매', icon: '💰', desc: '시작 자금 +50', max: 4 },
-  { id: 'season', name: '계절의 흐름', icon: '⏱', desc: '5초마다 수입 +2', max: 4 },
+  { id: 'sap', name: '생명의 축복', icon: '💚', desc: '내 유닛 최대 체력 +3%', max: 5 },
+  { id: 'thorn', name: '전장의 결의', icon: '⚔', desc: '내 유닛 공격력 +2%', max: 5 },
+  { id: 'fruit', name: '풍요의 열매', icon: '💰', desc: '시작 자금 +50', max: 5 },
+  { id: 'season', name: '계절의 흐름', icon: '⏱', desc: '5초마다 수입 +2', max: 5 },
+  { id: 'bark', name: '굳건한 방패', icon: '🛡', desc: '내 유닛 방어력 +1', max: 5 },
+  { id: 'haste', name: '신속의 손길', icon: '⚡', desc: '내 유닛 공격 속도 +1%', max: 5 },
+  { id: 'stride', name: '바람의 걸음', icon: '👣', desc: '내 유닛 이동 속도 +1%', max: 5 },
+  { id: 'mana', name: '마력의 흐름', icon: '🔮', desc: '내 유닛 스킬 쿨타임 -1%', max: 5 },
+  { id: 'aegis', name: '수호의 껍질', icon: '🔰', desc: '내 유닛 기본 보호막 +10', max: 5 },
+  { id: 'roots', name: '깊은 뿌리', icon: '🌱', desc: '인컴 단계 상한 +1 (기본 8 → 최대 11)', max: 3, requiresStage: 8 },
+];
+
+// ── 세계수 레벨·경험치 ─────────────────────────────────────────────────────
+/*
+ * 스테이지를 「클리어」하면 경험치를 얻는다 (패배는 0).
+ *  · 클리어 경험치 = 8 + 2×스테이지 번호 — 뒤로 갈수록 더 준다.
+ *  · 레벨업 필요치 = 12 + 3×다음 레벨 — 1~13 을 한 번씩만 깨면 딱 10레벨쯤.
+ *  · 최대 레벨 = 클리어한 최고 스테이지 × 3 — 낮은 판을 다시 돌아 노가다할 수 있다.
+ *  · 상한을 넘긴 경험치는 버리지 않고 쌓아 둔다 — 다음 판을 깨서 상한이 오르면 바로 반영.
+ *  · 레벨 1마다 축복 포인트 1. (클리어 자체는 이제 포인트를 주지 않는다)
+ */
+const TREE_KEY = 'camp_tree_xp';
+
+/** 이 스테이지를 클리어하면 받는 경험치. */
+export function treeClearXp(stage: number): number {
+  return 8 + 2 * stage;
+}
+/** level 레벨이 되는 데 드는 경험치 (level-1 → level). */
+export function treeXpNeed(level: number): number {
+  return 12 + 3 * level;
+}
+export function treeMaxLevel(): number {
+  return campaignCleared() * 3;
+}
+export function treeXpTotal(): number {
+  try {
+    const raw = localStorage.getItem(TREE_KEY);
+    if (raw !== null) {
+      const n = Number(raw);
+      return Number.isFinite(n) ? Math.max(0, Math.floor(n)) : 0;
+    }
+    // 마이그레이션: 예전 저장(클리어만 있던 시절)은 「각 스테이지 1회 클리어」만큼 심어 준다.
+    // 안 그러면 기존 유저의 축복 포인트가 통째로 0 이 된다.
+    const cleared = campaignCleared();
+    let seed = 0;
+    for (let st = 1; st <= cleared; st++) seed += treeClearXp(st);
+    if (seed > 0) localStorage.setItem(TREE_KEY, String(seed));
+    return seed;
+  } catch {
+    return 0;
+  }
+}
+/** 현재 세계수 레벨 (경험치 누적 → 레벨, 최대 레벨 상한 적용). */
+export function treeLevel(): number {
+  const cap = treeMaxLevel();
+  let xp = treeXpTotal();
+  let lv = 0;
+  while (lv < cap && xp >= treeXpNeed(lv + 1)) {
+    xp -= treeXpNeed(lv + 1);
+    lv++;
+  }
+  return lv;
+}
+/** 진행 표시용 — 다음 레벨까지 얼마나 왔나. */
+export function treeProgress(): { level: number; cap: number; into: number; need: number } {
+  const cap = treeMaxLevel();
+  let xp = treeXpTotal();
+  let lv = 0;
+  while (lv < cap && xp >= treeXpNeed(lv + 1)) {
+    xp -= treeXpNeed(lv + 1);
+    lv++;
+  }
+  return { level: lv, cap, into: xp, need: treeXpNeed(lv + 1) };
+}
+/** 클리어 보상 지급. 레벨 변화를 돌려준다 (알림용). */
+export function addTreeXp(stage: number): { gained: number; levelBefore: number; levelAfter: number } {
+  const levelBefore = treeLevel();
+  const gained = treeClearXp(stage);
+  try { localStorage.setItem(TREE_KEY, String(treeXpTotal() + gained)); } catch { /* 무시 */ }
+  onProgressChanged?.();
+  return { gained, levelBefore, levelAfter: treeLevel() };
+}
+/** 세계수 그림 단계 (1~6) — 8레벨마다 자란다. */
+export function treeStageImg(): number {
+  return Math.min(6, Math.floor(treeLevel() / 8) + 1);
+}
+/**
+ * 세계수 레벨이 자동으로 주는 보너스 (포인트와 무관).
+ *  · 매 레벨: 시작 자금 +5
+ *  · 10레벨 초과분마다: 수급량 +0.5%
+ *  · 20/25/30/40/48 레벨 고비마다 한 번씩 큰 보너스
+ */
+export function treeAutoBonus(): {
+  startMoney: number; incomePermille: number; hpPct: number; dmgPct: number;
+  armorAdd: number; atkSpeedPct: number;
+} {
+  const lv = treeLevel();
+  return {
+    startMoney: 5 * lv,
+    incomePermille: 5 * Math.max(0, lv - 10),
+    hpPct: (lv >= 20 ? 3 : 0) + (lv >= 25 ? 1 : 0) + (lv >= 40 ? 10 : 0) + (lv >= 48 ? 10 : 0),
+    dmgPct: (lv >= 20 ? 3 : 0) + (lv >= 25 ? 1 : 0) + (lv >= 40 ? 10 : 0) + (lv >= 48 ? 10 : 0),
+    armorAdd: lv >= 30 ? 1 : 0,
+    atkSpeedPct: (lv >= 30 ? 10 : 0) + (lv >= 48 ? 10 : 0),
+  };
+}
+/** 레벨 고비 안내 (UI 표) — [레벨, 설명]. */
+export const TREE_MILESTONES: readonly [number, string][] = [
+  [10, '수급량 증가 시작 (레벨당 +0.5%)'],
+  [20, '유닛 체력 +3% · 공격력 +3%'],
+  [25, '유닛 체력 +1% · 공격력 +1%'],
+  [30, '유닛 방어력 +1 · 공격 속도 +10%'],
+  [40, '유닛 공격력 +10% · 체력 +10%'],
+  [48, '유닛 공격력 +10% · 체력 +10% · 공격 속도 +10%'],
 ];
 
 const PERK_KEY = 'campaign_sylvarin_perks';
@@ -979,35 +1450,61 @@ export function perkPointsSpent(alloc: Record<string, number>): number {
  * 개방 시점에 이미 해금돼 있고, 바로 다음 난관에 도움이 되는 유닛으로 배정.
  * (1-8 숲올빼미 = 9라운드 대공전 대비, 1-12 가시 마녀 = 3막 진입 보상)
  */
-export const BOON_UNLOCKS: Record<number, string> = {
-  3: 's_gouto',
-  5: 's_elf_archer',
-  6: 's_marmot',
-  7: 's_vine_hunter',
-  8: 's_mushroom_bomber',
+export const BOON_UNLOCKS: Record<number, readonly string[]> = {
+  3: ['s_gouto'],
+  5: ['s_elf_archer'],
+  6: ['s_marmot'],
+  7: ['s_vine_hunter'],
+  8: ['s_mushroom_bomber'],
   // 숲올빼미 강화는 9 클리어 보상 — 9라운드는 "지상으로 뚫는" 라운드라
   // 올빼미(무리 사냥)를 미리 주면 공중 스팸으로 의도가 무너진다 (실플레이 확인)
-  9: 's_owl',
-  10: 's_druid',
-  11: 's_butterfly',
-  12: 's_thorn_witch',
+  9: ['s_owl'],
+  10: ['s_druid'],
+  11: ['s_butterfly'],
+  // 2막 마지막 — 3막 문턱에서 크게 푼다. 슬롯도 이때 둘로 늘어난다.
+  12: ['s_thorn_witch', 's_wyvern', 's_unicorn', 's_fairy'],
+  // 3막: 그 판에서 처음 쓰게 될 유닛의 강화를 한 발 앞서 준다
+  13: ['s_treekeeper', 's_marksman'],
+  14: ['s_treant', 's_apostle'],
+  17: ['s_sage'],
 };
+
+/** 2막을 끝내면 유닛마다 강화를 둘까지 고를 수 있다. */
+export const BOON_SLOT2_STAGE = 12;
+export function boonSlots(): number {
+  return campaignCleared() >= BOON_SLOT2_STAGE ? 2 : 1;
+}
 
 const BOON_KEY = 'camp_boons';
 
-/** 유닛별 선택된 강화 (unit defId → boon id). 언제든 다시 고를 수 있다. */
-export function boonChoices(): Record<string, string> {
+/**
+ * 유닛별 선택된 강화 (unit defId → boon id 배열). 언제든 다시 고를 수 있다.
+ * 예전 저장본은 문자열 하나였으므로 읽을 때 배열로 감싼다.
+ */
+export function boonChoices(): Record<string, string[]> {
   try {
-    return JSON.parse(localStorage.getItem(BOON_KEY) ?? '{}') as Record<string, string>;
+    const raw = JSON.parse(localStorage.getItem(BOON_KEY) ?? '{}') as Record<string, unknown>;
+    const out: Record<string, string[]> = {};
+    for (const [unit, v] of Object.entries(raw)) {
+      if (typeof v === 'string') out[unit] = [v];
+      else if (Array.isArray(v)) out[unit] = v.filter((x): x is string => typeof x === 'string');
+    }
+    return out;
   } catch {
     return {};
   }
 }
 
-export function saveBoonChoice(unit: string, boonId: string | null): void {
+/** 강화 하나를 켜고 끈다. 슬롯이 꽉 찼으면 가장 먼저 고른 것을 밀어낸다. */
+export function toggleBoonChoice(unit: string, boonId: string): void {
   const all = boonChoices();
-  if (boonId === null) delete all[unit];
-  else all[unit] = boonId;
+  const cur = all[unit] ?? [];
+  const at = cur.indexOf(boonId);
+  let next: string[];
+  if (at >= 0) next = cur.filter((x) => x !== boonId);
+  else next = [...cur, boonId].slice(-boonSlots());
+  if (next.length === 0) delete all[unit];
+  else all[unit] = next;
   localStorage.setItem(BOON_KEY, JSON.stringify(all));
   onProgressChanged?.();
 }
@@ -1018,26 +1515,35 @@ export function unlockedBoonUnits(): string[] {
   return Object.entries(BOON_UNLOCKS)
     .filter(([stage]) => Number(stage) <= cleared)
     .sort((a, b) => Number(a[0]) - Number(b[0]))
-    .map(([, unit]) => unit);
+    .flatMap(([, units]) => units);
 }
 
 /** 게임에 넘길 유효 강화 id 배열 — 개방된 유닛의 선택만 인정한다. */
 export function selectedBoonIds(): string[] {
   const unlocked = new Set(unlockedBoonUnits());
   const all = boonChoices();
+  const slots = boonSlots();
   const out: string[] = [];
-  for (const [unit, boonId] of Object.entries(all)) {
-    if (unlocked.has(unit)) out.push(boonId);
+  for (const [unit, ids] of Object.entries(all)) {
+    if (unlocked.has(unit)) out.push(...ids.slice(0, slots));
   }
   return out;
 }
 
-export function perksToHero(alloc: Record<string, number>): { hpPct: number; dmgPct: number; startMoney: number; incomeAdd: number } {
+export function perksToHero(alloc: Record<string, number>): HeroPerks {
+  const auto = treeAutoBonus();
   return {
-    hpPct: (alloc.sap ?? 0) * 3,
-    dmgPct: (alloc.thorn ?? 0) * 2,
-    startMoney: (alloc.fruit ?? 0) * 50,
+    hpPct: (alloc.sap ?? 0) * 3 + auto.hpPct,
+    dmgPct: (alloc.thorn ?? 0) * 2 + auto.dmgPct,
+    startMoney: (alloc.fruit ?? 0) * 50 + auto.startMoney,
     incomeAdd: (alloc.season ?? 0) * 2,
+    incomePermille: auto.incomePermille,
+    armorAdd: (alloc.bark ?? 0) + auto.armorAdd,
+    atkSpeedPct: (alloc.haste ?? 0) + auto.atkSpeedPct,
+    moveSpeedPct: alloc.stride ?? 0,
+    cdrPct: alloc.mana ?? 0,
+    shieldAdd: (alloc.aegis ?? 0) * 10,
+    incomeCapAdd: campaignCleared() >= 8 ? (alloc.roots ?? 0) : 0,
   };
 }
 
@@ -1106,4 +1612,680 @@ export function runDialogue(lines: readonly DialogueLine[]): Promise<void> {
     box.classList.remove('hidden');
     show();
   });
+}
+
+// ── 영웅 강화 (3막) ───────────────────────────────────────────────────────
+/*
+ * 13스테이지를 클리어하면 열린다. 영웅마다 강화 포인트 3개를 따로 쥔다.
+ * 언제든 무료로 다시 나눌 수 있고, 대전에는 전혀 영향이 없다.
+ *
+ * 효과는 두 갈래로 나뉜다:
+ *  - 심에 넘기는 것: 유닛 정의를 덮어써서(defOv) 체력·공격·스킬 수치를 바꾼다
+ *  - 클라가 처리하는 것: 부활 시간·부활 충전·동반 출정 (캠페인 스폰 스크립트 소관)
+ */
+/**
+ * 갈래마다 따로 쥐는 포인트 (13스테이지 클리어 시 영웅마다 지급).
+ *
+ * 한 주머니에서 다 꺼내 쓰면 「기본 스탯만 몰아 찍기」가 언제나 정답이 된다.
+ * 갈래를 나눠 두면 특수·스킬·영웅 능력도 반드시 하나씩 고르게 된다.
+ */
+export const HERO_GROUP_POINTS: Record<HeroUpgradeDef['group'], number> = {
+  stat: 3, special: 1, hero: 1, skill: 1,
+};
+/** 영웅 하나에게 주어지는 총 포인트 (진행도 표시용). */
+export const HERO_POINTS = Object.values(HERO_GROUP_POINTS).reduce((a, b) => a + b, 0);
+
+export interface HeroUpgradeDef {
+  readonly id: string;
+  readonly hero: string;              // 영웅 defId
+  readonly group: 'stat' | 'special' | 'hero' | 'skill';
+  readonly name: string;
+  readonly icon: string;
+  readonly max: number;
+  /** 단계별 설명 (0단계 = 기본값 설명, 1..max = 찍었을 때) */
+  readonly steps: readonly string[];
+  /**
+   * 이 능력이 「무엇을 하는가」 한 줄. steps 는 숫자만 담고 있어서
+   * 처음 보는 사람은 도발·반사가 뭔지 알 수 없다. 그 빈자리를 메운다.
+   */
+  readonly desc?: string;
+}
+
+export const HEROES: readonly { id: string; name: string; icon: string; blurb: string }[] = [
+  { id: 'c_kael', name: '숲지기 카엘', icon: '🛡',
+    blurb: '전열을 붙잡는 방패. 쓰러져도 다시 일어선다.' },
+  { id: 'c_elowyn', name: '현자 엘로윈', icon: '🔮',
+    blurb: '자리를 잡고 마법을 퍼붓는 포대.' },
+  { id: 'c_evergreen', name: '신궁 에버그린', icon: '🏹',
+    blurb: '부대와 함께 움직이며 전열을 갉는 다중 사격수.' },
+];
+
+/**
+ * 영웅 서사 — 강화 패널 「스토리」 탭에서 읽는다.
+ * 시나리오 원본(docs/campaign-sylvarin.md)의 사건을 그 영웅 시점으로 풀어 쓴 것.
+ */
+export interface HeroStory {
+  readonly portrait: string;   // /assets/portraits/*.png
+  readonly title: string;      // 한 줄 칭호
+  readonly quote: string;      // 대표 대사
+  readonly sections: readonly { readonly h: string; readonly p: string }[];
+}
+
+export const HERO_STORIES: Record<string, HeroStory> = {
+  c_kael: {
+    portrait: 'kael', title: '국경 숲지기 · 숲의 영웅',
+    quote: '숲은 겨울마다 죽어. 그리고 매번 돌아온다. 그게 우리와 너의 차이다.',
+    sections: [
+      { h: '봉화가 셋', p: '국경 봉화대를 지키는 숲지기였다. 하나가 오르면 척후, 둘이면 습격 — 셋은 300년 동안 한 번도 없었다. 그 밤에 셋이 올랐다. 엘로윈은 그날로 그를 경비병이 아니라 지휘관이라 불렀다.' },
+      { h: '전부 데려간다', p: '재를 뿌리며 밀려드는 망자 앞에서 그는 후퇴로마다 숲의 것들을 등에 업었다. 굴도, 겨울잠도, 새끼들도. 「저들이 태우는 건 엘프의 숲이 아니라 모두의 숲이다.」' },
+      { h: '무너진 국경', p: '여섯 번째 싸움에서 국경은 끝내 무너졌다. 자신이 지휘한 패배였다. 엘로윈은 말했다 — 「네가 지휘해서 모두 살아서 무너진 거다. 그 차이를 평생 기억해라.」 그날 그는 버티는 것이 이기는 것임을 배웠다.' },
+      { h: '내민 손', p: '태엽과 가시의 땅에서 그는 적이었던 인형의 여왕에게 먼저 손을 내밀었다. 「당신들도 당했잖아. 손을 잡자.」 숲지기의 셈법은 단순하다 — 살릴 수 있는 것은 전부 살린다.' },
+      { h: '자정 앞에서', p: '세계수 아래, 300년 전에 죽은 기사와 마주 선다. 목 없는 적이 실은 구원해야 할 아군이었음을 알게 된 뒤에도 그는 물러서지 않았다. 새벽이 오면 봉화대에 다시 불을 밝히기 위해.' },
+    ],
+  },
+  c_elowyn: {
+    portrait: 'elowyn', title: '세계수의 현자 · 300년의 속죄',
+    quote: '이길 수 없는 싸움이다. 버티는 것이 이기는 것이다.',
+    sections: [
+      { h: '300년을 산 자', p: '세계수를 섬기는 현자. 엘프의 수명으로도 300년은 길다. 숲의 누구도 그가 왜 그토록 오래 사는지 묻지 못했다.' },
+      { h: '멘토', p: '봉화가 셋 오른 밤, 그는 젊은 숲지기를 지휘관으로 세웠다. 이기는 법이 아니라 물러서는 법부터 가르쳤다 — 숲을 지키는 싸움은 한 번의 승리로 끝나지 않기 때문이다.' },
+      { h: '고백', p: '「300년 전, 초대 숲의 기사 오웬을 사지로 보낸 작전을 짠 게… 나다. 그래서 나는 300년을 살았다. 속죄가 끝나지 않아서.」 그가 늙지 않은 이유는 축복이 아니라 형벌이었다.' },
+      { h: '마지막 의식', p: '자정의 의식을 되돌릴 수 있는 것은 세계수 앞에 선 현자뿐이다. 총공세를 등지고 그는 300년 만에 처음으로 끝을 준비했다. 「숲이 네 이름을 기억할 것이다. 나는 이제, 조금 쉬어도 되겠지.」' },
+    ],
+  },
+  c_evergreen: {
+    portrait: 'evergreen', title: '숲의 신궁 · 노래하는 활',
+    quote: '화살은 하나만 날아가지 않아. 노래처럼, 겹쳐서 간다.',
+    sections: [
+      { h: '상록의 이름', p: '겨울에도 잎을 떨구지 않는 나무의 이름을 받았다. 숲이 가장 참혹하게 타들어 간 계절에도 그는 전선을 떠나지 않았고, 부대는 그 사실 하나로 버텼다.' },
+      { h: '먼 눈', p: '시위를 당기기 전에 이미 세 걸음 뒤의 표적을 본다. 화살 하나가 날아가는 동안 다음 둘이 시위에 걸린다 — 삼연사는 재주가 아니라 그가 세상을 보는 방식이다.' },
+      { h: '노래', p: '그의 활시위는 소리를 낸다. 질풍의 노래가 흐르면 부대의 발이 가벼워지고, 광란의 노래가 오르면 시위가 눈으로 좇을 수 없게 빨라진다. 숲은 그 소리를 듣고 어디를 지켜야 할지 안다.' },
+      { h: '잎새의 장막', p: '적이 다가오면 싸우지 않고 거리를 되찾는다. 맞는 순간 잎에 몸을 숨겨 조준에서 사라진다. 앞에 서는 영웅이 아니라, 끝까지 남아 마지막 화살을 쏘는 영웅이다.' },
+    ],
+  },
+};
+
+/**
+ * 모든 영웅 공통 「기본」 스탯 강화 — 영웅마다 같은 6종.
+ * % 기반이라 몸값에 비례해 붙는다 (카엘 체력 +10% 와 에버그린 체력 +10% 는 절대값이 다르다).
+ */
+function commonStats(hero: string, p: string): HeroUpgradeDef[] {
+  return [
+    { id: `${p}_c_atk`, hero, group: 'stat', name: '공격력 강화', icon: '⚔', max: 3,
+      steps: ['기본 공격력', '공격력 +10%', '공격력 +20%', '공격력 +30%'] },
+    { id: `${p}_c_arm`, hero, group: 'stat', name: '방어력 강화', icon: '🛡', max: 3,
+      steps: ['기본 방어력', '방어력 +1', '방어력 +2', '방어력 +3'] },
+    { id: `${p}_c_hp`, hero, group: 'stat', name: '체력 강화', icon: '❤', max: 3,
+      steps: ['기본 체력', '체력 +10%', '체력 +20%', '체력 +30%'] },
+    { id: `${p}_c_mv`, hero, group: 'stat', name: '이동 속도 강화', icon: '👣', max: 3,
+      steps: ['기본 이동 속도', '이동 속도 +10%', '이동 속도 +20%', '이동 속도 +30%'] },
+    { id: `${p}_c_as`, hero, group: 'stat', name: '공격 속도 강화', icon: '⚡', max: 3,
+      steps: ['기본 공격 속도', '공격 속도 +10%', '공격 속도 +20%', '공격 속도 +30%'] },
+    { id: `${p}_c_rg`, hero, group: 'stat', name: '회복력 강화', icon: '💚', max: 3,
+      steps: ['기본 회복', '초당 회복 +1', '초당 회복 +2', '초당 회복 +3'] },
+  ];
+}
+
+export const HERO_UPGRADES: readonly HeroUpgradeDef[] = [
+  // ── 숲지기 카엘 ─────────────────────────────────────────────────────
+  // 기본 스펙 — 전 영웅 공통
+  ...commonStats('c_kael', 'k'),
+  // 특수 능력
+  { id: 'k_splash', hero: 'c_kael', group: 'special', name: '휩쓸기', icon: '💥', max: 3,
+    desc: '평타가 광역이 된다 — 한 번에 여럿을 후려친다',
+    steps: ['단일 공격', '평타 광역 2타일', '평타 광역 3타일', '평타 광역 4타일'] },
+  { id: 'k_air', hero: 'c_kael', group: 'special', name: '숲의 장궁', icon: '🏹', max: 1,
+    desc: '평타로 공중 유닛도 때릴 수 있게 된다',
+    steps: ['대공 불가', '활을 들어 공중도 때린다'] },
+  { id: 'k_regen', hero: 'c_kael', group: 'special', name: '숲의 맥박', icon: '🌿', max: 3,
+    desc: '가만히 있어도 체력이 차오른다 — 전선에서 오래 버티는 밑천',
+    steps: ['초당 8 회복', '초당 15 회복', '초당 20 회복', '초당 25 회복'] },
+  // 영웅 능력 (클라가 처리 — 부활·동반 출정)
+  { id: 'k_revive', hero: 'c_kael', group: 'hero', name: '부활 속도 증가', icon: '⏳', max: 3,
+    desc: '쓰러진 뒤 다시 나오기까지 걸리는 시간이 짧아진다',
+    steps: ['부활 100초', '부활 90초', '부활 80초', '부활 70초'] },
+  { id: 'k_retinue', hero: 'c_kael', group: 'hero', name: '출정 유닛 강화', icon: '👥', max: 3,
+    desc: '참전할 때 부대를 함께 데려온다',
+    steps: ['없음',
+      '출정마다 궁수5·고우토5·마멋3·드루이드1 동반',
+      '출정마다 궁수8·마멋5·드루이드2·레쉬2 동반',
+      '출정마다 궁수8·마멋5·드루이드3·레쉬3·나무지기1 동반'] },
+  { id: 'k_charge', hero: 'c_kael', group: 'hero', name: '부활 충전', icon: '♻', max: 2,
+    desc: '살아 있는 동안 부활이 미리 채워진다 — 차 있으면 즉시 부활',
+    steps: ['충전 없음',
+      '살아 있는 동안 부활이 1회 충전 — 충전돼 있으면 즉시 부활',
+      '부활 2회까지 충전 (각각 따로 찬다)'] },
+  // 영웅 스킬
+  { id: 'k_taunt', hero: 'c_kael', group: 'special', name: '숲의 부름', icon: '📣', max: 3,
+    desc: '주변 적이 나만 노리게 만든다 — 뒤에 선 아군이 안 맞는다',
+    steps: ['도발 10초 · 쿨 20초', '도발 12초 · 쿨 20초', '도발 14초 · 쿨 20초', '도발 16초 · 쿨 20초'] },
+  { id: 'k_shield', hero: 'c_kael', group: 'skill', name: '세계수의 방패', icon: '✨', max: 3,
+    desc: '잠깐 모든 피해를 무시한다 — 몰매를 한 번 끊는다',
+    steps: ['무적 4초 · 쿨 40초', '무적 5초 · 쿨 38초', '무적 6초 · 쿨 36초', '무적 7초 · 쿨 34초'] },
+  { id: 'k_thorns', hero: 'c_kael', group: 'skill', name: '가시 껍질', icon: '🌵', max: 3,
+    desc: '맞은 평타의 일부를 때린 쪽에 되돌려준다 (마법은 안 됨)',
+    steps: ['반사 50% · 8초 · 쿨 30초', '반사 60% · 8초 · 쿨 28초',
+      '반사 70% · 8초 · 쿨 26초', '반사 80% · 10초 · 쿨 24초'] },
+  { id: 'k_demo', hero: 'c_kael', group: 'skill', name: '데몰리션', icon: '☄', max: 3,
+    desc: '주변 적이 서 있기만 해도 조금씩 깎인다',
+    steps: ['없음', '주변 4.5타일 초당 6', '주변 5타일 초당 7', '주변 5.5타일 초당 8'] },
+  { id: 'k_guard', hero: 'c_kael', group: 'skill', name: '수호의 맹세', icon: '🤝', max: 3,
+    desc: '주변 아군이 받을 피해를 내가 대신 받는다',
+    steps: ['없음', '주변 8타일 아군 피해의 60%를 대신 받음',
+      '주변 9타일 아군 피해의 70%를 대신 받음', '주변 10타일 아군 피해의 80%를 대신 받음'] },
+  { id: 'k_vessel', hero: 'c_kael', group: 'skill', name: '생명의 그릇', icon: '🍶', max: 3,
+    desc: '내가 받는 회복량이 늘어난다 — 재생·치유가 다 커진다',
+    steps: ['없음', '내가 받는 회복 +100%', '내가 받는 회복 +120%', '내가 받는 회복 +140%'] },
+  { id: 'k_shout', hero: 'c_kael', group: 'skill', name: '함성', icon: '🔊', max: 3,
+    desc: '외침으로 주변 아군의 체력을 잠시 회복시킨다',
+    steps: ['없음', '주변 아군 초당 5 재생 (10초 · 쿨 30초)',
+      '주변 아군 초당 7 재생 (10초 · 쿨 30초)', '주변 아군 초당 10 재생 (10초 · 쿨 30초)'] },
+
+  // ── 신궁 에버그린 ───────────────────────────────────────────────────
+  // 기본 스펙 — 전 영웅 공통. 「먼 눈(사거리)」은 에버그린만의 강화라 특수로 옮겼다.
+  ...commonStats('c_evergreen', 'e'),
+  { id: 'e_range', hero: 'c_evergreen', group: 'special', name: '먼 눈', icon: '🎯', max: 3,
+    desc: '더 멀리서 쏜다 — 붙기 전에 먼저 깎는다',
+    steps: ['사거리 11타일', '사거리 12타일', '사거리 13타일', '사거리 14타일'] },
+  // 특수 능력
+  { id: 'e_multi', hero: 'c_evergreen', group: 'special', name: '삼연사', icon: '🏹', max: 3,
+    desc: '한 번에 여러 적을 동시에 맞힌다',
+    steps: ['동시 3기', '동시 4기', '동시 5기', '동시 6기'] },
+  { id: 'e_type', hero: 'c_evergreen', group: 'special', name: '바람의 몸', icon: '💨', max: 2,
+    desc: '재질 태그를 벗어 「대가죽·대생체」 특효를 무효로 만든다',
+    steps: ['가죽 · 생체', '생체 (가죽 없음 — 대가죽 보너스 무효)',
+      '무타입 (모든 특효 보너스 무효)'] },
+  { id: 'e_vshero', hero: 'c_evergreen', group: 'special', name: '거물 사냥', icon: '👑', max: 3,
+    desc: '적 영웅·네임드에게 추가 피해를 준다',
+    steps: ['없음', '영웅·네임드에게 +30', '영웅·네임드에게 +40', '영웅·네임드에게 +50'] },
+  { id: 'e_crit', hero: 'c_evergreen', group: 'special', name: '급소 겨냥', icon: '💥', max: 3,
+    desc: '평타가 치명타로 터질 확률이 오른다',
+    steps: ['치명타 25%', '치명타 30%', '치명타 35%', '치명타 40%'] },
+  { id: 'e_critdmg', hero: 'c_evergreen', group: 'special', name: '꿰뚫는 한 발', icon: '🎯', max: 3,
+    desc: '치명타가 터졌을 때의 배율이 오르고 무작위가 된다',
+    steps: ['치명타 피해 150%', '치명타 피해 150~200% (무작위)',
+      '치명타 피해 170~220% (무작위)', '치명타 피해 200~250% (무작위)'] },
+  // 영웅 능력 (부활·동반 출정 — 클라 담당)
+  { id: 'e_revive', hero: 'c_evergreen', group: 'hero', name: '부활 속도 증가', icon: '⏳', max: 3,
+    desc: '쓰러진 뒤 다시 나오기까지 걸리는 시간이 짧아진다',
+    steps: ['부활 170초', '부활 160초', '부활 150초', '부활 140초'] },
+  { id: 'e_retinue', hero: 'c_evergreen', group: 'hero', name: '출정 유닛 강화', icon: '👥', max: 3,
+    desc: '참전할 때 명궁대를 함께 데려온다',
+    steps: ['명궁 3 · 나무지기 2 · 드루이드 1', '명궁 5 · 나무지기 3 · 드루이드 2',
+      '명궁 7 · 나무지기 5 · 드루이드 3', '명궁 10 · 나무지기 7 · 드루이드 5'] },
+  { id: 'e_charge', hero: 'c_evergreen', group: 'hero', name: '부활 충전', icon: '♻', max: 2,
+    desc: '살아 있는 동안 부활이 미리 채워진다 — 차 있으면 즉시 부활',
+    steps: ['충전 없음', '부활 1회 충전 — 충전돼 있으면 즉시 부활', '부활 2회까지 충전'] },
+  // 영웅 스킬
+  { id: 'e_ward', hero: 'c_evergreen', group: 'skill', name: '숲의 가호', icon: '🍀', max: 3,
+    desc: '내 상태이상 면역을 곁의 아군에게도 나눠준다 (판당 1회)',
+    steps: ['나만 모든 상태이상 면역',
+      '+ 아군 1명에게도 면역 부여 (1회성 — 다시 태어나야 재사용)',
+      '+ 아군 2명에게 부여', '+ 아군 3명에게 부여'] },
+  { id: 'e_flee', hero: 'c_evergreen', group: 'skill', name: '고립 회피', icon: '🏃', max: 2,
+    desc: '곁에 아군이 없으면 싸우지 않고 기지로 물러난다',
+    steps: ['6타일 안에 아군 없으면 이속 +20%로 후퇴',
+      '10타일 · 이속 +25%', '15타일 · 이속 +30%'] },
+  { id: 'e_gale', hero: 'c_evergreen', group: 'skill', name: '질풍의 노래', icon: '🎵', max: 3,
+    desc: '주변 아군의 공격·이동 속도를 함께 끌어올린다',
+    steps: ['주변 6타일 공·이속 +10% (10초 · 쿨 20초)', '8타일 +12%', '10타일 +15%', '13타일 +18%'] },
+  { id: 'e_frenzy', hero: 'c_evergreen', group: 'skill', name: '광란의 노래', icon: '🎶', max: 3,
+    desc: '잠깐 내 공격 속도를 극한으로 끌어올린다',
+    steps: ['없음', '내 공격 속도 +80% (8초 · 쿨 30초)',
+      '내 공격 속도 +80% (8초 · 쿨 25초)', '내 공격 속도 +80% (8초 · 쿨 20초)'] },
+  { id: 'e_dance', hero: 'c_evergreen', group: 'skill', name: '바람의 춤', icon: '🌀', max: 1,
+    desc: '적이 붙으면 거리를 되찾으며 쏜다 — 몸싸움도 하지 않는다',
+    steps: ['없음',
+      '적이 사거리 안으로 들어오면 최대 사거리까지 물러나며 쏜다 — 이속 +20%, 충돌 없음'] },
+  { id: 'e_veil', hero: 'c_evergreen', group: 'skill', name: '잎새의 장막', icon: '🍃', max: 1,
+    desc: '맞는 순간 잎에 몸을 숨겨 조준에서 사라진다',
+    steps: ['없음', '공격당하면 4초간 은신 (쿨 20초)'] },
+  { id: 'e_rain', hero: 'c_evergreen', group: 'skill', name: '은빛 화살비', icon: '🌧', max: 3,
+    desc: '지정한 곳에 은빛 화살이 쏟아진다 — 맞은 적은 회복이 피해가 되고, 모든 공격을 치명타로 맞는다',
+    steps: ['없음',
+      '지정 지역에 12초간 은빛 화살 — 첫 70 · 초당 25 · 맞은 적에게 신성부식·치명상 10초 (쿨 55초)',
+      '첫 85 · 초당 30', '첫 100 · 초당 35'] },
+
+  // ── 현자 엘로윈 ─────────────────────────────────────────────────────
+  ...commonStats('c_elowyn', 'w'),
+  // 특수 능력 — 「자리를 잡고 마법을 퍼붓는 포대」를 밀어주는 갈래
+  { id: 'w_cross', hero: 'c_elowyn', group: 'special', name: '양손 시전', icon: '🤲', max: 1,
+    desc: '한 스윙에 지상 하나와 공중 하나를 동시에 맞힌다',
+    steps: ['한 번에 하나', '사거리 안의 지상 1기 + 공중 1기를 같이 때린다'] },
+  { id: 'w_cadence', hero: 'c_elowyn', group: 'special', name: '가속 시전', icon: '🎼', max: 1,
+    desc: '주문을 이어 갈수록 시전이 빨라졌다가, 숨을 고르며 다시 느려진다',
+    steps: ['공격 주기 1.4초 고정',
+      '주기가 1.4 → 1.2 → 1.0 → 0.8 → 0.6 → 0.8 → 1.0 → 1.2 로 순환'] },
+  { id: 'w_cycle', hero: 'c_elowyn', group: 'special', name: '마나 순환', icon: '🔄', max: 3,
+    desc: '곁에서 적이 쓰러질 때마다 마나가 고인다 — 다 차면 모든 스킬 쿨이 씻긴다',
+    steps: ['없음', '주변 12타일 적 처치 30기마다 전 스킬 쿨 초기화',
+      '26기마다 초기화', '22기마다 초기화'] },
+  { id: 'w_stance', hero: 'c_elowyn', group: 'special', name: '반석의 자세', icon: '🗿', max: 1,
+    desc: '적이 몸으로 밀어도 자리를 내주지 않는다',
+    steps: ['밀린다', '어떤 몸싸움에도 밀려나지 않는다'] },
+  // 영웅 능력 (부활·동반 출정 — 클라 담당)
+  { id: 'w_revive', hero: 'c_elowyn', group: 'hero', name: '부활 속도 증가', icon: '⏳', max: 3,
+    desc: '쓰러진 뒤 다시 나오기까지 걸리는 시간이 짧아진다',
+    steps: ['부활 240초', '부활 220초', '부활 200초', '부활 180초'] },
+  { id: 'w_retinue', hero: 'c_elowyn', group: 'hero', name: '출정 유닛 강화', icon: '👥', max: 3,
+    desc: '참전할 때 부대를 함께 데려온다',
+    steps: ['없음',
+      '나무지기 2 · 드루이드 2 · 가시마녀 1 동반',
+      '나무지기 4 · 드루이드 2 · 가시마녀 3 동반',
+      '나무지기 5 · 드루이드 3 · 가시마녀 4 동반'] },
+  { id: 'w_charge', hero: 'c_elowyn', group: 'hero', name: '부활 충전', icon: '♻', max: 2,
+    desc: '살아 있는 동안 부활이 미리 채워진다 — 차 있으면 즉시 부활',
+    steps: ['충전 없음', '부활 1회 충전 — 충전돼 있으면 즉시 부활', '부활 2회까지 충전'] },
+  // 영웅 스킬 — 마법 4종을 키우거나, 아예 새 주문을 얻는다
+  { id: 'w_blaze', hero: 'c_elowyn', group: 'skill', name: '블레이즈 강화', icon: '🔥', max: 3,
+    desc: '불구덩이가 더 오래 타고 더 뜨거워진다',
+    steps: ['10초 · 초당 34 · 쿨 20초', '13초 · 초당 40 · 쿨 20초',
+      '16초 · 초당 44 · 쿨 20초', '20초 · 초당 50 · 쿨 20초'] },
+  { id: 'w_arcane', hero: 'c_elowyn', group: 'skill', name: '비전 축적', icon: '🔋', max: 3,
+    desc: '주문을 미리 재어 둔다 — 쿨이 다 돌면 한 번 더 쓸 몫이 쌓이고, 연달아 쏠 땐 3초만 쉰다',
+    steps: ['차지 없음', '블레이즈 2차지 (연사 간격 3초)',
+      '+ 어스퀘이크 2차지', '+ 블리자드 2차지'] },
+  { id: 'w_quake', hero: 'c_elowyn', group: 'skill', name: '어스퀘이크 강화', icon: '🌋', max: 3,
+    desc: '갈라진 땅이 둔화만 걸던 데서 실제로 지상 유닛을 부수기 시작한다',
+    steps: ['둔화만 (지름 7타일)',
+      '지름 7타일 · 지상에 120 피해', '지름 7타일 · 140 피해', '지름 7타일 · 180 피해'] },
+  { id: 'w_bliz', hero: 'c_elowyn', group: 'skill', name: '블리자드 강화', icon: '❄', max: 3,
+    desc: '눈보라가 더 오래 얼리고, 얼지 않던 재질까지 얼리며, 피해까지 준다',
+    steps: ['빙결 6초 (판금·거대·구조물 면역)',
+      '빙결 9초 · 판금도 얼림 · 지상/공중 88 피해',
+      '빙결 9초 · 판금·거대도 얼림 · 102 피해',
+      '빙결 9초 · 판금·거대도 얼림 · 120 피해'] },
+  { id: 'w_meteor', hero: 'c_elowyn', group: 'skill', name: '메테오 스트라이크', icon: '☄', max: 3,
+    desc: '넓은 하늘에서 운석이 쏟아진다 — 맞은 적은 불타고 숨이 막혀 스킬을 못 쓴다',
+    steps: ['없음',
+      '지름 15타일에 7초간 운석 · 지상/공중 220 피해 · 화상 8초(초당 12) · 질식 4초 (쿨 120초)',
+      '피해 240', '피해 280'] },
+];
+
+export const HERO_UPGRADES_BY_HERO = new Map<string, HeroUpgradeDef[]>();
+for (const u of HERO_UPGRADES) {
+  const list = HERO_UPGRADES_BY_HERO.get(u.hero) ?? [];
+  list.push(u);
+  HERO_UPGRADES_BY_HERO.set(u.hero, list);
+}
+
+const HERO_KEY = 'camp_hero_upgrades';
+/** 13 클리어 시 「영웅 강화」가 열린다. */
+export const HERO_UNLOCK_STAGE = 13;
+export function heroUpgradesOpen(): boolean {
+  return campaignCleared() >= HERO_UNLOCK_STAGE;
+}
+
+/** 강화 id → 찍은 단계. */
+export function heroAlloc(): Record<string, number> {
+  try {
+    const raw = JSON.parse(localStorage.getItem(HERO_KEY) ?? '{}') as Record<string, unknown>;
+    const out: Record<string, number> = {};
+    for (const [k, v] of Object.entries(raw)) if (typeof v === 'number' && v > 0) out[k] = v;
+    return out;
+  } catch {
+    return {};
+  }
+}
+
+export function saveHeroAlloc(alloc: Record<string, number>): void {
+  localStorage.setItem(HERO_KEY, JSON.stringify(alloc));
+  onProgressChanged?.();
+}
+
+/** 이 영웅에게 쓴 포인트 (갈래 지정 시 그 갈래만). */
+export function heroPointsSpent(
+  hero: string, alloc: Record<string, number>, group?: HeroUpgradeDef['group'],
+): number {
+  let n = 0;
+  for (const u of HERO_UPGRADES_BY_HERO.get(hero) ?? []) {
+    if (group && u.group !== group) continue;
+    n += alloc[u.id] ?? 0;
+  }
+  return n;
+}
+
+/** 이 갈래에 남은 포인트. */
+export function heroGroupLeft(
+  hero: string, alloc: Record<string, number>, group: HeroUpgradeDef['group'],
+): number {
+  return Math.max(0, (HERO_GROUP_POINTS[group] ?? 0) - heroPointsSpent(hero, alloc, group));
+}
+
+/** 찍은 단계 (상한·개방 여부까지 반영한 실제 값). */
+export function heroLv(id: string): number {
+  if (!heroUpgradesOpen()) return 0;
+  const u = HERO_UPGRADES.find((x) => x.id === id);
+  if (!u) return 0;
+  return Math.min(u.max, heroAlloc()[id] ?? 0);
+}
+
+/**
+ * 영웅 강화를 유닛 정의에 반영한 사본.
+ *
+ * 심에 넘길 수 있는 것만 여기서 처리한다 — 체력·공격·방어·평타·스킬 수치와
+ * 새 패시브(데몰리션·수호의 맹세·생명의 그릇), 그리고 「함성」 액티브.
+ * 부활 시간·부활 충전·동반 출정은 스폰 스크립트 소관이라 여기서 다루지 않는다.
+ */
+/**
+ * 신궁 에버그린 강화 적용.
+ *
+ * 「혼합(숲의 총아)」은 모든 수치에 조금씩 얹히므로 다른 줄과 합산한다.
+ * 부활 시간·부활 충전·동반 출정은 스폰 스크립트 소관이라 여기서 다루지 않는다.
+ */
+function applyEvergreen(base: EntityDef): EntityDef {
+  // 체력·방어·이속·공속·공격력은 공통 스탯(commonStats)이 이미 base 에 반영돼 있다.
+  const lv = (id: string): number => heroLv(id);
+  const out: Mutable<EntityDef> = { ...base };
+
+  // 평타 — 사거리(먼 눈)·동시 타격(삼연사)
+  const rng = lv('e_range');
+  const mt = lv('e_multi');
+  if (base.weapon && (rng > 0 || mt > 0)) {
+    const w = base.weapon;
+    out.weapon = {
+      ...w,
+      range: w.range + TILE * rng,
+      multiTargets: (w.multiTargets ?? 3) + mt,
+    };
+    if (rng > 0) out.acquireRange = out.weapon.range;
+  }
+  const crit = lv('e_crit');
+  if (crit > 0) out.baseCritPct = 25 + 5 * crit;
+  const cd2 = lv('e_critdmg');
+  if (cd2 > 0) {
+    const r = ([[150, 200], [170, 220], [200, 250]] as const)[cd2 - 1];
+    if (r) out.critMulRange = r;
+  }
+  const vh = lv('e_vshero');
+  if (vh > 0) out.bonusVsHero = [0, 30, 40, 50][vh]!;
+
+  // 「바람의 몸」 — 특효 보너스를 피하려고 태그를 벗는다
+  const ty = lv('e_type');
+  if (ty === 1) out.tags = base.tags.filter((t) => t !== 'leather');
+  else if (ty >= 2) out.tags = base.tags.filter((t) => t !== 'leather' && t !== 'bio');
+
+  // 고립 회피
+  const fl = lv('e_flee');
+  if (fl > 0) out.loneFlee = { radius: TILE * [6, 10, 15][fl]!, speedPct: [20, 25, 30][fl]! };
+  // 바람의 춤 / 잎새의 장막 / 숲의 가호 나눔
+  if (lv('e_dance') > 0) out.kiteDance = { speedPct: 20 };
+  if (lv('e_veil') > 0) out.veilOnHit = { durTicks: SEC * 4, cooldown: SEC * 20 };
+  const wd = lv('e_ward');
+  if (wd > 0) out.wardGrant = wd;
+
+  // 스킬 — 질풍의 노래 수치 교체 + 새 액티브 두 종
+  const gale = lv('e_gale');
+  const frenzy = lv('e_frenzy');
+  const rain = lv('e_rain');
+  if (base.actives && (gale > 0 || frenzy > 0 || rain > 0)) {
+    const acts = base.actives.map((a) => {
+      if (a.name === '질풍의 노래' && gale > 0) {
+        return {
+          ...a, auraRadius: TILE * [6, 8, 10, 13][gale]!,
+          desc: `주변 아군의 공격 속도·이동 속도 ${[10, 12, 15, 18][gale]!}% 상승 (10초)`,
+        };
+      }
+      return a;
+    });
+    if (frenzy > 0) {
+      acts.push({
+        name: '광란의 노래', desc: '내 공격 속도가 8초간 80% 오른다',
+        kind: 'selfbuff', cooldown: SEC * [0, 30, 25, 20][frenzy]!, durTicks: SEC * 8,
+        atkSpeedPct: 80,
+      } as never);
+    }
+    if (rain > 0) {
+      acts.push({
+        name: '은빛 화살비',
+        desc: `지정 지역에 12초간 은빛 화살 — 첫 ${[0, 70, 85, 100][rain]!} · 초당 ${[0, 25, 30, 35][rain]!}`
+          + ' · 맞은 적에게 신성부식·치명상 10초',
+        kind: 'zone', targets: 'both', cooldown: SEC * 55, zoneAtTarget: true,
+        castRange: TILE * 12, damage: [0, 70, 85, 100][rain]!,
+        zone: { kind: 'silverrain', radius: TILE * 2.6, ticks: SEC * 12 },
+      } as never);
+    }
+    out.actives = acts;
+  }
+  return out;
+}
+
+/**
+ * 현자 엘로윈 강화 적용.
+ *
+ * 「자리를 잡고 마법을 퍼붓는 포대」라는 성격을 그대로 밀어준다 —
+ * 평타는 교차 사격·가속 사이클로, 마법은 차지·범위·새 주문으로 커진다.
+ * 부활 시간·부활 충전·동반 출정은 스폰 스크립트 소관이라 여기서 다루지 않는다.
+ */
+function applyElowyn(base: EntityDef): EntityDef {
+  const lv = (id: string): number => heroLv(id);
+  const out: Mutable<EntityDef> = { ...base };
+
+  // ── 특수 ──
+  if (lv('w_cross') > 0 && base.weapon) out.weapon = { ...base.weapon, crossTargets: true };
+  if (lv('w_cadence') > 0) {
+    // 1.4 → 1.2 → 1.0 → 0.8 → 0.6 → 0.8 → 1.0 → 1.2 (그리고 다시 처음으로)
+    out.cadence = [28, 24, 20, 16, 12, 16, 20, 24];
+  }
+  const cyc = lv('w_cycle');
+  if (cyc > 0) out.skillReset = { need: [0, 30, 26, 22][cyc]!, radius: TILE * 12 };
+  if (lv('w_stance') > 0) out.immovable = true;
+
+  // ── 스킬 ──
+  const blaze = lv('w_blaze');
+  const quake = lv('w_quake');
+  const bliz = lv('w_bliz');
+  const arc = lv('w_arcane');
+  const met = lv('w_meteor');
+  if (!base.actives) return out;
+
+  const acts = base.actives.map((a) => {
+    if (a.name === '블레이즈') {
+      const secs = [10, 13, 16, 20][blaze]!;
+      const dps = [34, 40, 44, 50][blaze]!;
+      const o: Record<string, unknown> = { ...a };
+      if (blaze > 0) {
+        o['zone'] = { ...a.zone!, ticks: SEC * secs };
+        // 장판 dps 는 시전자가 덮어쓴다 (ZONE_DEFS.blaze 는 기본값 34)
+        o['zoneDps'] = dps;
+        o['desc'] = `대상 구역을 ${secs}초간 불구덩이로 만든다 (초당 ${dps})`;
+      }
+      // 비전 축적 1단계부터 블레이즈가 차지 스킬이 된다
+      if (arc >= 1) { o['charges'] = 2; o['chargeGap'] = SEC * 3; }
+      return o as never;
+    }
+    if (a.name === '어스퀘이크') {
+      const o: Record<string, unknown> = { ...a };
+      if (quake > 0) {
+        // 범위는 기본(지름 7타일 = 반경 3.5)을 그대로 둔다 — 커지는 건 위력뿐이다
+        o['damage'] = [0, 120, 140, 180][quake]!;
+        o['desc'] = `지름 7타일에 지진 — 적 전원 10초 둔화 + 지상에 ${[0, 120, 140, 180][quake]!} 피해`;
+      }
+      if (arc >= 2) { o['charges'] = 2; o['chargeGap'] = SEC * 3; }
+      return o as never;
+    }
+    if (a.name === '블리자드') {
+      const o: Record<string, unknown> = { ...a };
+      if (bliz > 0) {
+        o['durTicks'] = SEC * 9;
+        o['damage'] = [0, 88, 102, 120][bliz]!;
+        // 1단계는 판금까지, 2단계부터 거대까지 얼린다 (구조물은 끝까지 면역)
+        o['freezeAlsoTags'] = bliz >= 2 ? ['plate', 'massive'] : ['plate'];
+        o['desc'] = `대상 지역의 적을 9초간 빙결 + ${[0, 88, 102, 120][bliz]!} 피해`
+          + (bliz >= 2 ? ' — 판금·거대도 얼린다' : ' — 판금도 얼린다');
+      }
+      if (arc >= 3) { o['charges'] = 2; o['chargeGap'] = SEC * 3; }
+      return o as never;
+    }
+    return a;
+  });
+
+  if (met > 0) {
+    const dmg = [0, 220, 240, 280][met]!;
+    acts.push({
+      name: '메테오 스트라이크',
+      desc: `지름 15타일에 7초간 운석 낙하 — 지상·공중에 ${dmg} 피해`
+        + ' · 화상 8초(초당 12) · 질식 4초(액티브 봉인·해제 불가)',
+      kind: 'meteor', cooldown: SEC * 120, castRange: TILE * 12,
+      splash: TILE * 7.5, damage: dmg,
+      burn: { dps: 12, ticks: SEC * 8 }, chokeTicks: SEC * 4,
+      zone: { kind: 'meteor', radius: TILE * 7.5, ticks: SEC * 7 },
+    } as never);
+  }
+  out.actives = acts;
+  return out;
+}
+
+/** 전 영웅 공통 「기본」 스탯 강화 적용 — % 는 원본 수치 기준. */
+function applyCommonStats(base: EntityDef, p: string): EntityDef {
+  const lv = (k: string): number => heroLv(`${p}_c_${k}`);
+  const atk = lv('atk');
+  const arm = lv('arm');
+  const hp = lv('hp');
+  const mv = lv('mv');
+  const asp = lv('as');
+  const rg = lv('rg');
+  if (atk + arm + hp + mv + asp + rg === 0) return base;
+  const out: Mutable<EntityDef> = { ...base };
+  if (hp > 0) out.maxHp = Math.round(base.maxHp * (100 + 10 * hp) / 100);
+  if (arm > 0) out.armor = (base.armor ?? 0) + arm;
+  if (rg > 0) out.regenPerSec = (base.regenPerSec ?? 0) + rg;
+  if (mv > 0) out.speed = Math.round(base.speed * (100 + 10 * mv) / 100);
+  if (base.weapon && (atk > 0 || asp > 0)) {
+    const w = base.weapon;
+    // 공격력 % 는 상성 보너스(비행 +25 같은)에도 같이 붙는다
+    const bonus = w.bonus && atk > 0
+      ? Object.fromEntries(Object.entries(w.bonus).map(([k2, v]) => [k2, Math.round(v * (100 + 10 * atk) / 100)]))
+      : w.bonus;
+    out.weapon = {
+      ...w,
+      damage: Math.round(w.damage * (100 + 10 * atk) / 100),
+      ...(bonus ? { bonus } : {}),
+      cooldown: Math.max(1, Math.round((w.cooldown * 100) / (100 + 10 * asp))),
+    };
+  }
+  return out;
+}
+
+const COMMON_PREFIX: Record<string, string> = { c_kael: 'k', c_evergreen: 'e', c_elowyn: 'w' };
+
+export function applyHeroUpgrades(base: EntityDef, hero: string): EntityDef {
+  if (!heroUpgradesOpen()) return base;
+  const prefix = COMMON_PREFIX[hero];
+  const common = prefix ? applyCommonStats(base, prefix) : base;
+  if (hero === 'c_evergreen') return applyEvergreen(common);
+  if (hero === 'c_elowyn') return applyElowyn(common);
+  if (hero !== 'c_kael') return common;
+  const lv = (id: string): number => heroLv(id);
+
+  const out: Mutable<EntityDef> = { ...common };
+  const rg = lv('k_regen');
+  // 숲의 맥박은 절대값으로 갈아 끼운다 — 공통 회복 강화 몫은 그 위에 얹는다
+  if (rg > 0) out.regenPerSec = [8, 15, 20, 25][rg]! + heroLv('k_c_rg');
+
+  const sp = lv('k_splash');
+  const air = lv('k_air');
+  if (common.weapon && (sp > 0 || air > 0)) {
+    out.weapon = {
+      ...common.weapon,
+      ...(sp > 0 ? { splash: TILE * (1 + sp) } : {}),
+      ...(air > 0 ? { targets: 'both' as const } : {}),
+    };
+  }
+  const demo = lv('k_demo');
+  if (demo > 0) out.demolition = { radius: Math.round(TILE * [0, 4.5, 5, 5.5][demo]!), dps: [0, 6, 7, 8][demo]! };
+  const gd = lv('k_guard');
+  if (gd > 0) out.guardShare = { radius: TILE * [0, 8, 9, 10][gd]!, pct: [0, 60, 70, 80][gd]! };
+  const vs = lv('k_vessel');
+  if (vs > 0) out.healTakenPct = [0, 100, 120, 140][vs]!;
+
+  // 스킬 수치 — 이름으로 찾아 갈아 끼운다
+  const shout = lv('k_shout');
+  const taunt = lv('k_taunt');
+  const shield = lv('k_shield');
+  const thorns = lv('k_thorns');
+  if (common.actives && (taunt > 0 || shield > 0 || thorns > 0 || shout > 0)) {
+    const acts = common.actives.map((a) => {
+      if (a.name === '숲의 부름' && taunt > 0) return { ...a, durTicks: SEC * [10, 12, 14, 16][taunt]! };
+      if (a.name === '세계수의 방패' && shield > 0) {
+        return { ...a, durTicks: SEC * [4, 5, 6, 7][shield]!, cooldown: SEC * [40, 38, 36, 34][shield]! };
+      }
+      if (a.name === '가시 껍질' && thorns > 0) {
+        return {
+          ...a, reflectPct: [50, 60, 70, 80][thorns]!,
+          durTicks: SEC * [8, 8, 8, 10][thorns]!, cooldown: SEC * [30, 28, 26, 24][thorns]!,
+        };
+      }
+      return a;
+    });
+    if (shout > 0) {
+      acts.push({
+        name: '함성', desc: `주변 아군이 초당 ${[0, 5, 7, 10][shout]!} 회복 (10초)`,
+        kind: 'regenAura', cooldown: SEC * 30, durTicks: SEC * 10,
+        damage: [0, 5, 7, 10][shout]!, auraRadius: TILE * 7,
+      });
+    }
+    out.actives = acts;
+  }
+  return out;
+}
+
+/** 카엘의 부활 대기 시간(초) — 「불굴」 단계에 따라 줄어든다. */
+export function kaelReviveSec(): number {
+  return [100, 90, 80, 70][heroLv('k_revive')]!;
+}
+/** 카엘이 데리고 나오는 부대 — 「숲지기의 부대」 단계별. */
+export function kaelRetinue(): { defId: string; count: number }[] {
+  const t = heroLv('k_retinue');
+  if (t === 1) return [{ defId: 's_elf_archer', count: 5 }, { defId: 's_gouto', count: 5 },
+    { defId: 's_marmot', count: 3 }, { defId: 's_druid', count: 1 }];
+  if (t === 2) return [{ defId: 's_elf_archer', count: 8 }, { defId: 's_marmot', count: 5 },
+    { defId: 's_druid', count: 2 }, { defId: 's_mushroom_bomber', count: 2 }];
+  if (t === 3) return [{ defId: 's_elf_archer', count: 8 }, { defId: 's_marmot', count: 5 },
+    { defId: 's_druid', count: 3 }, { defId: 's_mushroom_bomber', count: 3 },
+    { defId: 's_treekeeper', count: 1 }];
+  return [];
+}
+/** 부활 충전 최대 개수 — 살아 있는 동안 하나씩 찬다. */
+export function kaelReviveCharges(): number {
+  return heroLv('k_charge');
+}
+
+/** 에버그린 부활 대기 (초) — 「숲은 다시 부른다」. */
+export function evergreenReviveSec(): number {
+  return [170, 160, 150, 140][heroLv('e_revive')]!;
+}
+/** 에버그린이 데리고 나오는 부대 — 「명궁대」 단계별. */
+export function evergreenRetinue(): { defId: string; count: number }[] {
+  const t = heroLv('e_retinue');
+  const n = [[3, 2, 1], [5, 3, 2], [7, 5, 3], [10, 7, 5]][t]!;
+  return [
+    { defId: 's_marksman', count: n[0]! },
+    { defId: 's_treekeeper', count: n[1]! },
+    { defId: 's_druid', count: n[2]! },
+  ];
+}
+/** 에버그린 부활 충전 횟수 — 「부활 충전」. */
+export function evergreenReviveCharges(): number {
+  return heroLv('e_charge');
+}
+
+/** 엘로윈 부활 대기 (초) — 「부활 속도 증가」. */
+export function elowynReviveSec(): number {
+  return [240, 220, 200, 180][heroLv('w_revive')]!;
+}
+/** 엘로윈이 데리고 나오는 부대 — 「출정 유닛 강화」 단계별. */
+export function elowynRetinue(): { defId: string; count: number }[] {
+  const t = heroLv('w_retinue');
+  if (t === 1) return [{ defId: 's_treekeeper', count: 2 }, { defId: 's_druid', count: 2 },
+    { defId: 's_thorn_witch', count: 1 }];
+  if (t === 2) return [{ defId: 's_treekeeper', count: 4 }, { defId: 's_druid', count: 2 },
+    { defId: 's_thorn_witch', count: 3 }];
+  if (t === 3) return [{ defId: 's_treekeeper', count: 5 }, { defId: 's_druid', count: 3 },
+    { defId: 's_thorn_witch', count: 4 }];
+  return [];
+}
+/** 엘로윈 부활 충전 횟수 — 「부활 충전」. */
+export function elowynReviveCharges(): number {
+  return heroLv('w_charge');
 }

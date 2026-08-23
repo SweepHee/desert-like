@@ -30,7 +30,8 @@ const mkGame = (seed: number, diff: 'easy' | 'normal' | 'hard'): Game =>
   ok(seen.size === 4, `봇 성격 4유형 전부 등장 (${[...seen].join(',')})`);
 }
 
-// 2) 봇이 최종·최상급 유닛과 해금 스킬을 실제로 산다 (10분 관찰, 여러 시드)
+// 2) 봇이 최종·최상급 유닛과 해금 스킬을 실제로 산다 (20분 관찰, 여러 시드).
+//    최종 유닛은 4티어(1800원)를 찍어야 나오므로 10분으로는 도달 전에 끝난다.
 {
   let topTierBought = 0;
   let finalBought = 0;
@@ -38,7 +39,7 @@ const mkGame = (seed: number, diff: 'easy' | 'normal' | 'hard'): Game =>
   const unlockIds = new Set(UPGRADES.filter((u) => u.cost >= 1000).map((u) => u.id));
   for (const seed of [1, 2, 3, 4, 5]) {
     const g = mkGame(seed, 'easy');
-    for (let t = 0; t < 20 * 60 * 10 && !g.over; t++) stepGame(g);
+    for (let t = 0; t < 20 * 60 * 20 && !g.over; t++) stepGame(g);
     for (const p of g.players) {
       if (!p.isBot) continue;
       for (const id of Object.keys(p.comp)) {
@@ -49,7 +50,7 @@ const mkGame = (seed: number, diff: 'easy' | 'normal' | 'hard'): Game =>
       for (const uid of Object.keys(p.upgrades)) if (unlockIds.has(uid)) unlockBought++;
     }
   }
-  ok(topTierBought >= 10, `봇이 최상급+ 유닛 구매 (10분 × 5시드에 ${topTierBought}기)`);
+  ok(topTierBought >= 10, `봇이 최상급+ 유닛 구매 (20분 × 5시드에 ${topTierBought}기)`);
   ok(finalBought >= 1, `봇이 최종 유닛 구매 (${finalBought}기)`);
   void unlockBought;
 }
@@ -59,7 +60,9 @@ const mkGame = (seed: number, diff: 'easy' | 'normal' | 'hard'): Game =>
   const g = mkGame(3, 'easy');
   const bot = g.players[3]!; // 2팀 실바린 봇
   bot.comp.s_sage = 1;
-  bot.techLevel = 3;
+  // 세이지 해금은 4티어 요구다 (최종 유닛의 업그레이드는 전부 4티어).
+  // 3 으로 두면 조건 미달이라 영영 못 산다 — 구매 「의사」만 보는 테스트이므로 4로 준다.
+  bot.techLevel = 4;
   let bought = false;
   for (let t = 0; t < 20 * 120 && !bought; t++) {
     bot.money = Math.max(bot.money, 2000); // 여윳돈 보장 — 구매 의사만 검증

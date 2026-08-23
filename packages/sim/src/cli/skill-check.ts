@@ -381,7 +381,9 @@ const ok = (cond: boolean, label: string): void => {
   const worst = basics.map((id) => {
     const w = DEFS[id]!.weapon!;
     let dmg = w.damage;
-    for (const tag of nexusDef.tags) dmg += w.bonus?.[tag] ?? 0;
+    // 넥서스 태그엔 전투 외 역할 태그도 섞여 있어 BonusKey 로 좁히지 않고 조회한다
+    const bonus = w.bonus as Partial<Record<string, number>> | undefined;
+    for (const tag of nexusDef.tags) dmg += bonus?.[tag] ?? 0;
     return { id, net: dmg - nexusDef.armor };
   });
   const over = worst.filter((x) => x.net > 1);
@@ -390,7 +392,9 @@ const ok = (cond: boolean, label: string): void => {
   const siegeNet = (id: string): number => {
     const w = DEFS[id]!.weapon!;
     let dmg = w.damage;
-    for (const tag of nexusDef.tags) dmg += w.bonus?.[tag] ?? 0;
+    // 넥서스 태그엔 전투 외 역할 태그도 섞여 있어 BonusKey 로 좁히지 않고 조회한다
+    const bonus = w.bonus as Partial<Record<string, number>> | undefined;
+    for (const tag of nexusDef.tags) dmg += bonus?.[tag] ?? 0;
     return dmg - nexusDef.armor;
   };
   ok(siegeNet('s_marmot') > 20, `공성 유닛(마멋)은 넥서스에 유효타 (${siegeNet('s_marmot')})`);

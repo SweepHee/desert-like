@@ -10,12 +10,14 @@
  */
 import {
   Application, Assets, ColorMatrixFilter, Container, Graphics, Rectangle, Sprite, Text, Texture,
+  TilingSprite,
 } from 'pixi.js';
 import {
   DEFS, FP, MAPS, DEFAULT_MAP, laneCenterY, laneHalfWAt, mapHalfH, tiles,
   type Game, type MapDef,
 } from '@desertlike/sim';
 import { artOf } from './sprites.ts';
+import { MAP_DECO, MAP_PROPS, MAP_WATER_SPANS, decoAt, inWaterSpan } from './mapdeco.ts';
 import type { Audio, SfxKey } from './audio.ts';
 
 export const TILE = 26;
@@ -42,12 +44,14 @@ function renderHalfH(m: MapDef = curMap): number {
 
 /** 시뮬 y 좌표(FP) → 월드 픽셀 y (미니맵 점프용). */
 export function worldYOf(yFP: number): number {
-  return ((yFP + renderHalfH()) / FP) * TILE * Y_SQUASH + PAD_TOP;
+  const sq = curMap.vertical ? 1 : Y_SQUASH;
+  return ((yFP + renderHalfH()) / FP) * TILE * sq + PAD_TOP;
 }
 
 /** worldYOf 의 역변환: 월드 픽셀 y → FP y (미니맵 뷰포트 표시용). */
 export function worldYToFP(wy: number): number {
-  return Math.floor(((wy - PAD_TOP) / (TILE * Y_SQUASH)) * FP) - renderHalfH();
+  const sq = curMap.vertical ? 1 : Y_SQUASH;
+  return Math.floor(((wy - PAD_TOP) / (TILE * sq)) * FP) - renderHalfH();
 }
 
 /** 월드 픽셀 크기 (줌 적용 전, 현재 맵 기준). */
@@ -55,7 +59,8 @@ export function worldW(): number {
   return (curMap.length / FP) * TILE;
 }
 export function worldH(): number {
-  return ((renderHalfH() * 2) / FP) * TILE * Y_SQUASH + PAD_TOP + PAD_BOTTOM;
+  const sq = curMap.vertical ? 1 : Y_SQUASH;
+  return ((renderHalfH() * 2) / FP) * TILE * sq + PAD_TOP + PAD_BOTTOM;
 }
 
 /**
@@ -93,6 +98,7 @@ export const ASSET_UNITS: Record<string, string | string[]> = {
   m_specter_teddy: '/assets/units/m_specter_teddy.png',
   m_gore_teddy: '/assets/units/m_gore_teddy.png',
   m_alice: '/assets/units/m_alice.png',
+  c_alice_hero: '/assets/units/m_alice.png',
   m_grandfather_clock: '/assets/units/m_grandfather_clock.png',
   m_pennywise: '/assets/units/m_pennywise.png',
   m_thread_needle: '/assets/units/m_thread_needle.png',
@@ -118,13 +124,17 @@ export const ASSET_UNITS: Record<string, string | string[]> = {
   c_ash_revenant: '/assets/units/p_wraith.png',
   c_mad_ballerina: '/assets/units/m_puppet_ann.png',
   c_bone_colossus: '/assets/units/p_corpse_golem.png',
+  // 라다만토스: 디멘터를 그대로 키운 것 — 같은 그림에 크기만 크게
+  c_radamanthus: '/assets/units/p_dementor.png',
+  // 공허 강령술사: 스켈레톤 소환사를 그대로 키운 것
+  c_void_necromancer: '/assets/units/p_summoner.png',
   c_dread_gargoyle: '/assets/units/p_demilich.png',
   c_kurga: '/assets/units/p_lich.png',
   c_mammon_lord: '/assets/units/p_mammon.png',
   c_balthar: '/assets/units/p_demilich.png',
   // 구조물·수호자 (종족 무관)
-  nexus: '/assets/units/nexus.png',
-  tower: '/assets/units/tower.png',
+  nexus: '/assets/units/nexus.png?v=2',
+  tower: '/assets/units/tower.png?v=2',
   dragon: '/assets/units/dragon.png',
   hollow: '/assets/units/hollow.png',
   // 판데모니엄 확장 로스터 (v1.1)
@@ -139,18 +149,23 @@ export const ASSET_UNITS: Record<string, string | string[]> = {
   s_elurion: '/assets/units/s_elurion.png',
   s_oberon: '/assets/units/s_oberon.png',
   c_grave_warden: '/assets/units/p_thanatos.png', // 타나토스와 같은 모습
+  c_bone_grave: '/assets/units/c_bone_grave.png',
   m_ballista: '/assets/units/m_ballista.png',
   m_white_rabbit: '/assets/units/m_white_rabbit.png',
   m_mad_hatter: '/assets/units/m_mad_hatter.png',
+  // 「모자 바꾸기」로 실제로 갈아쓰는 모자들
+  m_mad_hatter_red: '/assets/units/m_mad_hatter_red.png',
+  m_mad_hatter_blue: '/assets/units/m_mad_hatter_blue.png',
+  m_mad_hatter_gold: '/assets/units/m_mad_hatter_gold.png',
   m_drosselmeyer: '/assets/units/m_drosselmeyer.png',
   m_nutcracker: '/assets/units/m_nutcracker.png',
   teddy_guardian: '/assets/units/teddy_guardian.png',
   // 장난감 나라(toybox) 전용 건물 스킨 — 스프라이트 생성 시 맵으로 갈린다
-  tower_toy: '/assets/units/tower_toy.png',
-  nexus_toy: '/assets/units/nexus_toy.png',
+  tower_toy: '/assets/units/tower_toy.png?v=2',
+  nexus_toy: '/assets/units/nexus_toy.png?v=2',
   // 사령(판데모니엄) 건물 스킨 — 캠페인 enemySkin: 'bone'
   tower_bone: '/assets/units/tower_bone.png',
-  nexus_bone: '/assets/units/nexus_bone.png',
+  nexus_bone: '/assets/units/nexus_bone.png?v=2',
   // 마몬의 상점 (캠페인 점령 오브젝트 — 전투 개입 없음, 그림+점령 표시만)
   mercshop: '/assets/units/mercshop.png',
   // 호위전(13) 소품 — 보급 마차 + 불타는 숲 장애물
@@ -159,8 +174,18 @@ export const ASSET_UNITS: Record<string, string | string[]> = {
   c_alice_soldier: '/assets/units/m_clockwork_soldier.png',
   c_alice_teddy: '/assets/units/m_gore_teddy.png',
   c_elowyn: '/assets/units/s_sage.png',
+  c_evergreen: '/assets/units/c_evergreen.png',
+  c_kael: '/assets/units/c_kael.png',
+  c_bone_cannon: '/assets/units/c_bone_cannon.png',
   c_sage_watchtower: '/assets/units/c_sage_watchtower.png',
-  c_sylvarin_tent: '/assets/units/c_sylvarin_tent.png',
+  c_sage_watchtower_s: '/assets/units/c_sage_watchtower_s.png',
+  // 실바린 야영지 넥서스 (캠페인 14) — 큰 엘프 천막
+  nexus_elfcamp: '/assets/units/nexus_elfcamp.png',
+  // 적 주둔지 (캠페인 14) — 부술 수 있는 거점 건물
+  // 네 변형이 id 로 배정돼 거점마다 조금씩 다르게 보인다
+  c_demon_camp: ['/assets/units/c_demon_camp.png', '/assets/units/c_demon_camp2.png',
+    '/assets/units/c_demon_camp3.png', '/assets/units/c_demon_camp4.png'],
+  c_sylvarin_tent: '/assets/units/c_sylvarin_tent.png?v=2',
   c_sylvarin_tent2: '/assets/units/c_sylvarin_tent2.png',
   c_camp_fire: '/assets/units/c_camp_fire.png',
   c_camp_crates: '/assets/units/c_camp_crates.png',
@@ -175,9 +200,18 @@ export const ASSET_UNITS: Record<string, string | string[]> = {
   c_ember_tree2: '/assets/units/c_ember_tree2.png',
   c_burning_log: '/assets/units/c_burning_log.png',
   // 둥지 (11스테이지) — nest 맵의 아군 넥서스 스킨
-  nexus_nest: '/assets/units/nexus_nest.png',
+  nexus_nest: '/assets/units/nexus_nest.png?v=2',
+  // 잿길 (13스테이지) — 아군은 세계수 수정이 선 실바린 본영, 적은 악마 요새
+  nexus_forestcamp: '/assets/units/nexus_forestcamp.png',
+  nexus_demon: '/assets/units/nexus_demon.png',
+  // 잿불 숲 우측(2팀) — 불에 탄 숲 쪽 진영. 좌측은 기본 그림을 그대로 쓴다.
+  nexus_ash: '/assets/units/nexus_ash.png',
+  tower_ash: '/assets/units/tower_ash.png',
   // 12스테이지 보스 — 발타르의 선봉장
   c_balthar_general: '/assets/units/c_balthar_general.png',
+  c_ghoul_lord: '/assets/units/p_minion_ghoul.png',
+  c_elf_watchtower: '/assets/units/c_elf_watchtower.png',
+  c_skullrender: '/assets/units/p_bone_dragon.png',
   // 마몬의 용병 — 원본 판데모니엄 그림 재사용 (스펙만 독립)
   merc_headless_knight: '/assets/units/p_headless_knight.png',
   merc_lich: '/assets/units/p_lich.png',
@@ -217,12 +251,17 @@ const ASSET_ICONS: Record<string, string> = {
   s_fairy: '/assets/units/s_fairy_icon.png',
   s_marksman: '/assets/units/s_marksman_icon.png',
   s_sage: '/assets/units/s_sage_icon.png',
+  c_evergreen: '/assets/units/c_evergreen_icon.png',
+  c_kael: '/assets/units/c_kael_icon.png',
+  c_bone_cannon: '/assets/units/c_bone_cannon_icon.png',
   m_plushbear: '/assets/units/m_plushbear_icon.png',
   p_bone_dragon: '/assets/units/p_bone_dragon.png',
   p_coffin_bearer: '/assets/units/p_coffin_bearer_icon.png',
   p_succubus: '/assets/units/p_succubus_icon.png',
   p_incubus: '/assets/units/p_incubus_icon.png',
   p_dementor: '/assets/units/p_dementor_icon.png',
+  c_radamanthus: '/assets/units/p_dementor_icon.png',
+  c_void_necromancer: '/assets/units/p_summoner_icon.png',
   s_dryad: '/assets/units/s_dryad_icon.png',
   s_elurion: '/assets/units/s_elurion_icon.png',
   s_oberon: '/assets/units/s_oberon_icon.png',
@@ -245,6 +284,7 @@ const ASSET_ICONS: Record<string, string> = {
   m_specter_teddy: '/assets/units/m_specter_teddy_icon.png',
   m_gore_teddy: '/assets/units/m_gore_teddy_icon.png',
   m_alice: '/assets/units/m_alice_icon.png',
+  c_alice_hero: '/assets/units/m_alice_icon.png',
   m_grandfather_clock: '/assets/units/m_grandfather_clock_icon.png',
   m_pennywise: '/assets/units/m_pennywise_icon.png',
   m_thread_needle: '/assets/units/m_thread_needle_icon.png',
@@ -280,7 +320,10 @@ export function assetIconUrl(defId: string): string | undefined {
  * 변형 배열은 ASSET_UNITS 와 같은 순서로 대응해야 한다.
  */
 /** 공격 애니메이션: [변형][프레임] URL. 공격 순간 프레임을 순차 재생한다. */
-const atk4 = (id: string): string[][] => [[0, 1, 2, 3].map((n) => `/assets/units/${id}_atk${n}.png`)];
+// ?v= 캐시버스터: 스프라이트를 새로 뽑아 교체해도 브라우저가 옛 그림을 붙들지 않게.
+// 방향 그림(_e/_w/_n/_s)에만 있었고 프레임 계열엔 없어서, 망령 공격 모션을 바꿔도
+// 옛 로브 모습이 그대로 보이는 일이 있었다.
+const atk4 = (id: string): string[][] => [[0, 1, 2, 3].map((n) => `/assets/units/${id}_atk${n}.png?v=7`)];
 
 /**
  * 이동 방향별 그림을 보유한 유닛. `<defId>_e/_w/_n/_s.png` 4장이 모두 있어야
@@ -288,6 +331,8 @@ const atk4 = (id: string): string[][] => [[0, 1, 2, 3].map((n) => `/assets/units
  * 엘프 궁수는 여/남 변형이라 제외 — 변형과 방향을 함께 다루려면 별도 작업 필요.
  */
 const DIR_SPRITE_UNITS: string[] = [
+  'c_evergreen',
+  'c_kael',
   's_gouto', 's_vine_hunter', 's_marmot', 's_druid', 's_mushroom_bomber',
   's_owl', 's_butterfly', 's_thorn_witch', 's_treekeeper', 's_apostle',
   's_treant', 's_marksman', 's_sage', 's_wyvern', 's_unicorn', 's_fairy',
@@ -301,7 +346,7 @@ const DIR_SPRITE_UNITS: string[] = [
   'm_plushbear', 'm_clockwork_soldier', 'm_button_doll', 'm_puppet_swordsman',
   'm_clockwork_spider', 'm_clown_doll', 'm_cursed_doll', 'm_casper',
   'm_puppet_ann', 'm_specter_teddy', 'm_grandfather_clock', 'm_pennywise',
-  'm_thread_needle', 'm_clocktower_gear', 'm_gore_teddy', 'm_alice',
+  'm_thread_needle', 'm_clocktower_gear', 'm_gore_teddy', 'm_alice', 'c_alice_hero',
   'dragon', 'hollow', 'teddy_guardian',
   'c_wild_wolf_gray', 'c_wild_wolf_black', 'c_wild_direwolf', 'c_wild_bear_gray',
   'c_wild_grizzly', 'c_wild_snake', 'c_wild_tarantula', 'c_wild_kestrel', 'c_wild_blackbird',
@@ -314,14 +359,20 @@ const DIR_SPRITE_UNITS: string[] = [
 const ASSET_ATTACK_ANIMS_AIR: Record<string, string[][]> = {
   // 곰인형 수호자: 공중엔 양팔 치켜들어 내리찍기, 지상엔 포효하며 땅찍기
   teddy_guardian: [[0, 1, 2, 3].map((n) => `/assets/units/teddy_guardian_air${n}.png`)],
+  // 갑옷 마멋: 망치는 하늘에 닿지 않으니 공중엔 새총을 쏜다
+  s_marmot: [[0, 1, 2, 3].map((n) => `/assets/units/s_marmot_air${n}.png?v=7`)],
 };
 
 const ASSET_ATTACK_ANIMS: Record<string, string[][]> = {
   // 엘프 궁수: 변형(여/남)별 4프레임 발사 모션 (화살 뽑기→시위 당기기→발사)
   s_elf_archer: [
-    [0, 1, 2, 3].map((n) => `/assets/units/s_elf_archer_f_atk${n}.png`),
-    [0, 1, 2, 3].map((n) => `/assets/units/s_elf_archer_m_atk${n}.png`),
+    [0, 1, 2, 3].map((n) => `/assets/units/s_elf_archer_f_atk${n}.png?v=7`),
+    [0, 1, 2, 3].map((n) => `/assets/units/s_elf_archer_m_atk${n}.png?v=7`),
   ],
+  // 에버그린: 활 들어올림 → 당김 → 최대 → 발사
+  c_evergreen: atk4('c_evergreen'),
+  // 카엘: 방패 들고 창 찌르기 4프레임
+  c_kael: atk4('c_kael'),
   s_gouto: atk4('s_gouto'),
   m_plushbear: atk4('m_plushbear'),
   m_clockwork_spider: atk4('m_clockwork_spider'),
@@ -349,6 +400,7 @@ const ASSET_ATTACK_ANIMS: Record<string, string[][]> = {
   m_cursed_doll: atk4('m_cursed_doll'),
   m_button_doll: atk4('m_button_doll'),
   m_alice: atk4('m_alice'),
+  c_alice_hero: atk4('m_alice'),
   m_grandfather_clock: atk4('m_grandfather_clock'),
   m_pennywise: atk4('m_pennywise'),
   m_thread_needle: atk4('m_thread_needle'),
@@ -371,6 +423,7 @@ const ASSET_ATTACK_ANIMS: Record<string, string[][]> = {
   p_lich: atk4('p_lich'),
   p_demilich: atk4('p_demilich'),
   p_minion_ghoul: atk4('p_minion_ghoul'),
+  c_ghoul_lord: atk4('p_minion_ghoul'),
   p_minion_undead: atk4('p_minion_undead'),
   p_minion_skeleton: atk4('p_minion_skeleton'),
   p_minion_rat: atk4('p_minion_rat'),
@@ -378,6 +431,8 @@ const ASSET_ATTACK_ANIMS: Record<string, string[][]> = {
   dragon: atk4('dragon'),
   hollow: atk4('hollow'),
   p_bone_dragon: atk4('p_bone_dragon'),
+  c_skullrender: atk4('p_bone_dragon'),
+  s_elurion: atk4('s_elurion'),
   p_coffin_bearer: atk4('p_coffin_bearer'),
   p_succubus: atk4('p_succubus'),
   p_incubus: atk4('p_incubus'),
@@ -411,6 +466,8 @@ const PROJECTILE_OF: Record<string, ProjKind> = {
   s_fairy: 'bolt_nature',
   s_marksman: 'arrow',
   s_sage: 'bolt_nature',
+  c_evergreen: 'arrow',
+  c_bone_cannon: 'bolt_curse',
   // 판데모니엄
   p_bone_thrower: 'bone',
   p_banshee: 'bolt_curse',
@@ -427,6 +484,7 @@ const PROJECTILE_OF: Record<string, ProjKind> = {
   m_puppet_ann: 'bolt_curse',
   m_specter_teddy: 'pollen',
   m_alice: 'bolt_curse',
+  c_alice_hero: 'bolt_curse',
   m_grandfather_clock: 'bomb',
   m_thread_needle: 'arrow',
   m_clocktower_gear: 'bullet',
@@ -472,7 +530,7 @@ const ASSET_SIZE_MUL: Record<string, number> = {
   // 캠페인 특수 유닛: 원본보다 크게 — 한눈에 "특별한 놈"으로 읽히게
   c_ash_revenant: 1.5,
   c_mad_ballerina: 1.4,
-  c_bone_colossus: 1.9,
+  c_bone_colossus: 1.9, c_radamanthus: 1.5, c_void_necromancer: 1.7,
   c_dread_gargoyle: 1.5,
   c_kurga: 1.7,
   c_mammon_lord: 1.6,
@@ -481,16 +539,20 @@ const ASSET_SIZE_MUL: Record<string, number> = {
   c_nest_wyvern: 1.3, c_nest_unicorn: 1.3, c_nest_fairy: 1.3, // 둥지 수호탑 — 타워 위용
   c_wild_blackbird: 1.4, c_wild_grizzly: 1.2, c_wild_direwolf: 1.15,
   c_balthar_general: 1.5, // 12 보스 — 슬리피 할로우급 거구
+  c_ghoul_lord: 1.5,      // 14 보스 — 카르가스급 덩치
+  c_elf_watchtower: 1.25, // 야영지 망루 — 작은 망루라 아담하게
+  c_skullrender: 1.45,    // 14 보스 — 본드래곤보다 한 뼘 크게
   // 호위전 소품: 나무는 반경보다 훨씬 크게 — 숲이 우거진 인상
   c_burning_tree: 1.35, c_ember_tree: 1.3, c_ember_tree2: 1.35, c_burning_log: 0.95, c_supply_cart: 1.15,
   s_fairy: 1.9, // 거대 나비(radius 0.42)보다 커 보이게 — 요정 여왕의 위용
-  p_bone_dragon: 1.5, p_coffin_bearer: 1.15, p_succubus: 1.2, p_dream_mare: 1.15, p_incubus: 1.25,
+  p_bone_dragon: 1.26, // 엘루리온과 같은 덩치로 (radius 가 달라 배율로 맞춘다) p_coffin_bearer: 1.15, p_succubus: 1.2, p_dream_mare: 1.15, p_incubus: 1.25,
   p_dementor: 1.45, // 리치보다 확실히 큰 실루엣 — 멀리서도 알아보게
   m_ballista: 1.0, m_drosselmeyer: 0.95, m_mad_hatter: 1.25, m_white_rabbit: 1.0, m_nutcracker: 0.95,
   c_grave_warden: 1.5, // 캠페인 엘리트 — 타나토스보다 크게
+  c_bone_grave: 1.15,
   s_elurion: 0.98, s_oberon: 1.25, s_dryad: 1.2,
 
-  c_sage_watchtower: 1.5, c_sylvarin_tent: 1.2, c_elowyn: 1.25,
+  c_sage_watchtower: 1.5, c_sage_watchtower_s: 1.15, c_sylvarin_tent: 1.2, c_elowyn: 1.25, c_evergreen: 1.25, c_kael: 1.3, c_bone_cannon: 1.5,
   c_sylvarin_tent2: 1.25, c_camp_fire: 1.1, c_camp_crates: 1.1, c_sylvarin_banner: 1.6,
 };
 
@@ -511,6 +573,15 @@ const WANG_16: Record<number, readonly [number, number]> = {
   12: [96, 0], 13: [0, 0], 14: [32, 96], 15: [0, 96],
 };
 
+/**
+ * 건물 스킨별 크기 보정. 넓게 퍼진 캠프 그림은 기본 넥서스보다 훨씬 커야
+ * 「본거지」로 읽힌다 (기본값은 세로로 긴 탑 기준이라 캠프엔 작다).
+ */
+const SKIN_SIZE_MUL: Record<string, number> = {
+  nexus_forestcamp: 2.1,
+  nexus_demon: 1.9,
+};
+
 interface GroundTheme {
   readonly sheet: string;
   /** 배치가 다른 시트를 쓰게 되면 여기서 덮어쓴다. */
@@ -519,6 +590,10 @@ interface GroundTheme {
   readonly props: readonly string[];
   /** 레인 안(걷는 길)에 낮은 밀도로 깔 납작한 지면 장식. */
   readonly laneProps?: readonly string[];
+  /** 길과 맞닿은 바깥 칸 전용 소품 (낮은 것만 — 길을 덮지 않는다). */
+  readonly edgeProps?: readonly string[];
+  /** 길 바로 아래(남쪽) 두세 칸 전용 — 큰 나무는 위로 뻗어 길을 가린다. */
+  readonly midProps?: readonly string[];
   /**
    * 길 안쪽(완전히 걷는 길인 칸, wang idx 15)의 변형 타일 파일명들.
    * 시트의 기본 타일과 해시로 섞여 "여러 타입의 바닥"을 만든다.
@@ -582,6 +657,47 @@ const THEMES: Record<string, GroundTheme> = {
     props: ['prop_necro_candles', 'prop_necro_pillar', 'prop_skull2', 'prop_bones1'],
     laneProps: ['lane_ash', 'lane_ash', 'lane_charred'],
   },
+  // 악마의 성 (캠페인 14 — 발타르의 성): 흑요석 마당에 핏빛 용암이 갈라져 흐른다
+  hellstone: {
+    sheet: '/assets/tiles/hellstone.png',
+    wang: WANG_16,
+    props: ['prop_necro_pillar', 'prop_skull2', 'prop_bones1', 'prop_necro_candles'],
+    laneProps: ['lane_ash', 'lane_embers', 'lane_charred'],
+  },
+  // 숲길 (캠페인 13 — 잿길): 손그림 지형을 옮긴 Wang 흙길 + 침엽수림
+  woodroad: {
+    sheet: '/assets/tiles/woodroad.png',
+    wang: WANG_16,
+    props: [
+      'wr_pine1', 'wr_pine2', 'wr_pine3', 'wr_pine4',
+      'wr_pine1', 'wr_pine2', 'wr_pine3', 'wr_pine4',
+      'wr_bush1', 'wr_bush2',
+    ],
+    // 길과 맞닿은 칸에는 키 큰 나무 대신 낮은 덤불·풀만 — 침엽수를 심으면
+    // 가지가 길 위를 덮어 「지나갈 수 없는 길」처럼 보인다
+    edgeProps: ['wr_bush1', 'wr_bush2', 'wr_grass1', 'wr_grass2', 'wr_grass3', 'wr_grass6'],
+    // 길 남쪽 두세 칸: 스프라이트가 아래에서 위로 자라 길을 덮으므로 작은 나무만
+    midProps: ['wr_pine4', 'wr_pine3', 'wr_bush1', 'wr_pine4', 'wr_bush2'],
+    laneProps: ['wr_grass4', 'wr_pebble3', 'wr_pebble4', 'wr_leaf3', 'wr_leaf4', 'wr_pebble3'],
+  },
+  /**
+   * 「걸어가는 숲」(14스테이지) 전용.
+   *
+   * 잿길(13)과 같은 woodroad 시트를 쓰다가, 14를 손보면 13 지형까지 같이
+   * 바뀌는 사고가 났다. 파일을 갈라 두 스테이지가 서로 영향을 주지 않게 한다.
+   */
+  greatwood: {
+    sheet: '/assets/tiles/greatwood.png',
+    wang: WANG_16,
+    props: [
+      'wr_pine1', 'wr_pine2', 'wr_pine3', 'wr_pine4',
+      'wr_pine1', 'wr_pine2', 'wr_pine3', 'wr_pine4',
+      'wr_bush1', 'wr_bush2',
+    ],
+    edgeProps: ['wr_bush1', 'wr_bush2', 'wr_grass1', 'wr_grass2', 'wr_grass3', 'wr_grass6'],
+    midProps: ['wr_pine4', 'wr_pine3', 'wr_bush1', 'wr_pine4', 'wr_bush2'],
+    laneProps: ['wr_grass4', 'wr_pebble3', 'wr_pebble4', 'wr_leaf3', 'wr_leaf4', 'wr_pebble3'],
+  },
   // 장난감 나라 (캠페인 2막 — 마리오네타 왕국)
   toy: {
     sheet: '/assets/tiles/toy.png',
@@ -603,8 +719,57 @@ const MAP_THEMES: Record<string, readonly string[]> = {
   nest: ['alpine'],
   confluence: ['necro'],
   toybox: ['toy'],
-  ashroad: ['burnt'], // 불탄 숲길 — 평원의 「탄 쪽」 지형을 전체에 깐다
+  ashroad: ['woodroad'], // 손그림 숲길 — Wang 흙길 위에 침엽수·바위를 심는다
+  greatroot: ['greatwood'], // 14 전용 시트 (13 과 파일을 나눠 서로 안 건드린다)
 };
+
+/**
+ * 절벽(높낮이)을 그리는 맵.
+ * 숲·바위를 높은 땅으로 보고, 길·물과 맞닿은 「화면 아래쪽」 가장자리에 벽면을 세운다.
+ * 길이 바위를 깎아 낸 것처럼 보여 평평하던 지형에 깊이가 생긴다.
+ */
+/**
+ * 계단식 지형 — 진행축(x) 위의 단 경계들.
+ *
+ * 아래(우리 진영)에서 위(적 진영)로 갈수록 한 단씩 높아진다. 경계마다 절벽 벽면을
+ * 세우고, 길·물이 지나는 자리는 비워 비탈길이 되게 한다.
+ * 단이 높을수록 지면을 밝게 칠해 「올라간다」가 눈에 들어오게 한다.
+ *
+ * 앞서 「높은 땅이 낮은 땅과 맞닿는 모서리」에서 벽을 유도해 봤지만, 이 지도는
+ * 길이 세로로 흘러 가로 모서리가 거의 없었다 (3칸 이상 이어진 곳이 10곳뿐).
+ * 단 경계는 맵 폭을 가로지르므로 벽이 길게 이어진다.
+ */
+/**
+ * 고원(높은 지대) 층을 쓰는 맵과 그 시트.
+ *
+ * 「길·물은 낮고, 깊은 숲은 높다」로 보고 숲 안쪽을 고원으로 칠한다.
+ * 높이는 벽 스프라이트를 따로 얹는 게 아니라 **타일 자체가 두께를 갖는다** —
+ * 그래서 남쪽뿐 아니라 모든 방향의 가장자리에 절벽 면이 생긴다.
+ */
+const MAP_PLATEAU: Record<string, string> = {};
+
+/**
+ * 돌계단 구역 — 언덕으로 오르는 길목의 바닥을 층계 타일로 갈아 깐다.
+ *
+ * 소품 한 장을 얹으면 바닥에 놓인 판때기로 보인다. 길 자체를 계단으로 칠해야
+ * 「올라간다」가 읽힌다. 중심에서 멀어질수록 옅어져 흙길과 자연히 이어진다.
+ */
+const MAP_STAIRS: Record<string, readonly { x: number; y: number; r: number }[]> = {
+  greatroot: [
+    { x: 52.0, y: -8.1, r: 3.6 },   // 서쪽 길에서 적 기지로 오르는 층계
+    { x: 50.0, y: 7.3, r: 3.6 },    // 동쪽 길
+  ],
+};
+
+const MAP_TERRACES: Record<string, readonly number[]> = {
+  // 지금은 어느 맵에도 켜지 않는다.
+  // 흙벽·돌벽 양쪽으로 세워 봤지만, 벽 위아래 땅이 똑같아 「무엇을 떠받치는지」가
+  // 없어서 바닥에 누운 띠로 보였다. 탑뷰에서 높이를 만들려면 지형 자체가
+  // 단을 갖고 그려져야 한다 — 마스크 위에 벽만 얹어서는 안 된다.
+};
+/** 단마다의 밝기 — 낮은 단일수록 그늘진다 (맨 위가 1.0). */
+const TERRACE_SHADE = [0.70, 0.80, 0.90, 1];
+
 
 /** 맵 바깥(캔버스 여백) 색. 지형과 이어지는 톤으로. */
 const MAP_BG: Record<string, number> = {
@@ -614,11 +779,12 @@ const MAP_BG: Record<string, number> = {
   plains: 0x1d2a19, // 깊은 숲 그늘
   valley: 0x9c7c4e,
   toybox: 0x3a2438, // 장난감 방의 어둑한 자주빛
-  ashroad: 0x1f120c, // 잿불이 스민 검붉은 어둠
+  ashroad: 0x16200f, // 침엽수림의 깊은 그늘
+  greatroot: 0x16200f, // 침엽수림의 깊은 그늘 (13스테이지와 같은 톤)
 };
 
 /** 액티브 스킬 시전 모션 프레임 (없는 유닛은 공격 모션 재활용). */
-const skill4 = (id: string): string[] => [0, 1, 2, 3].map((n) => `/assets/units/${id}_skill${n}.png`);
+const skill4 = (id: string): string[] => [0, 1, 2, 3].map((n) => `/assets/units/${id}_skill${n}.png?v=7`);
 
 const ASSET_SKILL_ANIMS: Record<string, string[]> = {
   m_clockwork_soldier: skill4('m_clockwork_soldier'), // 태엽 감기
@@ -629,7 +795,7 @@ const ASSET_SKILL_ANIMS: Record<string, string[]> = {
  * 비행 유닛의 부유 모션 프레임. 2장 이상이면 순환 재생(진짜 프레임 애니메이션),
  * 1장이면 기본 포즈와 교대. 없는 비행 유닛은 스쿼시 착시로 폴백.
  */
-const fly4 = (id: string): string[] => [0, 1, 2, 3].map((n) => `/assets/units/${id}_fly${n}.png`);
+const fly4 = (id: string): string[] => [0, 1, 2, 3].map((n) => `/assets/units/${id}_fly${n}.png?v=7`);
 
 const ASSET_FLAP_FRAMES: Record<string, string[]> = {
   s_owl: fly4('s_owl'),
@@ -640,6 +806,8 @@ const ASSET_FLAP_FRAMES: Record<string, string[]> = {
   dragon: fly4('dragon'),
   hollow: fly4('hollow'),
   p_bone_dragon: fly4('p_bone_dragon'),
+  c_skullrender: fly4('p_bone_dragon'),
+  s_elurion: fly4('s_elurion'),
   p_dream_mare: fly4('p_dream_mare'),
   p_demilich: fly4('p_demilich'),
   c_dread_gargoyle: fly4('p_demilich'),
@@ -666,11 +834,20 @@ const ASSET_UPGRADE_SKINS: Record<string, { upgrade: string; url: string; scaleM
   },
 };
 
+/**
+ * 시뮬 좌표 → 월드 픽셀.
+ *
+ * 세로 맵(vertical)은 화면을 90도 돌린다: 시뮬의 진행축(x)이 화면 세로가 되고,
+ * 코리도어 폭(y)이 화면 가로가 된다. 진행 방향은 아래(6시) → 위(12시).
+ * 시뮬은 전혀 손대지 않는다 — 보이는 것만 세운다.
+ */
 function sx(x: number): number {
   return (x / FP) * TILE;
 }
 function sy(y: number): number {
-  return ((y + renderHalfH()) / FP) * TILE * Y_SQUASH + PAD_TOP;
+  // 세로 맵은 원근 압축을 쓰지 않는다 (돌려 놓으면 가로가 눌려 어색해진다)
+  const sq = curMap.vertical ? 1 : Y_SQUASH;
+  return ((y + renderHalfH()) / FP) * TILE * sq + PAD_TOP;
 }
 
 const RANGED_THRESHOLD = tiles(2);
@@ -764,6 +941,10 @@ export interface Renderer {
   view(): { x0: number; x1: number; y0: number; y1: number };
   /** 화면 좌표에서 가장 가까운 유닛 id (없으면 null). 클릭 선택용. */
   pick(g: Game, screenX: number, screenY: number): number | null;
+  /** 화면 좌표 → 월드 y (FP). 두 갈래 맵에서 출정 레인을 고를 때 쓴다. */
+  pickLaneY(screenY: number): number;
+  /** 출정 레인 표시 — y(FP) 두 곳 중 고른 쪽에 불이 들어온다. null = 표시 안 함. */
+  setDeployLanes(lanes: { y: number; label: string; hold?: boolean }[] | null, chosenY: number): void;
   /** 선택 표시 링을 그릴 유닛 id (null = 해제). */
   setSelected(id: number | null): void;
   /** 효과음 재생기 연결 (없으면 무음으로 동작). */
@@ -792,6 +973,16 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
   window.addEventListener('resize', onViewportChange);
   window.addEventListener('orientationchange', onViewportChange);
 
+  /**
+   * 불러온 텍스처 소스 전부. WebGL 컨텍스트가 끊겼다 돌아오면 GPU 쪽 사본이
+   * 날아가는데, 시트에서 잘라 쓴 Wang 타일처럼 소스를 공유하는 텍스처는
+   * 자동 복구가 어긋나 단색 덩어리로 남곤 한다 — 그때 통째로 다시 올린다.
+   *
+   * (겹쳐 놓은 UI 가 backdrop-filter 같은 합성 레이어를 많이 만들면 GPU 메모리가
+   *  모자라 컨텍스트가 끊긴다. 게임 캔버스 위에 그런 효과를 얹으면 특히 잘 난다.)
+   */
+  const texSources = new Set<Texture['source']>();
+
   // 외부 에셋 로드 (실패하면 절차 생성으로 폴백)
   const assetTex = new Map<string, Texture[]>();
   await Promise.all(
@@ -802,6 +993,7 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
         try {
           const tex: Texture = await Assets.load(url);
           tex.source.scaleMode = 'nearest';
+          texSources.add(tex.source);
           texs.push(tex);
         } catch {
           // 이 변형만 폴백 — 나머지 변형은 계속 로드
@@ -814,6 +1006,7 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
     try {
       const tex: Texture = await Assets.load(url);
       tex.source.scaleMode = 'nearest';
+      texSources.add(tex.source);
       return tex;
     } catch {
       return null;
@@ -847,10 +1040,10 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
     DIR_SPRITE_UNITS.map(async (defId) => {
       // ?v= 캐시 버스터: 방향 그림을 교체(고우토 등)해도 브라우저 캐시에 안 가리게
       const [eTex, w, n, sTex] = await Promise.all([
-        loadTex(`/assets/units/${defId}_e.png?v=5`),
-        loadTex(`/assets/units/${defId}_w.png?v=5`),
-        loadTex(`/assets/units/${defId}_n.png?v=5`),
-        loadTex(`/assets/units/${defId}_s.png?v=5`),
+        loadTex(`/assets/units/${defId}_e.png?v=7`),
+        loadTex(`/assets/units/${defId}_w.png?v=7`),
+        loadTex(`/assets/units/${defId}_n.png?v=7`),
+        loadTex(`/assets/units/${defId}_s.png?v=7`),
       ]);
       // 4방향이 온전히 갖춰진 유닛만 등록 — 한 캐릭터의 그림으로 일관되게 돈다
       if (eTex && w && n && sTex) {
@@ -905,15 +1098,30 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
     }),
   );
   // 지형 테마별 Wang 타일 + 소품 텍스처. 시트가 없는 테마는 코드 지형으로 폴백.
+  /** 손으로 그린 지형 배경 (bgImage 맵용). */
+  const bgTex = new Map<string, Texture>();
+  await Promise.all(
+    Object.values(MAPS)
+      .map((mm) => mm.bgImage)
+      .filter((u): u is string => !!u)
+      .map(async (url) => {
+        const t = await loadTex(url);
+        if (t) bgTex.set(url, t);
+      }),
+  );
   const themeTiles = new Map<string, Map<number, Texture>>();
   const themeFullVariants = new Map<string, Texture[][]>();
   const themeOuterVariants = new Map<string, Texture[][]>();
   const themeProps = new Map<string, Texture[]>();
   const themeLandmarks = new Map<string, Texture>();
   const themeLaneProps = new Map<string, Texture[]>();
+  const themeEdgeProps = new Map<string, Texture[]>();
+  const themeMidProps = new Map<string, Texture[]>();
   await Promise.all(
     Object.entries(THEMES).map(async ([name, theme]) => {
       const sheet = await loadTex(theme.sheet);
+      // 시트가 안 열리면 지형이 통째로 안 깔린다 — 조용히 넘어가면 원인 찾기가 어렵다
+      if (!sheet) console.error(`[desertlike] 지형 시트 로드 실패: ${theme.sheet} (테마 ${name})`);
       if (sheet) {
         const tiles = new Map<number, Texture>();
         for (const [idx, [tx, ty]] of Object.entries(theme.wang)) {
@@ -940,6 +1148,18 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
         if (t) lane.push(t);
       }
       if (lane.length > 0) themeLaneProps.set(name, lane);
+      const edge: Texture[] = [];
+      for (const pp of theme.edgeProps ?? []) {
+        const t = await loadTex(`/assets/tiles/${pp}.png`);
+        if (t) edge.push(t);
+      }
+      if (edge.length > 0) themeEdgeProps.set(name, edge);
+      const mid: Texture[] = [];
+      for (const pp of theme.midProps ?? []) {
+        const t = await loadTex(`/assets/tiles/${pp}.png`);
+        if (t) mid.push(t);
+      }
+      if (mid.length > 0) themeMidProps.set(name, mid);
       const fulls: Texture[][] = [];
       for (const v of theme.fullVariants ?? []) {
         const t = await loadTex(`/assets/tiles/${v}.png`);
@@ -979,6 +1199,76 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
       if (outers.length > 0) themeOuterVariants.set(name, outers);
     }),
   );
+
+  // 물길 Wang 시트 — 장식 격자('~')를 따라 지면 위에 한 겹 더 깐다.
+  // 숲 쪽(idx 0) 타일은 그리지 않으므로 아래 지면이 그대로 이어져 보인다.
+  /** 물빛 미세 변화 — 얕은 여울부터 깊은 소까지. */
+  const WATER_SHADES = [0xffffff, 0xe8f4ff, 0xd2e8f6, 0xc4e2f2, 0xf0f8ff, 0xdceef8];
+  /** 언덕으로 오르는 층계 바닥. */
+  const stairTile = await loadTex('/assets/tiles/wr_stairtile.png');
+  /** 절벽 벽면 — 높은 지대의 화면 아래쪽 가장자리에 세워 높낮이를 만든다. */
+  const cliffFace = await loadTex('/assets/tiles/cliff_face.png');
+  /** 벽이 끝나며 안쪽으로 꺾이는 조각 (왼쪽 끝 / 오른쪽 끝). */
+  const cliffEndL = await loadTex('/assets/tiles/cliff_end_l.png');
+  const cliffEndR = await loadTex('/assets/tiles/cliff_end_r.png');
+  /** 길이 단을 넘는 자리 — 계단. */
+  const cliffStair = await loadTex('/assets/tiles/cliff_stair.png');
+  /** 강 위에만 놓이는 소품 (여울 바위·잠긴 통나무). */
+  const riverProps: Texture[] = [];
+  for (const nm of ['wr_river_rocks', 'wr_river_log']) {
+    const t = await loadTex(`/assets/tiles/${nm}.png`);
+    if (t) riverProps.push(t);
+  }
+  /**
+   * 물길 시트도 맵마다 따로 둔다 (13·14 가 서로 안 건드리게).
+   * 맵에 지정이 없으면 기본 woodwater 를 쓴다.
+   */
+  const MAP_WATER_SHEET: Record<string, string> = { greatroot: 'greatwater' };
+  /** 고원 시트 — 타일에 두께가 있어 세로로 길다. */
+  const plateauSheets = new Map<string, { tiles: Map<number, Texture>; h: number }>();
+  for (const nm of new Set(Object.values(MAP_PLATEAU))) {
+    const ps = await loadTex(`/assets/tiles/${nm}.png`);
+    if (!ps) continue;
+    const tw = Math.floor(ps.width / 4);
+    const thh = Math.floor(ps.height / 4);
+    const tiles = new Map<number, Texture>();
+    for (let k = 0; k < 16; k++) {
+      tiles.set(k, new Texture({
+        source: ps.source,
+        frame: new Rectangle((k % 4) * tw, Math.floor(k / 4) * thh, tw, thh),
+      }));
+    }
+    plateauSheets.set(nm, { tiles, h: thh / tw });
+  }
+  const waterSheets = new Map<string, Map<number, Texture>>();
+  for (const nm of ['woodwater', ...Object.values(MAP_WATER_SHEET)]) {
+    if (waterSheets.has(nm)) continue;
+    const ws = await loadTex(`/assets/tiles/${nm}.png`);
+    if (!ws) continue;
+    const set = new Map<number, Texture>();
+    for (const [idx, [tx, ty]] of Object.entries(WANG_16)) {
+      set.set(Number(idx), new Texture({
+        source: ws.source,
+        frame: new Rectangle(tx, ty, TILE_PX, TILE_PX),
+      }));
+    }
+    waterSheets.set(nm, set);
+  }
+  // 바위 소품 (장식 격자 'o' 자리에만 놓는다)
+  const rockProps: Texture[] = [];
+  for (const n of ['wr_rock1', 'wr_rock2', 'wr_rock3']) {
+    const t = await loadTex(`/assets/tiles/${n}.png`);
+    if (t) rockProps.push(t);
+  }
+  // 손으로 배치한 지형지물 (캠프·다리·천막) 텍스처
+  const placedTex = new Map<string, Texture>();
+  for (const list of Object.values(MAP_PROPS)) {
+    for (const pr of list) {
+      if (placedTex.has(pr.name)) continue;
+      const t = await loadTex(`/assets/tiles/${pr.name}.png`);
+      if (t) placedTex.set(pr.name, t);
+    }
+  }
   // 투사체 그림 (없으면 색 선분 폴백)
   const projTex = new Map<ProjKind, Texture>();
   await Promise.all(
@@ -1006,7 +1296,7 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
   // 스킬 시전 이펙트 그림 — 시전 위치에 잠깐 떴다 커지며 사라진다
   const castFxTex = new Map<string, Texture>();
   await Promise.all(
-    ['bark', 'roar', 'regen'].map(async (k) => {
+    ['bark', 'roar', 'regen', 'curtain', 'curtain_closed'].map(async (k) => {
       const t = await loadTex(`/assets/fx/fx_${k}.png`);
       if (t) castFxTex.set(k, t);
     }),
@@ -1064,15 +1354,19 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
   let mapDecos: Sprite[] = [];
 
   /**
-   * 잿길(ashroad): 걷는 길과 바깥 지형의 경계를 따라 불탄 나무를 촘촘히 심는다.
-   * 유닛이 다니지 않는 경계 바깥이라 게임엔 영향이 없고, 불타는 숲의 분위기만
-   * 만든다. 결정론이 필요 없는 순수 그림이지만 배치는 고정 시드로 뽑아
-   * 접속할 때마다 같은 숲이 보이게 한다.
+   * 평원(plains): 걷는 길 바깥에 숲을 촘촘히 심는다. 왼쪽은 살아 있는 숲,
+   * 오른쪽은 불탄 숲 — 맵 테마 그대로다. 유닛이 다니지 않는 경계 바깥이라
+   * 게임엔 영향이 없다. 결정론이 필요 없는 순수 그림이지만 배치는 고정 시드로
+   * 뽑아 접속할 때마다 같은 숲이 보이게 한다.
+   *
+   * 잿길(ashroad)은 여기서 빠져 있다 — 손그림을 옮긴 뒤로는 지형 타일이
+   * 마스크를 따라 직접 침엽수를 심으므로, 예전의 불탄 나무 도배는 새 숲과
+   * 섞여 어긋나기만 했다.
    */
   function buildMapDecos(): void {
     for (const d of mapDecos) d.destroy();
     mapDecos = [];
-    if (curMap.id !== 'ashroad' && curMap.id !== 'plains') return;
+    if (curMap.id !== 'plains') return;
     let seed = 20260819;
     const rnd = (): number => {
       seed = (seed * 1664525 + 1013904223) >>> 0;
@@ -1099,9 +1393,10 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
         if (r < 0.86) return 'c_wildflowers';
         return 'c_mossy_rock';
       }
-      if (r < 0.46) return 'c_ember_tree';
-      if (r < 0.9) return 'c_ember_tree2';
-      return 'c_burning_log';
+      if (r < 0.40) return 'c_green_tree';
+      if (r < 0.68) return 'c_green_bush';
+      if (r < 0.86) return 'c_wildflowers';
+      return 'c_mossy_rock';
     };
     /** 종류별 화면 폭(타일). 덤불·꽃·바위는 나무보다 작게 깔린다. */
     const widthOf = (kind: string): number => {
@@ -1112,7 +1407,7 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
       if (kind === 'c_green_tree') return 2.0 + rnd() * 1.2;
       return 1.9 + rnd() * 1.4;
     };
-    const put = (xFP: number, yFP: number, deep: boolean): void => {
+    const put = (xFP: number, yFP: number, depth: number): void => {
       const kind = pickKind(xFP);
       const tex = assetTex.get(kind)?.[0];
       if (!tex) return;
@@ -1121,38 +1416,55 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
       const w = TILE * widthOf(kind);
       sp.scale.set(w / tex.width);
       if (rnd() < 0.5) sp.scale.x = -sp.scale.x;
-      // 깊은 숲일수록 살짝 어둡게 — 원근감
+      // 깊은 숲일수록 살짝 어둡게 — 원근감. 줄이 멀어질수록 한 단계씩 더 죽인다.
       const living = kind === 'c_green_tree' || kind === 'c_green_bush'
         || kind === 'c_wildflowers' || kind === 'c_mossy_rock';
-      if (deep) sp.tint = living
-        ? (rnd() < 0.5 ? 0xd8e4d0 : 0xe4ece0)   // 살아있는 숲은 아주 살짝만
-        : (rnd() < 0.5 ? 0xb8aca4 : 0xcabfb6);
+      if (depth > 0) {
+        const step = Math.min(depth, 3);
+        sp.tint = living
+          ? [0xffffff, 0xe4ece0, 0xd8e4d0, 0xccdcc4][step]!   // 살아있는 숲은 아주 살짝만
+          : [0xffffff, 0xcabfb6, 0xb8aca4, 0xa89c94][step]!;
+      }
       sp.x = sx(xFP);
       sp.y = sy(yFP);
       sp.zIndex = sp.y;
       units.addChild(sp);
       mapDecos.push(sp);
     };
-    // 바깥 지형 전체를 불탄 숲으로 도배: 경계선부터 화면 끝까지 줄줄이 심는다
-    const limit = renderHalfH() - Math.floor(0.6 * FP);
+    /*
+     * 길 바깥을 숲으로 채운다.
+     *
+     * 잿불 숲은 레인 반폭 7타일 + 여백 3타일이라, 나무가 들어갈 띠가 2.4타일뿐이다.
+     * 예전 간격(가로 2.4 / 세로 2.2타일)으로는 한두 줄밖에 안 들어가서 가장자리가
+     * 휑했다. 간격을 절반 아래로 좁혀 세 줄 남짓 겹치게 심는다 — 나무 폭이 2~3타일이라
+     * 겹쳐야 비로소 「숲」으로 읽힌다.
+     *
+     * 여백은 넓히지 않는다: 화면 줌이 월드 높이에 맞춰지므로(worldH) 여백을 키우면
+     * 정작 싸움이 벌어지는 길이 그만큼 작게 보인다.
+     */
+    // 맨 바깥 줄은 여백을 살짝 넘겨 심는다 — 그래야 숲이 잘린 선으로 끝나지 않는다
+    const limit = renderHalfH() + Math.floor(0.5 * FP);
     for (const side of [-1, 1]) {
       const tEnd = curMap.length / FP - 1;
-      for (let t = 2; t < tEnd; t += 1.6 + rnd() * 1.5) {
+      for (let t = 2; t < tEnd; t += 0.85 + rnd() * 0.85) {
         const xFP = Math.floor(t * FP);
         const half = laneHalfWAt(curMap, xFP);
-        const edge = laneCenterY(curMap, xFP) + side * (half + Math.floor(500 + rnd() * 900));
+        // 길가에 바짝 붙여 시작 — 길과 숲 사이가 벌어지면 그 틈이 허전해 보인다
+        const edge = laneCenterY(curMap, xFP) + side * (half + Math.floor(150 + rnd() * 450));
         // 경계에서 바깥으로 한 줄씩 — 줄 간격·좌우를 흔들어 자연스러운 숲으로
         let off = 0;
-        let deep = false;
-        for (let yFP = edge; Math.abs(yFP) < limit; yFP += side * Math.floor((1500 + rnd() * 1300))) {
-          put(xFP + Math.floor((rnd() - 0.5) * 1400), yFP + off, deep);
-          off = Math.floor((rnd() - 0.5) * 600);
-          deep = true; // 두 번째 줄부터는 깊은 숲
+        let depth = 0;
+        for (let yFP = edge; Math.abs(yFP) < limit; yFP += side * Math.floor(700 + rnd() * 700)) {
+          put(xFP + Math.floor((rnd() - 0.5) * 900), yFP + off, depth);
+          off = Math.floor((rnd() - 0.5) * 500);
+          depth++;
         }
       }
     }
   }
   const fx = new Graphics();
+  /** 유닛별 보호막 최대치 기억 (바가 줄어드는 비율의 기준). */
+  const shieldPeak = new Map<number, number>();
   const projLayer = new Container(); // 투사체 스프라이트 (유닛 위, 체력바 아래)
   const bars = new Graphics();
   world.addChild(
@@ -1168,13 +1480,40 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
       for (const c of layer.removeChildren()) c.destroy();
     }
     const m = curMap;
+    // 손으로 그린 배경 한 장을 쓰는 맵 — 오토타일링을 건너뛰고 그대로 깐다.
+    // 세로 맵이면 월드가 -90도 돌아가므로 그림도 같이 돌려 세운다.
+    if (m.bgImage) {
+      const tex = bgTex.get(m.bgImage);
+      if (tex) {
+        const sp = new Sprite(tex);
+        sp.anchor.set(0.5);
+        const w = worldW();
+        const h = worldH();
+        if (m.vertical) {
+          // 컨테이너가 -90도 돌아 있으니 그림은 +90도 돌려 화면에서 바로 서게 한다
+          sp.rotation = Math.PI / 2;
+          sp.width = h;   // 회전 후 화면 가로 = 월드 높이
+          sp.height = w;  // 회전 후 화면 세로 = 월드 길이
+        } else {
+          sp.width = w;
+          sp.height = h;
+        }
+        sp.x = w / 2;
+        sp.y = h / 2;
+        groundTiles.addChild(sp);
+      }
+      return;
+    }
     const names = MAP_THEMES[m.id] ?? ['desert'];
     if (!names.some((n) => themeTiles.has(n))) return;
 
     const tilesX = m.length / FP;
     const halfH = renderHalfH(m);
     const tilesY = Math.ceil((halfH * 2) / FP);
-    const th = TILE * Y_SQUASH;
+    // 세로 맵은 원근 압축을 쓰지 않는다 (sx/sy 와 반드시 같아야 한다).
+    // 이게 어긋나면 지형과 유닛이 서로 3타일쯤 밀려 그려진다 — 본진이
+    // 중앙에서 벗어나 보이던 원인이었다.
+    const th = TILE * (m.vertical ? 1 : Y_SQUASH);
     const laneHalf = m.halfW / FP;
 
     /**
@@ -1183,18 +1522,69 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
      * 칼로 자른 직선이 아니라 "불이 번지다 만" 자국처럼 보이게 한다.
      */
     const BLEND = 4; // 섞이는 띠의 반폭 (타일)
-    const themeAt = (i: number, j: number): string => {
-      if (names.length < 2) return names[0]!;
+    /**
+     * 이 칸이 얼마나 탔는가 (0 = 온전한 숲, 1 = 완전히 탄 곳).
+     * 예전엔 칸마다 둘 중 하나를 확률로 골라서, 네모 타일이 체스판처럼 딱딱 갈렸다.
+     * 지금은 비율을 그대로 돌려주고 두 지형을 겹쳐 그린다 — 경계가 녹아 이어진다.
+     */
+    const burntAt = (i: number, j: number): number => {
+      if (names.length < 2) return 0;
       const wave = Math.sin(j * 0.9) * 2.2 + Math.sin(j * 0.37 + 1.3) * 1.7;
       const d = i - (tilesX / 2 + wave); // 경계로부터의 거리 (+ = 불탄 쪽)
-      if (d <= -BLEND) return names[0]!;
-      if (d >= BLEND) return names[1]!;
+      if (d <= -BLEND) return 0;
+      if (d >= BLEND) return 1;
+      const t = (d + BLEND) / (BLEND * 2); // 0~1 선형
+      // 칸마다 ±0.18 의 얼룩을 섞어 경계선이 자로 그은 듯 곧게 보이지 않게 한다
       const h = ((i * 73856093) ^ (j * 19349663)) >>> 0;
-      const burntChance = ((d + BLEND) / (BLEND * 2)) * 1000;
-      return h % 1000 < burntChance ? names[1]! : names[0]!;
+      const jitter = ((h % 1000) / 1000 - 0.5) * 0.36;
+      return Math.max(0, Math.min(1, t + jitter));
+    };
+    const themeAt = (i: number, j: number): string =>
+      (names.length < 2 || burntAt(i, j) < 0.5) ? names[0]! : names[1]!;
+    /**
+     * 통행 마스크가 있는 맵(손그림 지형)의 격자 조회.
+     * 마스크는 타일의 2배 해상도(반타일)라 타일 (i, j) 는 칸 (2i, 2j)~(2i+1, 2j+1) 을 덮는다.
+     */
+    const mk = m.mask;
+    // 타일 격자는 맵 바깥으로 EDGE_MARGIN 만큼 더 깔린다 (여백 지대).
+    // 마스크·장식 격자는 그 여백을 모르므로 열 번호를 그만큼 당겨서 맞춘다.
+    // 이걸 빼먹으면 지형 그림이 통행 범위보다 3타일 아래로 밀려, 유닛이
+    // 「강 위를 걸어가고」 넥서스가 중앙에서 벗어나 보인다.
+    /** 마스크 한 칸이 타일의 몇 분의 1인가 (2 = 반타일, 4 = 1/4타일). */
+    const CELLS = mk ? Math.max(1, Math.round(mk.rows / (m.length / FP))) : 1;
+    const cellOff = Math.round((renderHalfH(m) - mapHalfH(m)) / FP) * CELLS;
+    const cellPath = (row: number, col: number): boolean => {
+      if (!mk) return false;
+      const c = col - cellOff;
+      if (row < 0 || row >= mk.rows || c < 0 || c >= mk.cols) return false;
+      return mk.data[row * mk.cols + c] === '.';
+    };
+    /** 장식 격자 조회 — 마스크와 같은 여백 보정을 쓴다. */
+    const decoCell = (row: number, col: number): string => (
+      deco ? decoAt(deco, row, col - cellOff) : '.'
+    );
+    /**
+     * 타일 꼭짓점 (i, j) 가 길인가 — 맞닿은 네 칸 중 하나라도 길이면 길로 친다.
+     * 다수결로 하면 그려진 길이 실제 통행 칸보다 좁아져, 유닛이 「나무 위를
+     * 걸어가는」 자리가 생긴다. 그림이 통행 범위를 덮도록 넉넉하게 잡는다.
+     */
+    const maskCorner = (vx: number, vy: number): number => (
+      cellPath(vx * 2 - 1, vy * 2 - 1) || cellPath(vx * 2, vy * 2 - 1)
+        || cellPath(vx * 2 - 1, vy * 2) || cellPath(vx * 2, vy * 2)
+    ) ? 1 : 0;
+    /**
+     * 타일 (i, j) 에 걸을 수 있는 칸이 하나라도 있는가.
+     * 여기에 해당하면 나무를 절대 심지 않는다 — 반 칸이라도 길이면 유닛이 지나간다.
+     */
+    const maskTile = (i: number, j: number): boolean => {
+      for (let a = 0; a < CELLS; a++) {
+        for (let b = 0; b < CELLS; b++) if (cellPath(i * CELLS + a, j * CELLS + b)) return true;
+      }
+      return false;
     };
     // Wang 코너 판정: 꼭짓점이 코리도어(걷는 길) 안인가 — 메인 레인 + 가지 길
     const laneV = (vx: number, vy: number): number => {
+      if (mk) return maskCorner(vx, vy);
       const wx = Math.max(0, Math.min(m.length, vx * FP));
       const cy = (laneCenterY(m, wx) + halfH) / FP;
       const hw = laneHalfWAt(m, wx) / FP; // 초크 구간은 좁다
@@ -1211,12 +1601,88 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
     // 같은 타일이 반복될 때의 단조로움을 덜기 위한 아주 미세한 명암 변주.
     // 규칙적인 식으로 고르면 체커보드가 보이므로 해시로 흩는다.
     const SHADES = [0xffffff, 0xfafafa, 0xf5f5f5];
-    for (let i = 0; i < tilesX; i++) {
-      for (let j = 0; j < tilesY; j++) {
-        const name = themeAt(i, j);
+    /**
+     * 손그림 맵은 「반 타일」 해상도로 지면을 깐다.
+     *
+     * 마스크는 타일당 2칸인데 지면을 타일 단위로 그리면, 3칸(1.5타일)짜리 좁은
+     * 길과 고리가 전부 한 덩어리로 뭉개져 그림이 통째로 뭉텅이가 된다.
+     * 칸 단위로 깔면 그려진 길 폭이 그대로 살아난다 (타일 수는 4배).
+     */
+    const SUB = CELLS;
+    const stepW = TILE / SUB;
+    const stepH = th / SUB;
+    /**
+     * 숲 바닥 한 장을 통째로 깔아 둔다 (마스크 맵 전용).
+     * 그 위에 「길이 조금이라도 닿는 칸」만 타일로 덮는다 — 스프라이트가 1/3로 준다.
+     */
+    /** 반타일 격자의 Wang 코너 — 맞닿은 마스크 칸 중 둘 이상이 길이면 길. */
+    const subCorner = (vx: number, vy: number): number => (
+      (cellPath(vx - 1, vy - 1) ? 1 : 0) + (cellPath(vx, vy - 1) ? 1 : 0)
+      + (cellPath(vx - 1, vy) ? 1 : 0) + (cellPath(vx, vy) ? 1 : 0)
+    ) >= 2 ? 1 : 0;
+    const cornerV = mk ? subCorner : laneV;
+    /** 이 맵의 단 경계 (없으면 계단 없음). */
+    const terraces = MAP_TERRACES[m.id];
+    /** 단 경계의 x — 자로 그은 듯 곧지 않게 살짝 물결진다. */
+    const terraceX = (base: number, j: number): number => base + Math.round(0.8 * Math.sin(j * 0.28));
+    /** 타일 (i, j) 가 몇 단인가 (0 = 가장 낮은 단). */
+    const levelAt = (i: number, j: number): number => {
+      if (!terraces) return TERRACE_SHADE.length - 1;
+      let lv = 0;
+      for (const b of terraces) if (i >= terraceX(b, j)) lv++;
+      return Math.min(lv, TERRACE_SHADE.length - 1);
+    };
+    /** 색을 f 배로 어둡게 (0~1). */
+    const dimTint = (c: number, f: number): number => {
+      const r = Math.round(((c >> 16) & 0xff) * f);
+      const g2 = Math.round(((c >> 8) & 0xff) * f);
+      const b2 = Math.round((c & 0xff) * f);
+      return (r << 16) | (g2 << 8) | b2;
+    };
+    let plainFloor = false;
+    if (mk && names.length === 1) {
+      const base = themeTiles.get(names[0]!)?.get(0);
+      if (base && !themeOuterVariants.get(names[0]!)) {
+        // 단마다 따로 깐다 — 한 장으로 덮으면 단별 밝기 차가 통째로 사라져
+        // 절벽이 「무엇을 떠받치는지」 알 수 없는 갈색 띠로 보인다.
+        const bounds = [0, ...(terraces ?? []), tilesX];
+        for (let k = 0; k + 1 < bounds.length; k++) {
+          const x0 = bounds[k]! * TILE;
+          const x1 = bounds[k + 1]! * TILE;
+          const bg = new TilingSprite({
+            texture: base,
+            width: x1 - x0,
+            height: tilesY * th,
+          });
+          bg.tileScale.set(stepW / TILE_PX, stepH / TILE_PX);
+          bg.tilePosition.x = -x0;
+          bg.x = x0;
+          bg.y = PAD_TOP;
+          bg.tint = terraces
+            ? dimTint(0x8ba47c, TERRACE_SHADE[Math.min(k, TERRACE_SHADE.length - 1)]!)
+            : 0x8ba47c;
+          groundTiles.addChild(bg);
+        }
+        plainFloor = true;
+      }
+    }
+    for (let i = 0; i < tilesX * SUB; i++) {
+      for (let j = 0; j < tilesY * SUB; j++) {
+        const ti = Math.floor(i / SUB);
+        const tj = Math.floor(j / SUB);
+        const burnt = burntAt(ti, tj);
+        // 경계 구간이면 「온전한 숲」 위에 「탄 숲」을 투명도로 덮어 서서히 넘어가게 한다.
+        // 두 테마가 같은 시트를 쓰므로 무늬가 정확히 겹치고, 탈색 필터만 다르게 걸린다.
+        const layers: { name: string; alpha: number }[] = names.length < 2 || burnt <= 0.02
+          ? [{ name: names[0]!, alpha: 1 }]
+          : burnt >= 0.98
+            ? [{ name: names[1]!, alpha: 1 }]
+            : [{ name: names[0]!, alpha: 1 }, { name: names[1]!, alpha: burnt }];
+        for (const layer of layers) {
+        const name = layer.name;
         const tiles = themeTiles.get(name);
         if (!tiles) continue;
-        const idx = laneV(i, j) * 8 + laneV(i + 1, j) * 4 + laneV(i, j + 1) * 2 + laneV(i + 1, j + 1);
+        const idx = cornerV(i, j) * 8 + cornerV(i + 1, j) * 4 + cornerV(i, j + 1) * 2 + cornerV(i + 1, j + 1);
         let tex = tiles.get(idx);
         // 길 안쪽 칸: 변형 무늬와 해시로 섞는다. 64px 변형은 2×2 블록에 걸쳐
         // 깔려 큼지막한 무늬가 되고, 블록 단위로 종류를 고르므로 무늬가 안 끊긴다.
@@ -1244,14 +1710,282 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
           }
         }
         if (!tex) continue;
+        // 숲만 있는 칸(idx 0)은 아래 깔린 배경 한 장이 그대로 보이므로 건너뛴다.
+        // 1/4 타일까지 쪼개면 칸이 4만 개가 넘어 스프라이트 수가 감당이 안 된다.
+        if (idx === 0 && plainFloor && layers.length === 1) continue;
         const sp = new Sprite(tex);
-        sp.x = i * TILE;
-        sp.y = PAD_TOP + j * th;
-        sp.width = TILE;
-        sp.height = th;
-        sp.tint = SHADES[(((i * 73856093) ^ (j * 83492791)) >>> 0) % SHADES.length]!;
+        sp.x = i * stepW;
+        sp.y = PAD_TOP + j * stepH;
+        sp.width = stepW;
+        sp.height = stepH;
+        sp.alpha = layer.alpha;
+        // 손그림 맵의 숲 칸은 한 단 어둡게 — 위에 심는 침엽수 캐노피의 그늘이 된다
+        const baseTint = mk && idx === 0
+          ? 0x8ba47c
+          : SHADES[(((i * 73856093) ^ (j * 83492791)) >>> 0) % SHADES.length]!;
+        sp.tint = terraces ? dimTint(baseTint, TERRACE_SHADE[levelAt(Math.floor(i / SUB), Math.floor(j / SUB))]!) : baseTint;
         (THEMES[name]?.scorched ? scorchedTiles : groundTiles).addChild(sp);
+        }
       }
+    }
+    // 물길: 장식 격자('~')를 Wang 으로 지면 위에 덮는다. 숲뿐인 칸은 건너뛴다.
+    const deco = MAP_DECO[m.id];
+    const waterTiles = waterSheets.get(MAP_WATER_SHEET[m.id] ?? 'woodwater') ?? new Map<number, Texture>();
+    if (deco && waterTiles.size > 0) {
+      // 지면과 같은 반타일 격자를 쓴다 — 강만 타일 단위로 깔면 물가가 뭉텅이가 된다
+      // 다리 밑에서는 길 위에도 강을 이어 그린다 (통행 판정과는 무관 — 그림만)
+      const spans = MAP_WATER_SPANS[m.id] ?? [];
+      /** 반타일 칸이 물인가 — 장식 격자에 있거나, 이어 붙인 강줄기 안이거나. */
+      const isWet = (row: number, col: number): boolean => {
+        if (decoCell(row, col) === '~') return true;
+        if (spans.length === 0) return false;
+        // 칸 중심의 타일 좌표. 장식 격자의 열은 맵 위쪽 끝(-mapHalfH)에서 시작한다.
+        const tx = (row + 0.5) / CELLS;
+        const ty = (col - cellOff + 0.5) / CELLS - mapHalfH(m) / FP;
+        return inWaterSpan(spans, tx, ty);
+      };
+      const waterV = (vx: number, vy: number): number => {
+        let n = 0;
+        if (isWet(vx - 1, vy - 1)) n++;
+        if (isWet(vx, vy - 1)) n++;
+        if (isWet(vx - 1, vy)) n++;
+        if (isWet(vx, vy)) n++;
+        return n >= 2 ? 1 : 0;
+      };
+      for (let i = 0; i < tilesX * SUB; i++) {
+        for (let j = 0; j < tilesY * SUB; j++) {
+          const idx = waterV(i, j) * 8 + waterV(i + 1, j) * 4 + waterV(i, j + 1) * 2 + waterV(i + 1, j + 1);
+          if (idx === 0) continue; // 물이 하나도 안 닿는 칸 — 지면 그대로 둔다
+          const tex = waterTiles.get(idx);
+          if (!tex) continue;
+          const sp = new Sprite(tex);
+          sp.x = i * stepW;
+          sp.y = PAD_TOP + j * stepH;
+          sp.width = stepW;
+          sp.height = stepH;
+          // 물빛을 칸마다 살짝 흔든다 — 한 장짜리 시트를 그대로 깔면
+          // 강이 「색종이를 오려 붙인 띠」처럼 납작해 보인다
+          const wh = ((i * 374761393) ^ (j * 668265263)) >>> 0;
+          sp.tint = WATER_SHADES[wh % WATER_SHADES.length]!;
+          groundTiles.addChild(sp);
+          // 강 한복판에는 이따금 여울·통나무를 띄운다 (물 위에만 사는 소품)
+          if (idx === 15 && riverProps.length > 0 && wh % 100 < 4) {
+            const rt = riverProps[(wh >>> 7) % riverProps.length]!;
+            const rp = new Sprite(rt);
+            rp.anchor.set(0.5, 0.5);
+            if (m.vertical) rp.rotation = Math.PI / 2;
+            const wide = TILE * (wh % 3 === 0 ? 1.15 : 0.85);
+            rp.scale.set(wide / rt.width);
+            rp.x = i * stepW + stepW * 0.5 + ((wh >>> 11) % 9) - 4;
+            rp.y = PAD_TOP + j * stepH + stepH * 0.5 + ((wh >>> 15) % 9) - 4;
+            rp.alpha = 0.94;
+            groundTiles.addChild(rp);
+          }
+        }
+      }
+    }
+    // ── 계단 절벽: 단 경계마다 돌벽을 세우고, 길이 넘는 자리엔 계단을 놓는다 ──
+    //
+    // 조각은 모두 아래 끝을 맞춰 놓는다 (벽 57px, 끝 조각 72px, 계단 36px / 타일 32px).
+    // 벽이 끊기는 자리(길·물)에는 끝 조각을 세워 뚝 잘린 티를 없앤다.
+    const wallTiles = new Set<number>();
+    if (mk && cliffFace && terraces) {
+      const lowTile = (i: number, j: number): boolean => {
+        for (let a = 0; a < CELLS; a++) {
+          for (let b = 0; b < CELLS; b++) {
+            if (cellPath(i * CELLS + a, j * CELLS + b)) return true;
+            if (decoCell(i * CELLS + a, j * CELLS + b) === '~') return true;
+          }
+        }
+        return false;
+      };
+      const FACE_H = 57 / 32;   // 벽 높이 (타일)
+      /** 조각 하나를 단 경계에 세운다. 아래 끝을 벽과 맞춘다. */
+      const stamp = (tex: Texture, i: number, j: number, hTiles: number): void => {
+        const sp = new Sprite(tex);
+        sp.anchor.set(0.5, 0);
+        const lift = (hTiles - FACE_H) * TILE;   // 큰 조각은 그만큼 위에서 시작
+        if (m.vertical) {
+          sp.rotation = Math.PI / 2;
+          sp.x = i * TILE + lift;
+          sp.y = PAD_TOP + (j + 0.5) * th;
+          sp.width = th;
+          sp.height = hTiles * TILE;
+        } else {
+          sp.x = i * TILE + TILE * 0.5;
+          sp.y = PAD_TOP + (j + 1) * th - lift * Y_SQUASH;
+          sp.width = TILE;
+          sp.height = hTiles * TILE * Y_SQUASH;
+        }
+        // 흙벽이 주변보다 붉고 선명하다 — 채도를 눌러 숲·길과 같은 톤으로
+        sp.tint = 0xc2c6b4;
+        sp.zIndex = 2;
+        groundProps.addChild(sp);
+      };
+      for (const base of terraces) {
+        // 이 단 경계에서 각 칸이 벽인지 계단인지 먼저 정한다
+        const kind: ('wall' | 'ramp' | 'none')[] = [];
+        for (let j = 0; j < tilesY; j++) {
+          const i = terraceX(base, j);
+          kind.push(i < 1 || i >= tilesX - 1 ? 'none' : (lowTile(i, j) ? 'ramp' : 'wall'));
+        }
+        for (let j = 0; j < tilesY; j++) {
+          const i = terraceX(base, j);
+          if (kind[j] === 'none') continue;
+          if (kind[j] === 'ramp') {
+            if (cliffStair) stamp(cliffStair, i, j, 36 / 32);
+            continue;
+          }
+          wallTiles.add(i * 1000 + j);
+          // 벽줄의 양 끝이면 꺾이는 조각으로 마무리한다
+          const headEnd = kind[j - 1] !== 'wall';
+          const tailEnd = kind[j + 1] !== 'wall';
+          const capTex = headEnd ? cliffEndL : tailEnd ? cliffEndR : null;
+          stamp(capTex ?? cliffFace, i, j, capTex ? 72 / 32 : FACE_H);
+        }
+      }
+    }
+    // ── 오르는 층계: 길 바닥을 돌계단 타일로 갈아 깐다 ──
+    const stairZones = MAP_STAIRS[m.id];
+    if (mk && stairTile && stairZones) {
+      const halfT = halfH / FP;
+      for (const z of stairZones) {
+        const i0 = Math.floor(z.x - z.r);
+        const i1 = Math.ceil(z.x + z.r);
+        const j0 = Math.floor(z.y + halfT - z.r);
+        const j1 = Math.ceil(z.y + halfT + z.r);
+        for (let i = i0; i <= i1; i++) {
+          for (let j = j0; j <= j1; j++) {
+            if (i < 0 || i >= tilesX || j < 0 || j >= tilesY) continue;
+            if (!maskTile(i, j)) continue;        // 길 위에만 깐다
+            const d = Math.hypot(i + 0.5 - z.x, j + 0.5 - (z.y + halfT));
+            if (d > z.r) continue;
+            const sp = new Sprite(stairTile);
+            sp.x = i * TILE;
+            sp.y = PAD_TOP + j * th;
+            sp.width = TILE;
+            sp.height = th;
+            // 가장자리는 서서히 옅어져 흙길과 이어진다
+            sp.alpha = d < z.r * 0.55 ? 1 : 1 - (d - z.r * 0.55) / (z.r * 0.45);
+            groundTiles.addChild(sp);
+          }
+        }
+      }
+    }
+    const placed = MAP_PROPS[m.id] ?? [];
+    // 손그림 지형: 소품도 마스크를 따른다 — 길 밖에만 나무를 심고,
+    // 장식 격자가 바위('o')·물('~')이라고 한 칸은 각각 바위를 놓거나 비운다.
+    if (mk) {
+      for (let i = 1; i < tilesX - 1; i++) {
+        for (let j = 0; j < tilesY; j++) {
+          const onPath = maskTile(i, j);
+          const h = ((i * 73856093) ^ (j * 19349663)) >>> 0;
+          const theme = themeAt(i, j);
+          if (onPath) {
+            const lane = themeLaneProps.get(theme);
+            if (!lane || lane.length === 0 || h % 100 >= 18) continue;
+            const tex = lane[h % lane.length]!;
+            const sp = new Sprite(tex);
+            sp.anchor.set(0.5, 1);
+            if (m.vertical) sp.rotation = Math.PI / 2; // 세로 맵: 월드가 90도 돌아가 있어 소품만 되세운다
+            sp.scale.set((TILE * 0.85) / tex.width);
+            sp.x = i * TILE + ((h >>> 4) % TILE);
+            sp.y = PAD_TOP + j * th + ((h >>> 8) % Math.max(1, Math.floor(th))) + th * 0.5;
+            sp.zIndex = 0;
+            groundProps.addChild(sp);
+            continue;
+          }
+          // 벽을 세운 칸엔 나무를 심지 않는다 (벽 위에 나무가 떠 보인다)
+          if (wallTiles.has(i * 1000 + j)) continue;
+          // 물 위엔 아무것도 심지 않는다 (반타일 4칸 중 하나라도 물이면 비움)
+          let wet = false;
+          if (deco) {
+            for (let a = 0; a < CELLS && !wet; a++) {
+              for (let b = 0; b < CELLS && !wet; b++) {
+                if (decoCell(i * CELLS + a, j * CELLS + b) === '~') wet = true;
+              }
+            }
+          }
+          if (wet) continue;
+          // 손으로 놓은 캠프·다리 자리엔 나무를 심지 않는다 (그림이 가려진다)
+          let nearPlaced = false;
+          for (const pr of placed) {
+            const r = pr.clear ?? 0;
+            if (r <= 0) continue;
+            const dxT = i + 0.5 - pr.x;
+            const dyT = j + 0.5 - (pr.y + halfH / FP);
+            if (dxT * dxT + dyT * dyT < r * r) { nearPlaced = true; break; }
+          }
+          if (nearPlaced) continue;
+          const rocky = decoCell(i * CELLS, j * CELLS) === 'o';
+          // 길에서 얼마나 떨어진 칸인가.
+          // 스프라이트는 발밑을 기준으로 「위로」 자라므로, 길 남쪽 두세 칸에
+          // 큰 나무를 심으면 가지가 길을 통째로 덮어 못 지나가는 길처럼 보인다.
+          let roadside = false;
+          let nearRoad = false;
+          for (let a = -1; a <= 1; a++) {
+            for (let b = -4; b <= 1; b++) {
+              if (a === 0 && b === 0) continue;
+              if (!maskTile(i + a, j + b)) continue;
+              nearRoad = true;
+              if (b >= -2) roadside = true; // 길에서 두 칸까지는 낮은 것만
+            }
+          }
+          const edge = themeEdgeProps.get(theme);
+          const mid = themeMidProps.get(theme);
+          const pool = rocky && rockProps.length > 0 ? rockProps
+            : roadside && edge && edge.length > 0 ? edge
+              : nearRoad && mid && mid.length > 0 ? mid
+                : themeProps.get(theme);
+          if (!pool || pool.length === 0) continue;
+          // 깊은 숲은 빽빽하게, 길가는 성기고 낮게 — 길 경계가 눈에 들어오게
+          if (h % 100 >= (rocky ? 70 : roadside ? 42 : nearRoad ? 62 : 84)) continue;
+          const tex = pool[h % pool.length]!;
+          const widthT = rocky ? 1.15 : roadside ? 1.0 : nearRoad ? 1.35 : 1.9;
+          const offX = (h >>> 4) % TILE;
+          const offY = (h >>> 8) % Math.max(1, Math.floor(th));
+          /**
+           * 이 소품이 「걸을 수 있는 칸」을 조금이라도 덮는가.
+           *
+           * 스프라이트는 발밑에서 위로 자라므로, 숲 칸에 심어도 키가 크면 위쪽
+           * 길을 덮어 버린다 — 유닛이 나무를 밟고 지나가는 것처럼 보인다.
+           * 한 칸이라도 덮으면 아예 심지 않는다 (그 자리는 풀만 남는다).
+           */
+          const hT = (widthT * (tex.height / tex.width)) / Y_SQUASH; // 화면 높이(타일)
+          const baseT = j + 0.5 + offY / th;
+          const leftT = i + offX / TILE - widthT / 2;
+          const rightT = i + offX / TILE + widthT / 2;
+          let covers = false;
+          for (let cj = Math.floor(baseT - hT); cj <= Math.floor(baseT) && !covers; cj++) {
+            for (let ci = Math.floor(leftT); ci <= Math.floor(rightT); ci++) {
+              if (maskTile(ci, cj)) { covers = true; break; }
+            }
+          }
+          if (covers) continue;
+          const sp = new Sprite(tex);
+          sp.anchor.set(0.5, 1);
+          if (m.vertical) sp.rotation = Math.PI / 2; // 세로 맵: 월드가 90도 돌아가 있어 소품만 되세운다
+          sp.scale.set((TILE * widthT) / tex.width);
+          sp.x = i * TILE + offX;
+          sp.y = PAD_TOP + j * th + offY + th * 0.5;
+          sp.zIndex = sp.y;
+          groundProps.addChild(sp);
+        }
+      }
+      // 손으로 배치한 캠프·다리·천막 — 산포 나무 위에 얹는다
+      for (const pr of placed) {
+        const tex = placedTex.get(pr.name);
+        if (!tex) continue;
+        const sp = new Sprite(tex);
+        sp.anchor.set(0.5, 1);
+        if (m.vertical) sp.rotation = Math.PI / 2; // 세로 맵: 월드가 90도 돌아가 있어 소품만 되세운다
+        sp.scale.set((TILE * pr.w) / tex.width);
+        sp.x = pr.x * TILE;
+        sp.y = PAD_TOP + (pr.y + halfH / FP) * th + sp.height * 0.34;
+        sp.zIndex = sp.y;
+        groundProps.addChild(sp);
+      }
+      return;
     }
     // 소품 산포. 레인 밖은 나무·덤불처럼 서 있는 것, 레인 안은 납작한 지면 장식만.
     for (let i = 1; i < tilesX - 1; i++) {
@@ -1270,9 +2004,10 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
         const tex = props[h % props.length]!;
         const sp = new Sprite(tex);
         sp.anchor.set(0.5, 1);
+        if (m.vertical) sp.rotation = Math.PI / 2; // 세로 맵: 월드가 90도 돌아가 있어 소품만 되세운다
         sp.scale.set(((inBand ? TILE * 0.85 : TILE * 1.5) / tex.width));
-        sp.x = i * TILE + ((h >> 4) % TILE);
-        sp.y = PAD_TOP + j * th + ((h >> 8) % Math.max(1, Math.floor(th))) + th * 0.5;
+        sp.x = i * TILE + ((h >>> 4) % TILE);
+        sp.y = PAD_TOP + j * th + ((h >>> 8) % Math.max(1, Math.floor(th))) + th * 0.5;
         // 앞줄이 뒷줄을 가리도록 y 순으로 겹치기 (지면 장식은 항상 아래)
         sp.zIndex = inBand ? 0 : sp.y;
         groundProps.addChild(sp);
@@ -1289,6 +2024,7 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
         const j = cyT + (above ? -(laneHalf + 3.2) : laneHalf + 4.6);
         const sp = new Sprite(ltex);
         sp.anchor.set(0.5, 1);
+        if (m.vertical) sp.rotation = Math.PI / 2; // 세로 맵: 월드가 90도 돌아가 있어 소품만 되세운다
         sp.scale.set((TILE * 7) / ltex.width);
         sp.x = i * TILE;
         sp.y = PAD_TOP + j * th;
@@ -1329,6 +2065,25 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
 
   const tiled = (): boolean => groundTiles.children.length + scorchedTiles.children.length > 0;
   buildGroundTiles();
+
+  /*
+   * WebGL 컨텍스트가 날아갔다 돌아오면 지형을 다시 깐다.
+   *
+   * 컨텍스트가 끊기면 GPU 에 올라가 있던 텍스처가 통째로 사라진다. Pixi 가
+   * 대부분 알아서 복구하지만, 시트에서 잘라 쓴 Wang 타일처럼 소스를 공유하는
+   * 텍스처는 복구가 어긋나 「타일이 단색 덩어리로 보이는」 상태가 남곤 했다.
+   * 유닛은 멀쩡한데 바닥만 뭉개져 보이면 이 경우다 — 그때 다시 깔아 준다.
+   */
+  app.canvas.addEventListener('webglcontextlost', (ev) => {
+    ev.preventDefault(); // 기본 동작을 막아야 복구 이벤트가 온다
+    console.warn('[desertlike] WebGL 컨텍스트 손실 — 복구 대기');
+  });
+  app.canvas.addEventListener('webglcontextrestored', () => {
+    console.warn(`[desertlike] WebGL 컨텍스트 복구 — 텍스처 ${texSources.size}개 재업로드`);
+    for (const src of texSources) src.update(); // GPU 사본 강제 재생성
+    buildGroundTiles();
+    rebuildClouds();
+  });
   drawGround(ground, tiled());
 
   const sprites = new Map<number, Sprite>();
@@ -1347,6 +2102,11 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
   const impacts: Impact[] = [];
   /** 「정각의 일격」 치명타 표시 — 떠올랐다 사라지는 텍스트 풀. */
   const critTexts: { t: Text; until: number; x: number; y: number; start: number }[] = [];
+  /** 출정 레인 표시 (두 갈래 맵). */
+  let deployLanes: { y: number; label: string; hold?: boolean }[] | null = null;
+  /** 레인 이름표 — 출정구 옆에 상시 떠 있어 「여길 눌러라」가 읽힌다. */
+  const laneLabels: Text[] = [];
+  let deployChosenY = 0;
   /** 내리꽂기: 전체 연출 길이와 "착지" 시점 비율 (앞 40% 상승, 뒤 60% 급강하). */
   const DIVE_MS = 430;
   const DIVE_DOWN_AT = 0.55;
@@ -1362,10 +2122,19 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
   };
   /** 「나무껍질 장막」 — 잎사귀가 솟아 감싸는 연출. */
   const barkBursts: { x: number; y: number; start: number; r: number }[] = [];
+  /** 「커튼콜」 — 무대가 열려 빨아들이다 닫히는 연출. */
+  const curtainFx: { x: number; y: number; start: number; r: number; close: number; sp?: Sprite }[] = [];
+  /** 열려 있는 무대 (sim 좌표 키 → 화면 좌표). 사라지면 닫힘 연출로 넘긴다. */
+  const curtainSeen = new Map<string, { x: number; y: number; r: number; closed: number }>();
+  const curtainSprites = new Map<string, Sprite>();
+  /** 「들이받기」 — 출발점에서 목표까지 그어지는 속도선과 잔상. */
+  const ramTrails: { x0: number; y0: number; x1: number; y1: number; start: number }[] = [];
   /** 「실의 폭풍」 — 위에서 떨어져 내리는 실 그물. */
   const threadNets: { x: number; y: number; start: number; r: number }[] = [];
   /** 「가호」 시전 순간 — 시전자에서 솟아오르는 빛기둥과 흩날리는 성광 (900ms). */
   const blessBursts: { x: number; y: number; start: number; r: number }[] = [];
+  /** 「질풍의 노래」(에버그린) — 초록 바람이 소용돌이치며 잎과 음표를 실어 나른다. */
+  const galeSongs: { x: number; y: number; start: number; r: number }[] = [];
   const corpses: Corpse[] = [];
 
   // 카메라
@@ -1383,11 +2152,16 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
     audio?.play(key, { screenX, volume });
   };
   // 마법 속성별 시전음 — fxZone/장판 종류가 가장 정확하고, 없으면 스킬 kind 로 가른다
-  const castSfxOf = (a: { kind?: string; fxZone?: string; zone?: { kind?: string } } | undefined): SfxKey => {
+  const castSfxOf = (
+    a: { kind?: string; fxZone?: string; zone?: { kind?: string } } | undefined,
+    casterId?: string,
+  ): SfxKey => {
     const z = a?.fxZone ?? a?.zone?.kind;
     if (z === 'stormwing') return 'cast_storm';
     if (z === 'moonveil') return 'cast_moonveil';
     // 확장 로스터: 스킬 종류로 소리를 고른다
+    if (a?.kind === 'curtainCall') return 'cast_curtain';
+    if (a?.kind === 'puppetShow') return 'cast_puppetshow';
     if (a?.kind === 'summonAtFoe') return 'cast_puppetarmy';
     if (a?.kind === 'threadStorm') return 'cast_threadstorm';
     if (a?.kind === 'randomBuff') return 'cast_hat';
@@ -1395,9 +2169,14 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
     if (a?.kind === 'wardShield' || a?.kind === 'regenAura' || a?.kind === 'selfShield') return 'cast_bark';
     if (a?.kind === 'diveStrike' || a?.kind === 'debuffZone') return 'cast_moonveil';
     if (a?.kind === 'levitate') return 'cast_gravity';
-    if (a?.kind === 'hasteAlly' || a?.kind === 'critAura') return 'cast_bless';
+    if (casterId === 'c_kael'
+      && (a?.kind === 'taunt' || a?.kind === 'invuln' || a?.kind === 'reflect')) return 'cast_bulwark';
+    if (a?.kind === 'hasteAlly') return casterId === 'c_evergreen' ? 'cast_windsong' : 'cast_bless';
+    if (a?.kind === 'critAura') return 'cast_bless';
     if (a?.kind === 'slowFoe' || a?.kind === 'timelock') return 'cast_ice';
     if (a?.kind === 'burrow') return 'cast_quake';
+    // 메테오는 불 계열 시전 모션을 그대로 쓴다 (전용 모션이 생기면 갈아 끼운다)
+    if (a?.kind === 'meteor') return 'cast_fire';
     if (z === 'blaze' || z === 'hellfire' || z === 'fireburst') return 'cast_fire';
     if (z === 'frost' || a?.kind === 'freeze') return 'cast_ice';
     if (z === 'quake' || a?.kind === 'slowfield') return 'cast_quake';
@@ -1423,6 +2202,7 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
   /** 네임드 전용 사망음 — 태그보다 우선한다. */
   const DEATH_SFX_OF: Record<string, SfxKey> = {
     m_alice: 'death_alice',
+    c_alice_hero: 'death_alice',
     p_succubus: 'die_succubus', // 예쁘게 스러진다 — 전용 사망음
   };
   const deathKeyOf = (defId: string, entityId: number): SfxKey => {
@@ -1459,13 +2239,58 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
   function visibleH(): number {
     return app.screen.height / zoom;
   }
+  /**
+   * 카메라가 훑을 수 있는 전체 크기 (화면 기준).
+   * 세로 맵은 컨테이너가 -90도 돌아 있어 가로·세로가 뒤바뀐다:
+   * 화면 가로 = 월드 높이(코리도어 폭), 화면 세로 = 월드 길이(진행축).
+   */
+  function scrollW(): number {
+    return curMap.vertical ? worldH() : worldW();
+  }
+  function scrollH(): number {
+    return curMap.vertical ? worldW() : worldH();
+  }
+  /**
+   * 지금 화면에 보이는 「진행축(월드 x)」 범위.
+   *
+   * 세로 맵은 컨테이너가 -90도 돌아 있고 진행 방향이 아래→위라,
+   * 화면 세로 좌표가  (진행길이 - camY - 월드x) * zoom  으로 나온다.
+   * 즉 월드 x 는 camY 와 **반대 방향**이다. 이걸 놓치고 [camY, camY+높이] 로
+   * 견주면 맵 한가운데만 맞고 양 끝은 통째로 잘려 나간다.
+   */
+  function viewAxisX(): [number, number] {
+    if (!curMap.vertical) return [camX, camX + visibleW()];
+    const hi = scrollH() - camY;
+    return [hi - visibleH(), hi];
+  }
   function clampCam(): void {
-    const maxX = Math.max(0, worldW() - visibleW());
+    const maxX = Math.max(0, scrollW() - visibleW());
     camX = Math.min(Math.max(camX, 0), maxX);
-    const maxY = Math.max(0, worldH() - visibleH());
+    const maxY = Math.max(0, scrollH() - visibleH());
     camY = Math.min(Math.max(camY, 0), maxY);
   }
   function applyCamera(): void {
+    if (curMap.vertical) {
+      // 세로 맵: 컨테이너를 -90도 돌린다. 시뮬 x(진행축)가 화면 세로가 되고
+      // 진행 방향은 아래에서 위로 향한다.
+      const sw = scrollW();
+      const sh = scrollH();
+      // 세로가 긴 맵이라 화면 높이에 맞추면 너무 작아진다 — 가로 기준으로도 재고 큰 쪽을 쓴다
+      const fitH = app.screen.height / sh;
+      const fitW = app.screen.width / sw;
+      const fit = Math.min(2.4, Math.max(0.35, Math.max(fitH, fitW * 0.9)));
+      zoom = fit * userZoom;
+      clampCam();
+      world.rotation = -Math.PI / 2;
+      world.scale.set(zoom);
+      // 회전 기준점 보정: 월드 (0,0) 이 화면 좌하단으로 가므로 세로로 한 번 내린다
+      world.x = sw * zoom <= app.screen.width
+        ? (app.screen.width - sw * zoom) / 2 : -camX * zoom;
+      world.y = (sh * zoom <= app.screen.height
+        ? (app.screen.height - sh * zoom) / 2 : -camY * zoom) + sh * zoom;
+      return;
+    }
+    world.rotation = 0;
     const fit = Math.min(2.4, Math.max(0.8, app.screen.height / worldH()));
     zoom = fit * userZoom;
     clampCam();
@@ -1481,7 +2306,7 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
   /** 유닛별 투사체·착탄 색 오버라이드 — 비슷한 폭발형끼리 헷갈리지 않게. */
   const PROJECTILE_COLOR_OF: Record<string, number> = {
     s_thorn_witch: 0xe0559a,      // 가시 마녀 — 진분홍 (가시밭 장판과 같은 계열)
-    s_mushroom_bomber: 0xb07fe0,  // 버섯 폭탄병 — 보라 (포자 구름과 같은 계열)
+    s_mushroom_bomber: 0xb07fe0,  // 레쉬 — 보라 (포자 구름과 같은 계열)
   };
   const idivSafe = (a: number, b: number): number => Math.floor(a / b);
   const raceColor = (defId: string): number => {
@@ -1495,7 +2320,10 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
     applyCamera();
     const now = performance.now();
     // 화면 밖 소리를 버리고 좌우 팬을 계산하기 위해 가시 범위를 알려준다
-    audio?.setViewport(camX, camX + visibleW());
+    // 소리 호출부는 진행축 좌표(sx(e.x))를 넘긴다 — 세로 맵은 그 축이 화면 세로이므로
+    // camY·visibleH 로 알려야 한다. 안 그러면 확대할 때 소리가 통째로 잘린다.
+    const [av0, av1] = viewAxisX();
+    audio?.setViewport(av0, av1);
     shadows.clear();
     fx.clear();
     // 고산 구름 드리프트 — 오른쪽으로 흘러가 끝에 닿으면 왼쪽에서 다시
@@ -1628,6 +2456,46 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
       const pulse = 0.88 + 0.12 * Math.sin(now * 0.003 + z.id * 2.1);
       const cx = sx(z.x), cy = sy(z.y);
       const r = (z.radius / FP) * TILE;
+      if (z.kind === 'meteor') {
+        /*
+         * 「메테오 스트라이크」 — 그을린 땅 위로 운석이 쉬지 않고 떨어진다.
+         * 피해는 시전 순간 한 번에 끝났으므로 여기는 순수 연출이다.
+         * 운석마다 z.id 와 번호로 고정된 유사난수를 뽑아, 같은 장판이면
+         * 프레임이 바뀌어도 같은 자리에 같은 리듬으로 떨어지게 한다.
+         */
+        const rnd = (n: number): number => {
+          const v = Math.sin(z.id * 127.1 + n * 311.7) * 43758.5453;
+          return v - Math.floor(v);
+        };
+        zonesGr.ellipse(cx, cy, r, r * 0.62).fill({ color: 0x3a1c10, alpha: 0.3 * fade });
+        zonesGr.ellipse(cx, cy, r, r * 0.62).stroke({ color: 0xff5a2e, width: 2, alpha: 0.5 * fade });
+        const COUNT = 14; // 최소 10개 이상이 늘 하늘에 떠 있도록
+        for (let k = 0; k < COUNT; k++) {
+          const ang = rnd(k * 4) * Math.PI * 2;
+          const rad = Math.sqrt(rnd(k * 4 + 1)) * r;
+          const tx = cx + Math.cos(ang) * rad;
+          const ty = cy + Math.sin(ang) * rad * 0.62;
+          const period = 700 + rnd(k * 4 + 2) * 650;
+          const t = (((now + rnd(k * 4 + 3) * period) % period) / period);
+          if (t < 0.62) {
+            // 낙하 — 위에서 착탄점으로 내리꽂힌다 (뒤로 불꼬리)
+            const p = t / 0.62;
+            const my = ty - (1 - p) * (r * 1.5 + 90);
+            const size = 2.6 + 2.4 * p;
+            zonesGr.moveTo(tx - 5, my - 22)
+              .lineTo(tx, my)
+              .stroke({ color: 0xffb45a, width: 2.2, alpha: 0.55 * fade });
+            fx.circle(tx, my, size).fill({ color: 0xff7a2e, alpha: 0.95 * fade });
+            fx.circle(tx - 0.8, my - 0.8, size * 0.5).fill({ color: 0xffe9a8, alpha: 0.9 * fade });
+          } else if (t < 0.82) {
+            // 착탄 — 짧게 번지는 충격 고리
+            const p = (t - 0.62) / 0.2;
+            fx.ellipse(tx, ty, 4 + 22 * p, (4 + 22 * p) * 0.62)
+              .stroke({ color: 0xffc46a, width: 2.5 * (1 - p), alpha: 0.85 * (1 - p) * fade });
+          }
+        }
+        continue;
+      }
       const tex = zoneTex.get(z.kind);
       if (tex) {
         zoneSeen.add(z.id);
@@ -1677,6 +2545,7 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
           : z.kind === 'stormwing' ? 0x4a4a68 // 검은 폭풍 — 잿빛 도는 흑청
           : z.kind === 'moonveil' ? 0xa87fd0 // 인분의 장막
           : z.kind === 'threadstorm' ? 0xc8d4e8 // 실의 폭풍
+          : z.kind === 'silverrain' ? 0xdfe8ff // 은빛 화살비 — 창백한 은빛
           : 0x5fcf6a;
         zonesGr.ellipse(cx, cy, r, r * 0.62).fill({ color, alpha: 0.14 * fade * pulse });
         zonesGr.ellipse(cx, cy, r, r * 0.62).stroke({ color, width: 1.5, alpha: 0.45 * fade * pulse });
@@ -1696,7 +2565,10 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
     for (const e of g.entities) {
       if (!e.alive) continue;
       seen.add(e.id);
-      const d = DEFS[e.defId]!;
+      // 업그레이드·변신 반영본(defOv)이 있으면 그쪽을 본다.
+      // 기본 정의만 보면 서큐버스가 악마로 변신해 flying 이 켜져도 렌더는 모른 채
+      // 땅에 붙어 있었다 (떠오르지도, 공중 레이어로 올라가지도 않았다).
+      const d = (e.defOv ?? DEFS[e.defId])!;
       let sp = sprites.get(e.id);
       if (!sp) {
         // 적(팀1) 건물 스킨: 캠페인 명시 스킨 우선, 장난감 나라는 자동 — 아군 기지는 그대로.
@@ -1705,8 +2577,19 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
         const skin = enemySkin ?? autoSkin;
         const toyKey = curMap?.id === 'nest' && e.team === 0 && e.defId === 'nexus'
           ? 'nexus_nest'
-          : skin && e.team === 1 && (e.defId === 'tower' || e.defId === 'nexus')
-            ? `${e.defId}_${skin}` : undefined;
+          : curMap?.id === 'greatroot' && e.defId === 'nexus'
+            // 걸어가는 숲: 우리는 엘프 야영지, 적은 언덕 위 악마 요새
+            ? (e.team === 0 ? 'nexus_elfcamp' : 'nexus_demon')
+            : curMap?.id === 'ashroad' && e.defId === 'nexus'
+              ? (e.team === 0 ? 'nexus_forestcamp' : 'nexus_demon')
+            // 잿불 숲: 맵 절반을 기준으로 왼쪽은 살아 있는 숲, 오른쪽은 불에 탄 숲이다.
+            // 양쪽 기지가 같은 그림이면 어느 쪽이 내 진영인지 한눈에 안 들어와서,
+            // 오른쪽만 잿빛으로 갈아 끼운다 (왼쪽은 기본 그림 유지).
+            : curMap?.id === 'plains' && e.team === 1
+              && (e.defId === 'nexus' || e.defId === 'tower')
+              ? `${e.defId}_ash`
+            : skin && e.team === 1 && (e.defId === 'tower' || e.defId === 'nexus')
+              ? `${e.defId}_${skin}` : undefined;
         if (toyKey && assetTex.has(toyKey)) skinnedStructures.add(e.id);
         const variants = (toyKey ? assetTex.get(toyKey) : undefined) ?? assetTex.get(e.defId);
         // 변형은 유닛 id 로 결정론적 배정 (엘프 궁수 여/남 50:50 등)
@@ -1717,7 +2600,7 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
           && !!g.players[e.owner]?.upgrades[skinCfg.upgrade] && skinTex.has(e.defId);
         sp = new Sprite(useSkin ? skinTex.get(e.defId)! : (custom ?? artOf(e.defId, e.team === 2 ? 0 : e.team).texture));
         sp.anchor.set(0.5, 1);
-        const sizeMul = ASSET_SIZE_MUL[e.defId] ?? 1;
+        const sizeMul = (ASSET_SIZE_MUL[e.defId] ?? 1) * (toyKey ? (SKIN_SIZE_MUL[toyKey] ?? 1) : 1);
         const targetW = Math.max(20, (d.radius / FP) * 2 * TILE * 2.2) * (useSkin ? skinCfg!.scaleMul : 1) * sizeMul;
         sp.scale.set(targetW / sp.texture.width);
         const hasDir = dirTex.has(
@@ -1789,6 +2672,38 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
               ...(PROJECTILE_OF[e.defId] ? { kind: PROJECTILE_OF[e.defId] } : {}),
               spin0: (e.id % 17) * 0.37,
             });
+            /*
+             * 다중 사격(에버그린 삼연사): 심은 셋을 동시에 때리는데 화면엔 한 발만
+             * 날아가면 「왜 셋이 닳지?」가 된다. 가까운 적 순으로 나머지 화살도 띄운다.
+             * 순수 연출이라 맞는 대상과 정확히 일치하지 않아도 된다.
+             */
+            const extra = (d.weapon.multiTargets ?? 1) - 1;
+            if (extra > 0 && target) {
+              const reach = d.weapon.range + d.radius;
+              const near: { v: typeof target; d2: number }[] = [];
+              for (const v of g.entities) {
+                if (!v.alive || v.team === e.team || v.id === target.id || v.owner < -1) continue;
+                const vd = DEFS[v.defId];
+                if (!vd || vd.tier === 'structure') continue;
+                const ddx = v.x - e.x, ddy = v.y - e.y;
+                const d2 = ddx * ddx + ddy * ddy;
+                if (d2 > (reach + vd.radius) * (reach + vd.radius)) continue;
+                near.push({ v, d2 });
+              }
+              near.sort((a, b) => a.d2 - b.d2);
+              for (const q of near.slice(0, extra)) {
+                const qx = sx(q.v.x), qy = sy(q.v.y);
+                projectiles.push({
+                  x0: fromX, y0: fromY - sp.height * 0.55,
+                  x1: qx, y1: qy - 8,
+                  start: now + 40, dur: 100 + Math.hypot(qx - fromX, qy - fromY) * 1.1,
+                  color: raceColor(e.defId),
+                  splash: 0,
+                  ...(PROJECTILE_OF[e.defId] ? { kind: PROJECTILE_OF[e.defId] } : {}),
+                  spin0: (q.v.id % 17) * 0.37,
+                });
+              }
+            }
           } else {
             vfx.lungeStart = now;
             const dx = toX - fromX, dy = toY - fromY;
@@ -1802,7 +2717,10 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
           const pu = e.owner >= 0 ? g.players[e.owner]?.upgrades : undefined;
           const poisonous = !!pu && (d.id === 's_elf_archer' ? !!pu['su_elf_poison'] : d.id === 's_vine_hunter' ? !!pu['su_vine_poison'] : false);
           const magic = ranged && d.weapon.range >= tiles(3) && (d.heal !== undefined || d.weapon.zone !== undefined);
-          sfx(d.id === 's_thorn_witch' ? 'atk_thorn'
+          sfx(d.id === 'c_evergreen' ? 'atk_bow_triple'
+            : d.id === 'c_kael' ? 'atk_spear'
+            : d.id === 'p_bone_dragon' ? 'atk_bone'
+            : d.id === 's_thorn_witch' ? 'atk_thorn'
             : poisonous ? 'atk_poison'
             : ranged ? (magic ? 'atk_magic' : 'atk_ranged') : 'atk_melee', fromX, 0.6);
         }
@@ -1878,9 +2796,12 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
             ring(Math.max(R, 50), 0xff8a5a);
             ring(Math.max(R, 50) * 1.25, 0xffc9a0, 100);
             ring(Math.max(R, 50) * 1.5, 0xff6a3a, 200);
-          } else if (castKind === 'ram') {          // 들이받기 — 흰 충돌 섬광
+          } else if (castKind === 'ram') {          // 들이받기 — 속도선을 남기고 꽂힌다
             ring(52, 0xffffff);
             ring(34, 0xffe0a0, 70);
+            ring(70, 0xffd06a, 150);
+            // 떠나온 자리(vfx 에 남은 복귀 좌표)에서 지금 위치까지 선을 긋는다
+            ramTrails.push({ x0: sx(e.returnX), y0: sy(e.returnY), x1: sx(e.x), y1: sy(e.y), start: now });
           } else if (castKind === 'threadStorm') {  // 실의 폭풍 — 은빛 실 그물
             ring(Math.max(R, 60), 0xdfe4f0);
             ring(Math.max(R, 60) * 0.72, 0xb0b8d0, 120);
@@ -1895,6 +2816,9 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
             ring(40, 0xffe14d);
             ring(28, 0xff7ac8, 80);
             ring(52, 0x7ad0ff, 160);
+          } else if (castKind === 'puppetShow') {   // 인형극 — 실이 튕기는 금빛 파문
+            ring(48, 0xffd86a);
+            ring(32, 0xfff2c0, 90);
           } else if (castKind === 'diveStrike') {   // 그림자 도약 — 보라 섬광
             ring(44, 0x9a6ad0);
             ring(28, 0xe0c0ff, 70);
@@ -1902,7 +2826,14 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
             ring(Math.max(R, 60), 0xc8a0e8);
             ring(Math.max(R, 60) * 0.7, 0xe8d0ff, 130);
           } else if (castKind === 'hasteAlly') {
-            ring(Math.max(R, 40), 0xffe14d);
+            // 에버그린 「질풍의 노래」는 전용 연출 — 공용 노란 고리와 겹치지 않게 나눈다
+            if (e.defId === 'c_evergreen') {
+              const gr = Math.max(R, 44);
+              galeSongs.push({ x: cx, y: cy, start: now, r: gr });
+              impacts.push({ x: cx, y: cy, start: now, radius: gr * 0.4, color: 0xd8ffd0 });
+              impacts.push({ x: cx, y: cy, start: now + 110, radius: gr * 0.78, color: 0x9ae86a });
+              impacts.push({ x: cx, y: cy, start: now + 230, radius: gr * 1.1, color: 0xe8fff0 });
+            } else ring(Math.max(R, 40), 0xffe14d);
           } else if (castKind === 'slowFoe') {
             ring(Math.max(R, 44), 0x7ad0ff);
           } else if (castKind === 'critAura') {
@@ -1971,7 +2902,7 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
           vfx.aimUntil = now + (strikeTarget ? 400 : 600);
         }
         // 땅을 찍는 내리꽂기는 지진음, 맹금의 급강하는 날갯짓·울음소리
-        sfx(featherDive ? 'cast_dive' : isDive ? 'cast_quake' : castSfxOf(castSkill), cx, isDive ? 1 : 0.85);
+        sfx(featherDive ? 'cast_dive' : isDive ? 'cast_quake' : castSfxOf(castSkill, e.defId), cx, isDive ? 1 : 0.85);
       }
       vfx.lastSkillCd = skillCdSum;
       vfx.lastSkillCds = [...e.skillCds];
@@ -1998,7 +2929,18 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
         // 겨누는 목표가 있으면 그쪽을 본다. 이동 방향만 보던 시절엔 전진하다
         // 멈춰 옆·뒤의 적을 때릴 때 엉뚱한 데를 보고 휘두르는 그림이 나왔다.
         const faceTgt = e.targetId >= 0 ? byId.get(e.targetId) : undefined;
-        const aiming = faceTgt !== undefined && (!movedNow || now < vfx.aimUntil);
+        // 사거리 안에 목표가 있으면 이동 중이어도 그쪽을 본다.
+        // 원거리 유닛(세이지 등)은 조금씩 자리를 옮기며 쏘는데, 이동 방향만 보면
+        // 그 순간마다 몸이 홱 돌아가 「엉뚱한 데 보고 쏘는」 그림이 됐다.
+        let inRange = false;
+        if (faceTgt && d.weapon) {
+          const wr = Math.max(d.weapon.range, d.weapon.airRange ?? 0);
+          const reachF = wr + d.radius + (DEFS[faceTgt.defId]?.radius ?? 0);
+          const dxF = faceTgt.x - e.x;
+          const dyF = faceTgt.y - e.y;
+          inRange = dxF * dxF + dyF * dyF <= reachF * reachF;
+        }
+        const aiming = faceTgt !== undefined && (inRange || !movedNow || now < vfx.aimUntil);
         const fdx = aiming ? faceTgt.x - e.x : e.x - pv.x;
         const fdy = aiming ? faceTgt.y - e.y : e.y - pv.y;
         // 주 축 기준 4방향 — 대각선은 가로 우선 (그림이 자연스럽다)
@@ -2129,17 +3071,14 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
       }
       // 은신(인큐버스): 적이 쓰면 완전히 사라지고, 내 유닛이면 반투명으로 보인다
       const stealthedNow = g.tick < e.stealthUntil;
-      sp.visible = !stealthedNow || e.team === 0;
+      // 「커튼콜」로 무대 밖에 치워진 동안엔 아예 보이지 않는다 (죽은 게 아니라 없는 것)
+      const vanishedNow = g.tick < e.vanishUntil;
+      sp.visible = (!stealthedNow || e.team === 0) && !vanishedNow;
       sp.alpha = stealthedNow ? 0.45 : 1;
-      // 서큐버스 악마 변신: 지속 중엔 데몬 폼 그림으로 (텍스처만 교체 — 72px 원본이라 몸집도 커진다)
-      if (e.defId === 'p_succubus') {
-        const wantKey = g.tick < e.transformUntil ? 'p_succubus_demon' : 'p_succubus';
-        const wantTex = assetTex.get(wantKey)?.[0];
-        if (wantTex && sp.texture !== wantTex) sp.texture = wantTex;
-      }
       sp.x = px;
       sp.y = py;
-      sp.rotation = rot;
+      // 세로 맵: 월드가 -90도 돌아 있으므로 유닛은 되돌려 세운다
+      sp.rotation = rot + (curMap.vertical ? Math.PI / 2 : 0);
       sp.zIndex = shadowY + (d.flying ? 4000 : 0);
       // 피격 플래시 > 무적(백금색) > 중독/화상(연녹색) > 혼란(보라) > 자가 버프(금색) > 기본
       const sbSkill = d.actives?.find((a) => a.kind === 'selfbuff');
@@ -2156,7 +3095,10 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
       const fearedNow = g.tick < e.fearedUntil;
       // 수호자 생존 중인 넥서스는 보호막 상태 (때려도 안 들어간다)
       const shieldedNow = e.defId === 'nexus' && !g.guardianDown[e.team as 0 | 1];
-      sp.tint = now < vfx.flashUntil ? 0xff7a6a
+      // 「인형의 실」로 빼앗긴 유닛: 형상만 남기고 온통 새까맣게 —
+      // 누구를 빼앗겼는지 한눈에 읽히도록 다른 어떤 틴트보다 앞에 둔다.
+      sp.tint = e.puppetized ? (now < vfx.flashUntil ? 0x3a0f0f : 0x000000)
+        : now < vfx.flashUntil ? 0xff7a6a
         : invulnNow ? 0xfff6d0
         // 빙결: 얼음빛 — 수면보다 차갑고 밝게
         : frozenNow ? 0x9fdcff
@@ -2295,6 +3237,76 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
         fx.ellipse(px, ry, sp.width * 0.62, sp.height * 0.56)
           .stroke({ color: 0xff5a4d, width: 1.5, alpha: 0.5 + 0.2 * Math.sin(now * 0.01) });
       }
+      /*
+       * 숲지기 카엘 전용 연출.
+       *
+       * 도발·무적·반사는 공용 표시가 있지만 전부 「한 번 번쩍」이라, 10초짜리
+       * 도발이 지금 걸려 있는지 화면만 봐서는 알 수 없었다. 지속 중인 것은
+       * 지속되는 표시로 보여 준다.
+       */
+      if (e.defId === 'c_kael') {
+        // 숲의 맥박(패시브 재생): 발밑에서 초록 잎사귀가 천천히 떠오른다
+        if (d.regenPerSec && d.regenPerSec > 0 && e.alive) {
+          const period = 900;
+          for (let k = 0; k < 3; k++) {
+            const t2 = ((now + k * (period / 3) + e.id * 130) % period) / period;
+            const lx = px + Math.sin((t2 + k) * 6.2) * sp.width * 0.32;
+            const ly = py - t2 * sp.height * 0.95;
+            fx.circle(lx, ly, 1.8 * (1 - t2 * 0.4))
+              .fill({ color: 0x8ce06a, alpha: 0.75 * (1 - t2) });
+          }
+        }
+        // 숲의 부름(도발) 지속: 내가 도발한 적이 남아 있는 동안 발밑에 룬 고리
+        let taunting = false;
+        for (const v of g.entities) {
+          if (v.alive && v.tauntedBy === e.id && g.tick < v.tauntedUntil) { taunting = true; break; }
+        }
+        if (taunting) {
+          const spin = now * 0.0022;
+          const rr = sp.width * 0.95;
+          fx.ellipse(px, py - 2, rr, rr * 0.42)
+            .stroke({ color: 0x9ad66a, width: 2, alpha: 0.5 + 0.25 * Math.sin(now * 0.008) });
+          for (let k = 0; k < 6; k++) {
+            const a = spin + (k * Math.PI * 2) / 6;
+            fx.circle(px + Math.cos(a) * rr, py - 2 + Math.sin(a) * rr * 0.42, 2.4)
+              .fill({ color: 0xd8f0a0, alpha: 0.8 });
+          }
+        }
+        // 세계수의 방패(무적) 지속: 금빛 돔 + 안쪽에 나무 문장이 어른거린다
+        if (invulnNow) {
+          const domeR = sp.width * 0.78;
+          const puls = 0.5 + 0.28 * Math.sin(now * 0.009);
+          const dy2 = py - sp.height * 0.45;
+          fx.ellipse(px, dy2, domeR, domeR * 0.92)
+            .fill({ color: 0xffe9a8, alpha: 0.12 + puls * 0.06 });
+          fx.ellipse(px, dy2, domeR, domeR * 0.92)
+            .stroke({ color: 0xffd86a, width: 2.5, alpha: 0.45 + puls * 0.4 });
+          // 나무 문장 — 줄기 하나에 가지 넷
+          fx.moveTo(px, dy2 + domeR * 0.45).lineTo(px, dy2 - domeR * 0.35)
+            .stroke({ color: 0xfff2c0, width: 2, alpha: 0.5 + puls * 0.3 });
+          for (let k = 0; k < 4; k++) {
+            const up = dy2 - domeR * (0.05 + k * 0.1);
+            const wdt = domeR * (0.3 - k * 0.05);
+            fx.moveTo(px, up).lineTo(px - wdt, up - wdt * 0.7)
+              .stroke({ color: 0xfff2c0, width: 1.5, alpha: 0.45 + puls * 0.25 });
+            fx.moveTo(px, up).lineTo(px + wdt, up - wdt * 0.7)
+              .stroke({ color: 0xfff2c0, width: 1.5, alpha: 0.45 + puls * 0.25 });
+          }
+        }
+        // 가시 껍질(반사) 지속: 몸 둘레에 초록 가시가 돋는다 (공용 붉은 가시 위에 덧댄다)
+        if (g.tick < e.reflectUntil) {
+          const ry2 = py - sp.height * 0.45;
+          const spin2 = -now * 0.0026;
+          for (let k = 0; k < 10; k++) {
+            const a = spin2 + (k * Math.PI * 2) / 10;
+            const rx = Math.cos(a) * sp.width * 0.58;
+            const rz = Math.sin(a) * sp.height * 0.52;
+            fx.moveTo(px + rx, ry2 + rz)
+              .lineTo(px + rx * 1.28, ry2 + rz * 1.28)
+              .stroke({ color: 0x7ac04a, width: 2, alpha: 0.8 });
+          }
+        }
+      }
       // 전향(인형의 실): 머리 위 분홍 실에 매달린 하트 표식
       if (charmedIds.has(e.id)) {
         const hy = py - sp.height - 12;
@@ -2380,6 +3392,16 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
             if (base && sp.texture !== base) sp.texture = base;
           }
         }
+        /*
+         * 스킨 그림은 방향 세트가 없다 (동향 한 장 + 공격 프레임뿐).
+         * 그런데 「방향 그림을 가진 유닛」으로 분류돼 스폰 때의 팀 반전도,
+         * 아래의 방향 스왑도 타지 않았다 — 그래서 목없는 기사가 말을 타면
+         * 서쪽으로 달리면서 계속 동쪽을 보고 있었다. 여기서 직접 뒤집는다.
+         */
+        const skinTgt = e.targetId >= 0 ? byId.get(e.targetId) : undefined;
+        const skinFlip = (now < vfx.aimUntil && skinTgt) ? skinTgt.x < e.x : vfx.faceDir === 'w';
+        const sax = Math.abs(sp.scale.x);
+        sp.scale.x = skinFlip ? -sax : sax;
       } else if (now < vfx.skillUntil && vfx.skillUntil > vfx.skillStart && skillAnimTex.has(e.defId)) {
         // 스킬 시전 프레임 재생 (공격 모션보다 우선)
         const frames = skillAnimTex.get(e.defId)!;
@@ -2414,30 +3436,101 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
           // 방향 그림 유닛은 좌우 반전을 쓰지 않는다 (그림이 이미 그 방향을 본다)
           if (sp.scale.x < 0) sp.scale.x = -sp.scale.x;
         } else if (dt && now < vfx.aimUntil) {
-          // 공격 중엔 동향 프레임 재생 — 좌우는 「목표가 실제로 어느 쪽인지」로 정한다.
-          // faceDir 만 보면 위·아래 목표(n/s)일 때 항상 동쪽을 향해 휘둘렀다.
           const atkTgt = e.targetId >= 0 ? byId.get(e.targetId) : undefined;
-          const flip = atkTgt ? atkTgt.x < e.x : vfx.faceDir === 'w';
-          const ax = Math.abs(sp.scale.x);
-          sp.scale.x = flip ? -ax : ax;
+          if (attackTex.has(e.defId) || airAttackTex.has(e.defId)) {
+            // 공격 프레임은 동향(east)으로 그려져 있다 — 서쪽 목표면 뒤집어 맞춘다.
+            // 좌우는 faceDir 이 아니라 「목표가 실제로 어느 쪽인지」로 정한다
+            // (faceDir 만 보면 위·아래 목표일 때 늘 동쪽을 향해 휘둘렀다).
+            const flip = atkTgt ? atkTgt.x < e.x : vfx.faceDir === 'w';
+            const ax = Math.abs(sp.scale.x);
+            sp.scale.x = flip ? -ax : ax;
+          } else {
+            // 공격 프레임이 없는 유닛(발리스타·모자장수·하얀토끼·드로셀마이어 등)은
+            // 방향 그림을 그대로 쓴다. 여기에 반전까지 걸면 서쪽 그림이 다시 뒤집혀
+            // 「왼쪽을 치면서 오른쪽을 보는」 그림이 됐다.
+            const face2 = atkTgt
+              ? (Math.abs(atkTgt.x - e.x) >= Math.abs(atkTgt.y - e.y)
+                ? (atkTgt.x >= e.x ? 'e' : 'w')
+                : (atkTgt.y >= e.y ? 's' : 'n'))
+              : vfx.faceDir;
+            const want2 = face2 === 'w' ? dt.w : face2 === 'n' ? dt.n : face2 === 's' ? dt.s : dt.e;
+            const pick3 = want2 ?? assetTex.get(e.defId)?.[0];
+            if (pick3 && sp.texture !== pick3) sp.texture = pick3;
+            if (sp.scale.x < 0) sp.scale.x = -sp.scale.x;
+          }
         }
       }
 
-      const on = px > camX - 60 && px < camX + visibleW() + 60;
-      sp.visible = on;
-      if (!on) continue;
-
-      // 그림자
-      const rw = Math.max(6, (d.radius / FP) * TILE * 1.6);
-      shadows.ellipse(sx(ix), shadowY - 1, rw, rw * 0.42).fill({ color: 0x3a2a18, alpha: d.flying ? 0.2 : 0.32 });
-      // 선택 링
-      if (e.id === selectedId) {
-        fx.ellipse(sx(ix), shadowY - 1, rw + 4, (rw + 4) * 0.42).stroke({ color: 0xffe98a, width: 2 });
+      // 서큐버스 악마 변신: 지속 중엔 데몬 폼 그림으로.
+      // 공격 프레임 적용보다 뒤여야 한다 — 앞에 두면 싸우는 내내 공격 프레임이
+      // 데몬 폼을 덮어써서 변신한 티가 안 났다 (데몬 폼 전용 공격 프레임은 없다).
+      if (e.defId === 'p_succubus' && g.tick < e.transformUntil) {
+        const demonTex = assetTex.get('p_succubus_demon')?.[0];
+        if (demonTex && sp.texture !== demonTex) sp.texture = demonTex;
+      }
+      // 모자장수 「모자 바꾸기」: 쓰고 있는 모자 색 그림으로 최종 교체한다.
+      // 방향 그림 스왑보다 뒤여야 한다 — 앞에 두면 방향 그림이 모자를 덮어쓴다.
+      // 모자 그림은 동향(east) 한 장뿐이라 서쪽을 볼 땐 좌우를 뒤집는다.
+      if (e.defId === 'm_mad_hatter' && g.tick < e.hatUntil && e.hatKind > 0) {
+        const hatKey = e.hatKind === 2 ? 'm_mad_hatter_blue'
+          : e.hatKind === 4 ? 'm_mad_hatter_gold'
+          : 'm_mad_hatter_red';   // 1·3 = 빨강
+        const hatTex = assetTex.get(hatKey)?.[0];
+        if (hatTex) {
+          if (sp.texture !== hatTex) sp.texture = hatTex;
+          // 거대화(3)·황금(4)은 실제로 몸집이 커진다
+          const grow = (e.hatKind === 3 || e.hatKind === 4) ? 1.45 : 1;
+          const ax = Math.abs(vfx.baseScaleX) * grow;
+          sp.scale.set(vfx.faceDir === 'w' ? -ax : ax, vfx.baseScaleY * grow);
+        }
       }
 
-      // 체력바
+      // 화면 안팎 판정. 앞서 정한 「보이면 안 되는 상태」(은신·커튼콜)를 덮지 않는다 —
+      // 이걸 그냥 on 으로 덮어써서, 무대 밖으로 치워진 유닛이 그 자리에 서 있었다.
+      // 여유는 스프라이트 크기만큼 잡는다. 고정 60px 로 두면 적 요새처럼 큰 건물이
+      // 화면을 가득 채우고 있어도 기준점(발밑)만 밖으로 나가면 통째로 사라진다.
+      const pad = 60 + Math.max(Math.abs(sp.width), Math.abs(sp.height));
+      // px 는 진행축(월드 x) 좌표다. 세로 맵은 컨테이너가 -90도 돌아 있어
+      // 진행축이 화면 세로가 되므로 camY·visibleH 와 견줘야 한다.
+      // camX·visibleW 로 견주면 월드 x 를 월드 y 범위와 비교하는 셈이라,
+      // 확대할수록 창이 좁아져 유닛과 건물이 통째로 사라졌다.
+      const [vx0, vx1] = viewAxisX();
+      const on = px > vx0 - pad && px < vx1 + pad;
+      const hidden = vanishedNow || (stealthedNow && e.team !== 0);
+      sp.visible = on && !hidden;
+      if (!on || hidden) {
+        // 사라진 동안엔 그림자·체력바·상태 링도 함께 지운다
+        if (hidden) sp.alpha = 0;
+        continue;
+      }
+
+      // 그림자 — 바닥에 눕는 타원.
+      // 세로 맵은 월드가 90도 돌아 있어, 납작한 타원을 그대로 그리면 화면에서
+      // 길쭉하게 서 버린다 (선택 링이 늘어져 보이던 원인). 축을 바꿔 그린다.
+      const rw = Math.max(6, (d.radius / FP) * TILE * 1.6);
+      const vert = curMap.vertical;
+      const ew = vert ? rw * 0.42 : rw;
+      const eh = vert ? rw : rw * 0.42;
+      /*
+       * 건물에는 그림자를 깔지 않는다.
+       * 그림 자체가 이미 땅에 닿은 밑동을 그려 두었는데 그 아래 타원을 또 얹으면
+       * 건물이 받침대 위에 떠 있는 것처럼 보였다 (넥서스·수호탑·캠프 전부).
+       * 발이 하나뿐인 유닛과 달리 건물은 바닥 면이 넓어 타원이 맞지도 않는다.
+       */
+      if (d.tier !== 'structure') {
+        shadows.ellipse(sx(ix), shadowY - 1, ew, eh)
+          .fill({ color: 0x3a2a18, alpha: d.flying ? 0.2 : 0.32 });
+      }
+      // 선택 링
+      if (e.id === selectedId) {
+        fx.ellipse(sx(ix), shadowY - 1, vert ? ew + 4 * 0.42 : ew + 4, vert ? eh + 4 : eh + 4 * 0.42)
+          .stroke({ color: 0xffe98a, width: 2 });
+      }
+
+      // 체력바 (+ 보호막이 남아 있으면 그 위에 파란 칸을 하나 더)
       const isStruct = d.tier === 'structure';
-      if ((e.hp < d.maxHp || isStruct) && !propInvuln) {
+      const shielded = e.shieldHp > 0 && !propInvuln;
+      if ((e.hp < d.maxHp || isStruct || shielded) && !propInvuln) {
         const w = isStruct ? 40 : 18;
         // 업그레이드로 최대 체력이 늘어난 유닛은 유효 정의 기준으로 비율 계산
         const maxHp = e.defOv?.maxHp ?? d.maxHp;
@@ -2446,6 +3539,18 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
         const by = py - sp.height - 5;
         bars.rect(bx, by, w, 3.5).fill({ color: 0x120d08, alpha: 0.85 });
         bars.rect(bx, by, w * hpr, 3.5).fill(hpr > 0.5 ? 0x6fce62 : hpr > 0.25 ? 0xe0b840 : 0xe0524a);
+        // 보호막: 체력바 바로 위 한 칸. 기준은 「받을 수 있는 최대 보호막」이 아니라
+        // 이 유닛이 실제로 받았던 양이라, 닳는 만큼 줄어드는 게 눈에 보인다.
+        if (shielded) {
+          const peak = Math.max(e.shieldHp, shieldPeak.get(e.id) ?? 0);
+          shieldPeak.set(e.id, peak);
+          const sr = Math.min(1, e.shieldHp / Math.max(1, peak));
+          const sy2 = by - 4.5;
+          bars.rect(bx, sy2, w, 3.5).fill({ color: 0x0c1626, alpha: 0.85 });
+          bars.rect(bx, sy2, w * sr, 3.5).fill(0x5ab8ff);
+        } else {
+          shieldPeak.delete(e.id);
+        }
       }
     }
 
@@ -2632,6 +3737,138 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
       q.sp.alpha = t < 0.25 ? t / 0.25 : 1 - (t - 0.25) / 0.75;
       q.sp.rotation = t * 0.5;
     }
+    // ── 「커튼콜」 ──
+    // 무대 좌표는 sim 이 갖고 있다 (적 한가운데에 열린다). 렌더가 시전자 자리에
+    // 그리던 시절엔 「내 옆에서 열리는」 것처럼 보였다.
+    {
+      const live = new Set<string>();
+      for (const cc of g.curtainCalls) {
+        const key = `${cc.x},${cc.y}`;
+        live.add(key);
+        const cx2 = sx(cc.x);
+        const cy2 = sy(cc.y);
+        const rr2 = (cc.r / FP) * TILE;
+        if (!curtainSeen.has(key)) curtainSeen.set(key, { x: cx2, y: cy2, r: rr2, closed: 0 });
+        // 열린 무대: 바깥에서 안으로 빨려드는 붉은 소용돌이 + 커튼 그림
+        const tex = castFxTex.get('curtain');
+        if (tex) {
+          let sp2 = curtainSprites.get(key);
+          if (!sp2) {
+            sp2 = new Sprite(tex);
+            sp2.anchor.set(0.5);
+            sp2.zIndex = Number.MAX_SAFE_INTEGER - 2;
+            units.addChild(sp2);
+            curtainSprites.set(key, sp2);
+          }
+          sp2.x = cx2;
+          sp2.y = cy2;
+          sp2.scale.set((rr2 * 2.1) / tex.width);
+          sp2.rotation += 0.004;
+          sp2.alpha = 0.9;
+          sp2.visible = true;
+        }
+        const spin = now * 0.004;
+        for (let k = 0; k < 10; k++) {
+          const a0 = spin + (k * Math.PI * 2) / 10;
+          const rr = rr2 * (1 - ((now * 0.0007 + k * 0.1) % 1) * 0.85);
+          fx.circle(cx2 + Math.cos(a0) * rr, cy2 + Math.sin(a0) * rr * 0.5, 2.6)
+            .fill({ color: k % 2 === 0 ? 0xff7a9a : 0xd04a6a, alpha: 0.85 });
+        }
+      }
+      // 사라진 무대 = 방금 커튼이 닫혔다 → 닫힘 연출로 넘긴다
+      for (const [key, info] of curtainSeen) {
+        if (live.has(key)) continue;
+        curtainSeen.delete(key);
+        const spOld = curtainSprites.get(key);
+        if (spOld) { spOld.destroy(); curtainSprites.delete(key); }
+        curtainFx.push({ x: info.x, y: info.y, start: now, r: info.r, close: now });
+      }
+    }
+    for (let i = curtainFx.length - 1; i >= 0; i--) {
+      const c = curtainFx[i]!;
+      const closing = now >= c.close;
+      const t = closing ? (now - c.close) / 600 : (now - c.start) / Math.max(1, c.close - c.start);
+      if (closing && t >= 1) { c.sp?.destroy(); curtainFx.splice(i, 1); continue; }
+      if (t < 0) continue;
+      if (!closing) {
+        // 열린 무대: 바깥에서 안으로 빨려드는 붉은 소용돌이 (8가닥)
+        const spin = now * 0.004;
+        for (let k = 0; k < 8; k++) {
+          const a0 = spin + (k * Math.PI * 2) / 8;
+          const rr = c.r * (1 - ((now * 0.0007 + k * 0.12) % 1) * 0.85);
+          fx.circle(c.x + Math.cos(a0) * rr, c.y + Math.sin(a0) * rr * 0.5, 2.6)
+            .fill({ color: k % 2 === 0 ? 0xff7a9a : 0xd04a6a, alpha: 0.85 });
+        }
+        fx.ellipse(c.x, c.y, c.r, c.r * 0.5).stroke({ color: 0xd04a6a, width: 2, alpha: 0.5 });
+      } else {
+        // 닫히는 커튼: 장막 그림이 확 덮였다가 서서히 옅어진다
+        const tex2 = castFxTex.get('curtain_closed');
+        if (tex2) {
+          if (!c.sp) {
+            const sp3 = new Sprite(tex2);
+            sp3.anchor.set(0.5);
+            sp3.x = c.x;
+            sp3.y = c.y;
+            sp3.zIndex = Number.MAX_SAFE_INTEGER - 1;
+            units.addChild(sp3);
+            c.sp = sp3;
+          }
+          // 덮을 땐 빠르게 커지고, 그 뒤 천천히 사라진다
+          const grow = t < 0.25 ? 0.75 + (t / 0.25) * 0.35 : 1.1;
+          c.sp.scale.set((c.r * 2.1 * grow) / tex2.width);
+          c.sp.alpha = t < 0.25 ? t / 0.25 : 1 - (t - 0.25) / 0.75;
+        } else {
+          const w = c.r * (1 - t);
+          for (const side of [-1, 1]) {
+            fx.ellipse(c.x + side * (c.r * 0.5 + w * 0.5), c.y, Math.max(1, w * 0.6), c.r * 0.62)
+              .fill({ color: 0x8a1a3a, alpha: 0.75 * (1 - t * 0.4) });
+          }
+        }
+        // 닫히는 순간 튀는 붉은 술 장식
+        if (t < 0.35) {
+          const ft = t / 0.35;
+          for (let k = 0; k < 12; k++) {
+            const ang = (k / 12) * Math.PI * 2;
+            const dd = c.r * (0.3 + ft * 0.8);
+            fx.circle(c.x + Math.cos(ang) * dd, c.y + Math.sin(ang) * dd * 0.5, 2.4 * (1 - ft) + 0.6)
+              .fill({ color: k % 3 === 0 ? 0xffd86a : 0xff7a9a, alpha: (1 - ft) * 0.9 });
+          }
+        }
+      }
+    }
+    // ── 「들이받기」: 지나온 길에 속도선이 쭉 남았다 흩어진다 (500ms) ──
+    for (let i = ramTrails.length - 1; i >= 0; i--) {
+      const r = ramTrails[i]!;
+      const t = (now - r.start) / 500;
+      if (t >= 1) { ramTrails.splice(i, 1); continue; }
+      if (t < 0) continue;
+      const fade = 1 - t;
+      const dx = r.x1 - r.x0;
+      const dy = r.y1 - r.y0;
+      const len = Math.hypot(dx, dy) || 1;
+      const nx = -dy / len;   // 진행 방향의 법선 — 선을 나란히 흩뿌린다
+      const ny = dx / len;
+      // 굵은 중심선 + 양옆으로 갈라지는 잔선 6가닥
+      fx.moveTo(r.x0, r.y0).lineTo(r.x1, r.y1)
+        .stroke({ color: 0xfff2c0, width: 3 * fade + 0.5, alpha: fade * 0.9 });
+      for (let k = 0; k < 6; k++) {
+        const off = ((k % 3) + 1) * 5 * (k < 3 ? 1 : -1) * (0.6 + t);
+        // 뒤쪽부터 사라지도록 시작점을 앞으로 당긴다 (속도감)
+        const s0 = Math.min(0.85, t * 1.3);
+        const ax = r.x0 + dx * s0 + nx * off;
+        const ay = r.y0 + dy * s0 + ny * off;
+        const bx = r.x1 + nx * off * 0.4;
+        const by = r.y1 + ny * off * 0.4;
+        fx.moveTo(ax, ay).lineTo(bx, by)
+          .stroke({ color: k % 2 === 0 ? 0xffffff : 0xffd88a, width: 1.4 * fade + 0.3, alpha: fade * 0.7 });
+      }
+      // 출발 지점에 남는 폭발적 먼지 고리
+      if (t < 0.4) {
+        const ft = t / 0.4;
+        fx.ellipse(r.x0, r.y0, 10 + ft * 26, (10 + ft * 26) * 0.5)
+          .stroke({ color: 0xffe0a0, width: 2 * (1 - ft), alpha: (1 - ft) * 0.8 });
+      }
+    }
     // ── 「나무껍질 장막」: 잎사귀가 솟아올라 감싼다 (700ms) ──
     for (let i = barkBursts.length - 1; i >= 0; i--) {
       const b = barkBursts[i]!;
@@ -2673,6 +3910,75 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
         fx.ellipse(b.x, b.y, b.r * 0.6, b.r * 0.3).stroke({ color: 0xdfe4f0, width: 1, alpha: fade * 0.5 });
       }
     }
+    // ── 출정 레인 표시 (두 갈래 맵): 고른 쪽에 불이 들어온다 ──
+    if (deployLanes) {
+      // 출정 표식: 굽은 길 위에 띠를 긋는 건 의미가 없다 (숲에 걸린다).
+      // 대신 출정구에 큼지막한 관문 표식을 하나씩 세우고, 고른 쪽에 불을 켠다.
+      const gx = sx(g.map.spawnX[0]);
+      const pulse = 0.5 + 0.5 * Math.sin(now * 0.004);
+      for (const lane of deployLanes) {
+        const chosen = lane.y === deployChosenY;
+        const ly = sy(lane.y);
+        const R = 34;
+        // 바닥에 눕는 원. 세로 맵은 월드가 90도 돌아 있어 축을 바꿔야 눕는다.
+        const vertM = curMap.vertical;
+        const grow = chosen ? 1 + pulse * 0.06 : 1;
+        const rx = (vertM ? R * 0.55 : R) * grow;
+        const ry = (vertM ? R : R * 0.55) * grow;
+        const hue = lane.hold
+          ? { fill: 0x4d9fd8, line: 0x9fd7ff }
+          : { fill: 0xffb03d, line: 0xffd875 };
+        fx.ellipse(gx, ly, rx, ry)
+          .fill({ color: chosen ? hue.fill : 0x5c5140, alpha: chosen ? 0.16 + pulse * 0.1 : 0.12 });
+        fx.ellipse(gx, ly, rx, ry)
+          .stroke({ color: chosen ? hue.line : 0x9a8a6a, width: chosen ? 3 : 2, alpha: chosen ? 0.85 : 0.45 });
+        // 안 고른 쪽엔 「눌러라」는 뜻으로 바깥 고리가 안쪽으로 오므라든다
+        if (!chosen) {
+          const t = (now * 0.0009) % 1;
+          const k = 1.6 - t * 0.6;
+          fx.ellipse(gx, ly, (vertM ? R * 0.55 : R) * k, (vertM ? R : R * 0.55) * k)
+            .stroke({ color: 0xd8c088, width: 2, alpha: 0.35 * (1 - t) });
+        }
+        if (lane.hold) {
+          // 「머무르기」는 나가지 않는다 — 화살표 대신 안으로 감기는 고리
+          for (let k = 0; k < 3; k++) {
+            const t2 = ((now * 0.0007 + k * 0.33) % 1);
+            fx.ellipse(gx, ly, (vertM ? R * 0.55 : R) * (1.35 - t2 * 0.5),
+              (vertM ? R : R * 0.55) * (1.35 - t2 * 0.5))
+              .stroke({ color: chosen ? 0x9fd7ff : 0x8a99a8, width: 2, alpha: (chosen ? 0.55 : 0.25) * (1 - t2) });
+          }
+        } else {
+          // 진군 방향 화살표 — 적진 쪽(+x)으로 흘러 나간다
+          for (let k = 0; k < 3; k++) {
+            const slide = (now * 0.0011 + k * 0.33) % 1;
+            const ax = gx + R * 0.5 + slide * 46;
+            const al = (1 - Math.abs(slide - 0.5) * 2) * (chosen ? 0.85 : 0.3);
+            fx.poly([ax, ly - 8, ax + 13, ly, ax, ly + 8, ax + 4, ly])
+              .fill({ color: chosen ? 0xffd070 : 0xbdae90, alpha: al });
+          }
+        }
+        // 이름표를 관문 위에 얹는다
+        const lbl = laneLabels[deployLanes.indexOf(lane)];
+        if (lbl) {
+          lbl.visible = true;
+          lbl.x = gx;
+          lbl.y = ly - (curMap.vertical ? 0 : 44);
+          if (curMap.vertical) { lbl.rotation = Math.PI / 2; lbl.x = gx - 52; }
+          lbl.alpha = chosen ? 0.98 : 0.55;
+          lbl.scale.set(chosen ? 1 + pulse * 0.05 : 0.9);
+          lbl.style.fill = chosen ? 0xffe8a8 : 0xbfb49a;
+        }
+        // 고른 쪽 관문에 이는 불티
+        if (chosen) {
+          for (let k = 0; k < 6; k++) {
+            const a = now * 0.0026 + k * 1.05;
+            const rr = R * 0.75 + Math.sin(a * 1.7) * 6;
+            fx.circle(gx + Math.cos(a) * rr, ly + Math.sin(a) * rr * 0.55, 2.6)
+              .fill({ color: 0xffc84d, alpha: 0.55 + pulse * 0.35 });
+          }
+        }
+      }
+    }
     // ── 「가호」 시전: 빛기둥 + 위로 흩날리는 성광 (900ms) ──
     for (let i = blessBursts.length - 1; i >= 0; i--) {
       const bb = blessBursts[i]!;
@@ -2706,6 +4012,56 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
         ).fill({ color: k % 3 === 0 ? 0xfff0b0 : 0xc8ecff, alpha: fade * 0.95 });
       }
     }
+    /*
+     * 「질풍의 노래」 — 시전자를 축으로 초록 바람이 두 겹으로 돌아 나가고,
+     * 그 바람에 잎사귀와 음표가 실려 반경 끝까지 흩어진다.
+     * 공용 hasteAlly 고리(노란 원)와 색·모양을 모두 달리해 한눈에 구분된다.
+     */
+    for (let i = galeSongs.length - 1; i >= 0; i--) {
+      const gs = galeSongs[i]!;
+      const t = (now - gs.start) / 1100;
+      if (t >= 1) { galeSongs.splice(i, 1); continue; }
+      if (t < 0) continue;
+      const fade = 1 - t;
+      const ease = 1 - (1 - t) * (1 - t);
+      // 소용돌이 두 겹 — 서로 반대로 돈다
+      for (let arm = 0; arm < 2; arm++) {
+        const dir = arm === 0 ? 1 : -1;
+        for (let k = 0; k < 7; k++) {
+          const a0 = dir * (now * 0.004) + (k / 7) * Math.PI * 2 + arm * 0.4;
+          const rad = gs.r * (0.25 + ease * 0.8);
+          const x0 = gs.x + Math.cos(a0) * rad;
+          const y0 = gs.y + Math.sin(a0) * rad * 0.5;
+          const a1 = a0 + dir * 0.5;
+          const x1 = gs.x + Math.cos(a1) * rad * 1.12;
+          const y1 = gs.y + Math.sin(a1) * rad * 0.5 * 1.12;
+          fx.moveTo(x0, y0).lineTo(x1, y1)
+            .stroke({ color: arm === 0 ? 0xb6f08a : 0xe8fff0, width: 2, alpha: fade * 0.8 });
+        }
+      }
+      // 바람에 실린 잎사귀 — 나선을 그리며 위로 흩어진다
+      for (let k = 0; k < 10; k++) {
+        const a = (k / 10) * Math.PI * 2 + t * 3.4;
+        const dist = gs.r * ease * (0.5 + (k % 3) * 0.22);
+        const rise = t * 26 + (k % 4) * 3;
+        const lx = gs.x + Math.cos(a) * dist;
+        const ly = gs.y + Math.sin(a) * dist * 0.5 - rise;
+        // 잎: 짧은 선 두 개로 그린 갸름한 꼴
+        const la = a + t * 5;
+        fx.moveTo(lx - Math.cos(la) * 3, ly - Math.sin(la) * 1.6)
+          .lineTo(lx + Math.cos(la) * 3, ly + Math.sin(la) * 1.6)
+          .stroke({ color: k % 3 === 0 ? 0xffc8e8 : 0x8ce06a, width: 2.2, alpha: fade * 0.9 });
+      }
+      // 노래 — 음표 세 개가 천천히 떠오른다
+      for (let k = 0; k < 3; k++) {
+        const a = (k / 3) * Math.PI * 2 + t * 1.6;
+        const nx = gs.x + Math.cos(a) * gs.r * 0.5;
+        const ny = gs.y + Math.sin(a) * gs.r * 0.25 - t * 34 - 6;
+        fx.circle(nx, ny, 2.4).fill({ color: 0xf0fff4, alpha: fade * 0.95 });
+        fx.moveTo(nx + 2.2, ny).lineTo(nx + 2.2, ny - 7)
+          .stroke({ color: 0xf0fff4, width: 1.6, alpha: fade * 0.95 });
+      }
+    }
   }
 
   let enemySkin: 'toy' | 'bone' | null = null;
@@ -2731,7 +4087,17 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
     setMap(m) {
       curMap = m;
       app.renderer.background.color = MAP_BG[m.id] ?? 0x9c7c4e;
-      buildGroundTiles();
+      /*
+       * 지형 생성이 도중에 터지면 그 뒤로 아무것도 안 깔린다 — 소품도 캠프도
+       * 사라지고 지도가 단색 덩어리로 남는다. 실제로 그런 사고가 있었으므로
+       * (해시를 부호 있는 시프트로 접어 인덱스가 음수가 됐다) 여기서 막고,
+       * 대신 콘솔에 크게 남겨 원인을 바로 찾을 수 있게 한다.
+       */
+      try {
+        buildGroundTiles();
+      } catch (err) {
+        console.error('[desertlike] 지형 생성 실패 — 그린 데까지만 남는다', err);
+      }
       drawGround(ground, tiled());
       buildMapDecos();
       rebuildClouds();
@@ -2768,6 +4134,14 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
     },
     centerOn(x, y) {
       applyCamera(); // 첫 호출 시 줌이 아직 fit 계산 전일 수 있어 먼저 확정
+      if (curMap.vertical) {
+        // 세로 맵: 인자는 (월드 x 픽셀 = 진행축, 월드 y 픽셀 = 폭).
+        // 화면 스크롤은 가로가 폭, 세로가 진행축(아래가 출발)이므로 축을 바꾼다.
+        if (y !== undefined) camX = y - visibleW() / 2;
+        camY = (scrollH() - x) - visibleH() / 2;
+        clampCam();
+        return;
+      }
       camX = x - visibleW() / 2;
       if (y !== undefined) camY = y - visibleH() / 2;
       clampCam();
@@ -2775,26 +4149,39 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
     zoomBy(factor, anchorX, anchorY) {
       const ax = anchorX ?? app.screen.width / 2;
       const ay = anchorY ?? app.screen.height / 2;
-      const wx = (ax - world.x) / zoom;
-      const wy = (ay - world.y) / zoom;
+      // 확대 기준점을 화면 스크롤 좌표로 잡아 둔다 (세로 맵도 같은 규칙 —
+      // camX/camY 는 언제나 「화면」 가로·세로 스크롤이다)
+      const sxAt = camX + ax / zoom;
+      const syAt = camY + ay / zoom;
       userZoom = Math.min(USER_ZOOM_MAX, Math.max(USER_ZOOM_MIN, userZoom * factor));
       applyCamera();
-      camX = wx - ax / zoom;
-      camY = wy - ay / zoom;
+      camX = sxAt - ax / zoom;
+      camY = syAt - ay / zoom;
       clampCam();
+      applyCamera(); // 바뀐 스크롤을 즉시 반영
     },
     view() {
       return { x0: camX, x1: camX + visibleW(), y0: camY, y1: camY + visibleH() };
     },
     pick(g, screenX, screenY) {
-      // 화면 → 월드 px 역변환 후 발밑 기준 최근접 탐색
-      const wx = (screenX - world.x) / zoom;
-      const wy = (screenY - world.y) / zoom;
+      // 화면 → 월드 px 역변환 후 발밑 기준 최근접 탐색.
+      // 세로 맵은 컨테이너가 -90도 돌아 있으므로 축을 되돌린다.
+      let wx: number;
+      let wy: number;
+      if (curMap.vertical) {
+        const rx = (screenX - world.x) / zoom;
+        const ry = (screenY - world.y) / zoom;
+        wx = -ry;   // 화면 세로(위로 갈수록 진행) → 월드 x
+        wy = rx;    // 화면 가로 → 월드 y
+      } else {
+        wx = (screenX - world.x) / zoom;
+        wy = (screenY - world.y) / zoom;
+      }
       let best: number | null = null;
       let bestD = 26 * 26; // 최대 26px 반경
       for (const e of g.entities) {
         if (!e.alive) continue;
-        const d = DEFS[e.defId]!;
+        const d = (e.defOv ?? DEFS[e.defId])!;   // 변신 중이면 그 높이로 집는다
         const px = sx(e.x);
         const py = sy(e.y) - (d.flying ? 26 : 0) - 8; // 몸통 중심 근사
         const dx = px - wx;
@@ -2806,6 +4193,33 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
         }
       }
       return best;
+    },
+    pickLaneY(screenY) {
+      // 세로 맵에서는 「레인」이 화면 가로 방향이므로 x 를 받아야 한다 —
+      // 호출부가 화면 x 를 넘겨 준다 (main.ts 참조).
+      const w = curMap.vertical ? (screenY - world.x) / zoom : (screenY - world.y) / zoom;
+      return worldYToFP(w);
+    },
+    setDeployLanes(lanes, chosenY) {
+      deployLanes = lanes;
+      deployChosenY = chosenY;
+      // 이름표를 레인 수에 맞춰 만들어 두고, 좌표·강조는 매 프레임 갱신한다
+      while (laneLabels.length > (lanes?.length ?? 0)) {
+        const t = laneLabels.pop();
+        if (t) { t.destroy(); }
+      }
+      while (lanes && laneLabels.length < lanes.length) {
+        const t = new Text({
+          text: '',
+          style: { fontFamily: 'sans-serif', fontSize: 15, fontWeight: '700',
+            fill: 0xffe8a8, stroke: { color: 0x1a1206, width: 4 }, align: 'center' },
+        });
+        t.anchor.set(0.5);
+        t.zIndex = 9000;
+        units.addChild(t);
+        laneLabels.push(t);
+      }
+      for (let i = 0; i < (lanes?.length ?? 0); i++) laneLabels[i]!.text = lanes![i]!.label;
     },
     setSelected(id) {
       selectedId = id;
@@ -2822,7 +4236,7 @@ function drawGround(gr: Graphics, tiled = false): void {
   const tilesX = m.length / FP;
   const halfH = renderHalfH(m);
   const tilesY = Math.ceil((halfH * 2) / FP);
-  const th = TILE * Y_SQUASH;
+  const th = TILE * (m.vertical ? 1 : Y_SQUASH);
   const laneHalfTiles = m.halfW / FP;
 
   // 코리도어 밖 = 암반, 안 = 모래 체커. 열 단위로 중앙선을 따라간다.

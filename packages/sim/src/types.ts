@@ -78,7 +78,9 @@ export type ZoneKind = 'thorns' | 'spores' | 'forest' | 'grave' | 'blaze'
   | 'threadstorm' // 드로셀마이어 「실의 폭풍」 — 시각 전용
   | 'moonveil'  // 오베론 「인분의 장막」 — 지속딜 + 공속·사거리 감소
   | 'stormwing' // 검은 폭풍 (검은새) — 하늘을 찢는 깃털바람, 시각 전용
-  | 'balm'; // 치유 포자 (버섯 폭탄병 캠페인 강화) — 적 둔화 + 아군 생체 회복
+  | 'meteor'    // 「메테오 스트라이크」 — 운석이 쏟아지는 하늘 (그림만, 피해는 시전 순간)
+  | 'balm' // 치유 포자 (레쉬 캠페인 강화) — 적 둔화 + 아군 생체 회복
+  | 'silverrain'; // 은빛 화살비 (에버그린) — 지속피해 + 신성부식·치명상
 
 /** 지면에 남는 지속 효과 영역. 근처 재시전 시 갱신되므로 위치·만료는 가변. */
 export interface Zone {
@@ -91,6 +93,8 @@ export interface Zone {
   untilTick: number;
   /** 이 엔티티를 따라 움직이는 장판 (숲의 영역). -1 = 고정. 시전자 사망 시 그 자리에 남는다. */
   followId: number;
+  /** 초당 피해 덮어쓰기 (강화 단계로 달라지는 장판 — 은빛 화살비). 0 = 기본값 사용. */
+  dpsOverride: number;
 }
 
 export interface Weapon {
@@ -125,6 +129,17 @@ export interface Weapon {
    * 공중 다중 사격 (숲의 명궁): 목표가 공중이면 사거리 안 공중 적을 최대 이 수까지 동시에 맞힌다.
    * 지상 목표에는 적용되지 않는다 (지상은 항상 단일 대상).
    */
+  /**
+   * 공중·지상 가리지 않는 다중 사격 — 사거리 안 적을 가까운 순 N기까지 각각 정타.
+   * airMultiTargets 가 「공중 목표일 때만」인 것과 달리 항상 적용된다.
+   */
+  readonly multiTargets?: number;
+  /**
+   * 교차 사격 (엘로윈 「양손 시전」): 사거리 안의 지상 하나와 공중 하나를
+   * 같은 스윙에 각각 정타로 맞힌다. 한쪽만 있으면 그쪽만 맞는다.
+   * multiTargets 와 달리 「지상·공중을 하나씩」이라 물량에 휩쓸리지 않는다.
+   */
+  readonly crossTargets?: boolean;
   readonly airMultiTargets?: number;
   /**
    * 공중 대상 전용 사거리 (생략 = range 와 동일).
@@ -135,6 +150,8 @@ export interface Weapon {
   readonly airDamage?: number;
   /** true 면 사거리 안에 공중이 있을 때 지상보다 먼저 노린다. */
   readonly preferAir?: boolean;
+  /** true 면 하늘도 때리지만 목표는 늘 지상부터 고른다. */
+  readonly preferGround?: boolean;
   /** 방어력 무시 (망령류). */
   readonly ignoreArmor?: boolean;
   /** 입힌 피해의 몇 %를 회복하는가 (흡혈/시체 흡수). */
@@ -168,10 +185,17 @@ export interface ActiveSkill {
   /** 치명타·버프를 받을 유닛을 이 id 목록으로 제한 (오베론 — 나비·페어리·오베론). */
   /** 버프 대상을 이 태그를 가진 유닛으로 제한 (오베론 — 요정 계열). */
   readonly onlyTag?: Tag;
+  /** 대전·연습 전용 — 캐페인에선 발동하지 않는다. */
+  readonly soloOnly?: boolean;
   /** seduce: 매혹 확률 % (기본 30). */
   readonly chancePct?: number;
   /** legion: 고정 구성 대량 소환 목록. */
   readonly legion?: readonly { readonly id: string; readonly n: number }[];
+  /**
+   * 시전하는 동안 자기 발이 묶인다 (invuln 등 방어 기술의 대가).
+   * durTicks 만큼 이동만 막고 공격·다른 시전은 그대로다.
+   */
+  readonly rootsSelf?: boolean;
   readonly kind:
     | 'strike' | 'selfbuff' | 'allybuff' | 'invuln' | 'summon' | 'confuse' | 'zone' | 'taunt' | 'nuke'
     | 'allyarmor' | 'weaken' | 'cure' | 'sleep'
@@ -194,7 +218,10 @@ export interface ActiveSkill {
     | 'airTaunt'     // 엘루리온 — 대공이 되는 적만 도발
     | 'ram'          // 엘루리온 — 대공 적에게 돌진해 박고 돌아온다
     | 'diveStrike'   // 오베론 — 적 후열로 도약 강타 후 제자리로
-    | 'debuffZone';  // 오베론 — 지속딜 + 공속·사거리 감소 장판
+    | 'debuffZone'   // 오베론 — 지속딜 + 공속·사거리 감소 장판
+    | 'puppetShow'   // 앨리스 「인형극」 — 주변 아군 기물을 복제
+    | 'curtainCall'  // 앨리스 「커튼콜」 — 적을 빨아들였다 무대 밖으로 치운다
+    | 'meteor';      // 엘로윈 「메테오 스트라이크」 — 넓은 지역에 운석 낙하 (화상·질식)
   // strike: 스킬 피해 (방어 적용). executeBelowPct 가 있으면
   // 대상 체력이 그 % 이하일 때만 발동하고 executeBonus 를 더한다.
   readonly damage?: number;
@@ -237,6 +264,31 @@ export interface ActiveSkill {
   readonly targetMode?: 'nearest' | 'highestHp';
   // zone
   readonly zone?: { readonly kind: ZoneKind; readonly radius: number; readonly ticks: number };
+  /**
+   * 차지 스킬 (엘로윈 「비전 축적」): 쿨다운이 다 돌면 사용 횟수가 하나씩 쌓여
+   * 최대 이 수까지 모인다. 한 번 쓰면 chargeGap 만큼만 쉬고 바로 또 쓸 수 있다.
+   */
+  readonly charges?: number;
+  /** 장판의 초당 피해를 이 값으로 덮어쓴다 (ZONE_DEFS 기본값 대신). */
+  readonly zoneDps?: number;
+  /** 차지를 연달아 쓸 때의 최소 간격 (틱). 생략 시 3초. */
+  readonly chargeGap?: number;
+  /** freeze: 이 태그들은 빙결 면역에서 제외한다 (얼려버린다). */
+  readonly freezeAlsoTags?: readonly Tag[];
+  /** 「화상」 — 맞은 적이 이 시간 동안 초당 dps 만큼 탄다 (독과 별개로 누적). */
+  readonly burn?: { readonly dps: number; readonly ticks: number };
+  /** 「질식」 부여 틱 — 액티브 사용 불가 + 상태이상 해제를 받지 못한다. */
+  readonly chokeTicks?: number;
+  // ── stealth 전용 (암살자 은신) ──
+  /** 은신 중 평타 피해 가산. */
+  readonly stealthDamageAdd?: number;
+  /** 은신 중 이동 속도 가산 (FP/틱). */
+  readonly stealthSpeedAdd?: number;
+  /**
+   * 은신 중에는 앞줄을 지나쳐 뒤를 노린다 —
+   * 지원가 > 원거리 > 지금 체력이 가장 적은 적 순으로 목표를 다시 고른다.
+   */
+  readonly assassinate?: boolean;
 }
 
 export interface HealAbility {
@@ -258,6 +310,29 @@ export interface EntityDef {
   readonly cost: number;
   /** 보급 점유 (초안에서는 상한 미적용, 예약 필드). */
   readonly supply: number;
+  /**
+   * 타고난 치명타 확률(%) — 버프 없이 항상 적용된다.
+   * 「정각의 일격」 같은 일시 버프(critPct/critUntil)와는 별개로, 둘 중 높은 쪽이 쓰인다.
+   */
+  readonly baseCritPct?: number;
+  /** 상태이상 전면 면역 (수호자와 같은 대우). */
+  readonly statusImmune?: boolean;
+  /**
+   * 평타 주기 사이클 (틱). 한 발 쏠 때마다 다음 칸으로 넘어가며 순환한다 —
+   * 엘로윈 「가속 시전」은 1.4초에서 0.6초까지 빨라졌다가 다시 느려진다.
+   * 지정하면 weapon.cooldown 대신 이 값이 쓰인다 (공속 버프는 그 위에 곱해진다).
+   */
+  readonly cadence?: readonly number[];
+  /**
+   * 「마나 순환」 — 반경 안에서 적이 쓰러질 때마다 스택 1. need 를 채우면
+   * 스택이 0으로 돌아가며 이 유닛의 액티브 쿨다운이 전부 초기화된다.
+   */
+  readonly skillReset?: { readonly need: number; readonly radius: number };
+  /**
+   * 곁에 아군이 없으면 싸움을 접고 기지로 물러난다 (이 타일 안에 아군이 없을 때).
+   * 물러나는 동안은 이동 속도가 오른다 — 「혼자 남으면 살아 돌아가는」 영웅.
+   */
+  readonly loneFlee?: { readonly radius: number; readonly speedPct: number };
   /** 요구 테크 오버라이드. 없으면 티어 기본값(techOfTier) 사용. */
   readonly techReq?: number;
 
@@ -298,6 +373,47 @@ export interface EntityDef {
 
   /** 초당 체력 재생 (캠페인 강화 등으로 부여). 최대 체력까지만 회복. */
   readonly regenPerSec?: number;
+  /**
+   * 밀려나지 않는다 — 겹침 해소에서 자기는 안 밀리고 남만 민다.
+   * 「덩치로 버티는」 보스용 (라다만토스).
+   */
+  readonly immovable?: boolean;
+  /**
+   * 주변 공중 적을 자기 쪽으로 끌어당긴다 (초당 이동량, FP).
+   * 하늘에서 안전하게 쏘는 조합을 자기 품으로 끌어내리는 압박기.
+   */
+  readonly pullAir?: { readonly radius: number; readonly speed: number };
+  /**
+   * 「데몰리션」 — 몸에 붙은 적에게 계속 갈리는 피해 (초당, 방어력 무시).
+   * 근접으로 붙어 패는 것 자체에 값을 매긴다.
+   */
+  readonly demolition?: { readonly radius: number; readonly dps: number };
+  /**
+   * 수호 오라 (영웅 강화 「수호의 맹세」) — 반경 안 아군이 받는 피해의 pct% 를
+   * 대신 받아 낸다. 내가 무적이거나 쓰러져 있으면 나눠 받지 않는다.
+   */
+  readonly guardShare?: { readonly radius: number; readonly pct: number };
+  /** 내가 받는 회복량 배수 % (영웅 강화 「생명의 그릇」). 100 = 두 배. */
+  readonly healTakenPct?: number;
+  /**
+   * 치명타 피해 배율 범위(%) — [최소, 최대], 10% 단위로 무작위.
+   * 생략 시 150 고정. 「꿰뚫는 한 발」이 이 범위를 넓힌다.
+   */
+  readonly critMulRange?: readonly [number, number];
+  /** 영웅·네임드(소환 전용 최종 티어)에게 주는 추가 피해. */
+  readonly bonusVsHero?: number;
+  /**
+   * 「바람의 춤」 — 적이 이 거리 안으로 들어오면 최대 사거리까지 물러나며 쏜다.
+   * 물러나는 동안 이동 속도가 오르고 몸싸움을 하지 않는다 (모든 유닛을 통과).
+   */
+  readonly kiteDance?: { readonly speedPct: number };
+  /** 「잎새의 장막」 — 피격 시 은신. [지속 틱, 쿨 틱]. */
+  readonly veilOnHit?: { readonly durTicks: number; readonly cooldown: number };
+  /**
+   * 「숲의 가호」 나눠주기 — 전투에 들어가면 가까운 아군 N명에게 상태이상 면역을
+   * 영구히 준다. 판당 한 번뿐 (다시 태어나야 재사용).
+   */
+  readonly wardGrant?: number;
   /** 평타 회피 확률 % (캠페인 강화). 마법·스킬·장판은 회피하지 못한다. */
   readonly dodgePct?: number;
   /**
@@ -328,6 +444,20 @@ export interface Entity {
   x: number;
   y: number;
   /** 리쉬 앵커 (수호자·구조물). */
+  /**
+   * 주둔 반경 (FP). 0 이면 보통 유닛.
+   * 0 보다 크면 진군하지 않고 anchor 주변을 지킨다 — 적이 이 반경 안으로
+   * 들어오면 물지만, 밖으로 나가면 쫓지 않고 제자리로 돌아온다.
+   * 호위전 거점을 「적이 점거하고 있는」 상태로 만드는 데 쓴다.
+   */
+  garrisonR: number;
+  /** 직전 틱 위치 — 「가려는데 못 가는」 상태를 재는 데만 쓴다. */
+  lastX: number;
+  lastY: number;
+  /** 제자리에 묶여 있던 틱 수. 일정 시간 넘으면 잠시 서로를 통과한다. */
+  stuckTicks: number;
+  /** 이 틱까지는 다른 유닛과 몸싸움하지 않는다 (끼임 탈출). */
+  phaseUntil: number;
   anchorX: number;
   anchorY: number;
 
@@ -350,6 +480,14 @@ export interface Entity {
   stunnedUntil: number;
   /** 액티브 스킬별 남은 쿨다운 (틱). def.actives 와 같은 인덱스. */
   skillCds: number[];
+  /** 액티브별 남은 차지 수 (charges 스킬 전용). 없는 스킬은 항상 0. */
+  skillCharges: number[];
+  /** 차지 재충전 타이머 (틱). 0 이 되면 차지 하나가 차오른다. */
+  skillRegen: number[];
+  /** 평타 주기 사이클(def.cadence)의 현재 위치. */
+  cadenceIdx: number;
+  /** 「마나 순환」 처치 스택 — need 를 채우면 0으로 돌아가며 쿨을 씻는다. */
+  resetStacks: number;
   /** 이 틱까지 자가 버프 지속 (selfbuff). */
   buffUntil: number;
   /** 이 틱까지 혼란 — 적아 구분을 잃고 자기 편을 공격한다 (치유·시전은 불가). */
@@ -395,6 +533,12 @@ export interface Entity {
   /** 이 틱까지 수면 — 이동·공격·치유·시전 불가. 피격 SLEEP_BREAK_HITS 회면 즉시 해제. */
   sleepUntil: number;
   sleepHits: number;
+  /** 본드래곤 「뼈 무덤」: 이 틱 이후에 죽어야 무덤을 남긴다 (부활 후 60초 대기). */
+  graveReadyTick: number;
+  /** 「인형의 실」로 전향된 유닛 — 새까마케 실루에으로 그려진다. */
+  puppetized: boolean;
+  /** 「커튼콜」로 무대 밖으로 치워진 상태의 만료 틱 (그 동안 전장에서 사라진다). */
+  vanishUntil: number;
   /** 부활 사용 여부 + 부활 예정 틱 (rebirth 유닛 전용). */
   rebirthUsed?: boolean;
   reviveAtTick?: number;
@@ -428,6 +572,16 @@ export interface Entity {
   /** 보호막 만료 틱 (0 또는 MAX = 지속시간 없음). */
   shieldUntil: number;
   shieldImmuneUntil: number;
+  /** 「신성부식」 만료 틱 — 언데드 전용. 회복이 그대로 피해가 된다. */
+  holyRotUntil: number;
+  /** 「치명상」 만료 틱 — 이 적에게 가하는 모든 공격이 치명타가 된다. */
+  mortalUntil: number;
+  /** 「잎새의 장막」 다음 발동 가능 틱. */
+  veilReadyTick: number;
+  /** 「숲의 가호」를 이미 나눠줬는가 (1회성). */
+  wardGiven: boolean;
+  /** 「숲의 가호」를 받아 상태이상 면역이 된 유닛. */
+  warded: boolean;
   /** 치명타 버프 재부여 면역 만료 틱. */
   critImmuneUntil: number;
   /** 가호(방어 버프) 재부여 면역 만료 틱. */
@@ -438,6 +592,11 @@ export interface Entity {
   regenImmuneUntil: number;
   /** 침묵 — 액티브 스킬 사용 불가 (엘루리온). */
   silencedUntil: number;
+  /** 「화상」 만료 틱과 초당 피해 — 독(dot)과 따로 누적된다. */
+  burnUntil: number;
+  burnDps: number;
+  /** 「질식」 만료 틱 — 액티브 사용 불가 + 상태이상 해제(큐어)를 받지 못한다. */
+  chokedUntil: number;
   /** 「인분의 장막」 안에 있는 동안 — 공속 -10%, 사거리 -1. */
   moonveilUntil: number;
   /** 막타 스택 (오베론) — 처치 할 때마다 공격력 +10%, 최대 10. */
@@ -492,6 +651,8 @@ export interface PlayerState {
  * 사실상 1:N 싸움을 만드는 장치 — 거점마다 성격이 다르다.
  */
 export interface EnemyCamp {
+  /** 이 거점을 지키는 건물 id. 부서지면 이 거점의 증원이 끊긴다. */
+  readonly nexusDefId?: string;
   /** 팀 1 안에서의 봇 순번 (players 배열의 팀1 등장 순서). */
   readonly slot: number;
   /** 화면에 띄울 이름 (「발타르의 성」·「전초 A」…). */
@@ -520,8 +681,16 @@ export interface EnemyCamp {
     /** 이 구간에서 특히 선호할 유닛 (가중 ×8). */
     readonly preferred?: readonly string[];
   }[];
-  /** 특정 턴에 인컴 상한을 푼다 (fromWave 오름차순). */
-  readonly incomeUnlocks?: readonly { readonly fromWave: number; readonly cap: number }[];
+  /**
+   * 특정 턴에 인컴 상한을 푼다 (fromWave 오름차순).
+   * setLevel 을 주면 그 단계까지만 시스템이 직접 올려 주고, 그 위로는 봇이
+   * 스스로 번 돈으로 올린다 (생략 = cap 까지 한 번에 올려 준다).
+   */
+  readonly incomeUnlocks?: readonly {
+    readonly fromWave: number;
+    readonly cap: number;
+    readonly setLevel?: number;
+  }[];
   /** 매 턴 확정 편입 (fromWave 부터, 목록에서 amount 종을 골라 1기씩). */
   readonly forcedGrowth?: readonly {
     readonly fromWave: number;
@@ -529,6 +698,11 @@ export interface EnemyCamp {
     /** 매 턴 편입할 종류 수 (기본 1). */
     readonly perWave?: number;
   }[];
+  /**
+   * 턴이 시작될 때마다 얹어 주는 보너스 자금 (fromWave 부터, 오름차순).
+   * 인컴 상한만으로는 못 만드는 「후반에 갑자기 물량이 불어나는」 압박을 만든다.
+   */
+  readonly waveMoney?: readonly { readonly fromWave: number; readonly amount: number }[];
   /** true 면 출정 직전에 남은 돈을 전부 털어 병력을 산다. */
   readonly spendAll?: boolean;
 }
@@ -550,6 +724,22 @@ export interface GameConfig {
   /** 테크 레벨 상한 오버라이드. 생략 시 3. */
   readonly techCap?: number;
   /**
+   * 이 턴부터 적 봇이 1티어(기본) 유닛을 더 사지 않는다.
+   *
+   * 후반에도 잡졸이 계속 쌓여 화면이 유닛으로 뒤덮이는 것을 막는다.
+   * 그 턴이 오면 살아 있던 1티어는 전부 사라지고 값이 주인에게 환불된다 —
+   * 「돈만 날리고 병력이 증발」하면 봇이 갑자기 가난해져 판이 무너진다.
+   */
+  readonly enemyBasicCutoffWave?: number;
+  /**
+   * 편성 합치기 — 같은 유닛이 `per` 기 쌓이면 `to` 한 기로 바뀐다.
+   *
+   * 「목없는 기사 10기 → 마몬 1기」처럼 물량을 질로 접는다. 후반에 잡졸이
+   * 무한히 쌓여 화면이 유닛으로 뒤덮이는 것을 막으면서, 전투력은 오히려 올린다.
+   * 봇 편성에만 적용된다 (사람 플레이어의 편성은 건드리지 않는다).
+   */
+  readonly unitMerges?: readonly { readonly from: string; readonly per: number; readonly to: string }[];
+  /**
    * 팀 2(적) 봇이 우선적으로 뽑는 유닛 목록 (캠페인 스테이지 성향).
    * 목록의 유닛은 추첨 가중치가 크게 올라간다 — "이 스테이지는 공중 위주" 같은 연출.
    */
@@ -566,8 +756,12 @@ export interface GameConfig {
    * 특정 유닛을 "아직 등장할 때가 아니다"로 잠그는 용도.
    */
   readonly enemyDeniedUnits?: readonly string[];
+  /** 캐페인 판인가 — 캐페인에서 막힌 스킬·해금을 가리는 데 쓴다. */
+  readonly campaignMode?: boolean;
   /** 적 거점별 설정 (다거점 스테이지). */
   readonly enemyCamps?: readonly EnemyCamp[];
+  /** 플레이어 출정 레인 초기값 (두 갈래 맵). */
+  readonly deployLaneY?: number;
   /** 적(팀1) 봇 시작 자금 오버라이드. */
   readonly enemyStartMoney?: number;
   /**
@@ -649,6 +843,20 @@ export interface HeroPerks {
   readonly startMoney: number;
   /** 5초 인컴 틱마다 추가 수입 */
   readonly incomeAdd: number;
+  /** 수급량 가산 (천분율 — 5 = +0.5%). 세계수 레벨 보너스. */
+  readonly incomePermille?: number;
+  /** 내 유닛 방어력 가산 */
+  readonly armorAdd?: number;
+  /** 내 유닛 공격 속도 +% (평타 쿨 감소) */
+  readonly atkSpeedPct?: number;
+  /** 내 유닛 이동 속도 +% */
+  readonly moveSpeedPct?: number;
+  /** 내 유닛 액티브 쿨타임 -% */
+  readonly cdrPct?: number;
+  /** 내 유닛 배치 시 기본 보호막 */
+  readonly shieldAdd?: number;
+  /** 사람 플레이어의 인컴 단계 상한 + (기본 8 → 최대 11) */
+  readonly incomeCapAdd?: number;
 }
 
 export interface GameEvent {
@@ -658,10 +866,14 @@ export interface GameEvent {
     | 'towerDown'     // team 의 수호탑 파괴
     | 'guardianSpawn' // team 의 수호자 젠
     | 'guardianDown'
+    | 'boneRevive'    // 「뼈 무덤」에서 본드래곤이 다시 일어섰다 (렌더 연출용)
     | 'gameOver';
   readonly team?: TeamId;
   readonly slot?: number;
   readonly winner?: TeamId;
+  /** boneRevive: 되살아난 자리 (FP). */
+  readonly x?: number;
+  readonly y?: number;
 }
 
 export interface Game {
@@ -676,6 +888,14 @@ export interface Game {
   /** 인컴·테크 레벨 상한 (전 플레이어 공통 — 봇 포함). */
   readonly incomeCap: number;
   readonly techCap: number;
+  /** 적 1티어 생산 중단 턴 (0 = 없음). */
+  readonly enemyBasicCutoffWave: number;
+  /** 편성 합치기 규칙 (봇 전용). */
+  readonly unitMerges: readonly { readonly from: string; readonly per: number; readonly to: string }[];
+  /** 이미 환불을 끝냈는가 (한 번만 돈다). */
+  basicRefunded: boolean;
+  /** 거점 확보로 사람 플레이어가 얻는 인컴 가산 (정산 1회당 골드). */
+  captureIncomeAdd: number;
   /** 팀 2 봇의 선호 유닛 (추첨 가중 상향). 빈 배열 = 성향 없음. */
   readonly enemyPreferredUnits: readonly string[];
   /** 팀 2 유닛별 수량 상한 (팀 합산). 빈 객체 = 무제한. */
@@ -683,11 +903,28 @@ export interface Game {
   readonly allyUnitCaps: Readonly<Record<string, number>>;
   readonly enemyAllowedUnits: readonly string[];
   readonly enemyDeniedUnits: readonly string[];
+  readonly campaignMode: boolean;
   readonly enemyCamps: readonly EnemyCamp[];
+  /**
+   * 플레이어(팀0) 출정 레인 — 두 갈래 맵에서 어느 쪽으로 내보낼지.
+   * y 오프셋(FP). 0 = 중앙. 클라이언트가 땅을 눌러 바꾼다.
+   */
+  deployLaneY: number;
+  /**
+   * 「기지에 머무르기」 — 사람 플레이어(팀0)가 이번 턴 출정을 미룬다.
+   * 미룬 턴 수만큼 다음 출정에 한꺼번에 쏟아진다 (모았다가 한 번에 밀기).
+   */
+  deployHold: boolean;
+  /** 머무르며 쌓인 턴 수. 출정하는 순간 0 으로 돌아간다. */
+  deployHeld: number;
   /** 이번 틱에 터진 치명타 위치 (렌더 전용 — 매 틱 비워진다). */
   crits: { x: number; y: number; tick: number }[];
   /** 「실의 폭풍」 지연 폭발 예약. */
   threadBooms: { x: number; y: number; tick: number; dmg: number; team: CombatTeam; r: number }[];
+  /** 「뼈 무덤」 부화 대기열. */
+  boneGraves: { graveId: number; hatchTick: number; team: CombatTeam; owner: number }[];
+  /** 「커튼콜」 닫힘 예약 — 그 시각에 무대 위 적을 잠시 치운다. */
+  curtainCalls: { x: number; y: number; r: number; closeTick: number; hideTicks: number; team: CombatTeam }[];
   readonly enemyIncomePct: number;
   /** 팀 2 유닛별 최소 등장 웨이브. 빈 객체 = 제한 없음. */
   readonly enemyUnitMinWave: Readonly<Record<string, number>>;
@@ -696,7 +933,8 @@ export interface Game {
   /** 팀 2 수호자 defId 오버라이드 (null = 기본). */
   readonly enemyGuardian: string | null;
   /** 팀 1 유닛 화이트리스트 (빈 배열 = 제한 없음). */
-  readonly allowedUnits: readonly string[];
+  /** 사람 플레이어가 살 수 있는 유닛. 판 도중 해금이 있어 읽기 전용이 아니다. */
+  allowedUnits: string[];
   /** 캠페인 유닛 강화 id 목록 (사람 플레이어 전용). */
   readonly unitBoons: readonly string[];
   /** 팀 0이 종족 무관 구매 가능한 용병 목록. */
@@ -710,6 +948,13 @@ export interface Game {
    * 거점을 점령할 때마다 캠페인 레이어가 전선을 앞으로 민다.
    */
   holdLineX: number;
+  /**
+   * 팀 0 부대의 집결 지점 (FP). 0 이면 없음.
+   * 호위전에서 「지금 점령할 거점」을 가리킨다 — 부대가 마차와 똑같은 길로
+   * 거점을 하나씩 경유하게 만든다 (넥서스 직행 흐름장은 거점 앞을 스쳐 지나갔다).
+   */
+  rallyX: number;
+  rallyY: number;
   /**
    * 팀 1 진군 하한 x (0 = 제한 없음). mutable — 호위전에서 적이 현재 다툼 중인
    * 거점에 멈춰 서서 점거하게 한다 (그냥 지나쳐 우리 기지로 달려가지 않도록).

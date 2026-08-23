@@ -17,6 +17,15 @@
  */
 import type { Audio } from './audio.ts';
 
+/**
+ * 빌드 표식. 배포할 때마다 손으로 올린다.
+ *
+ * 브라우저가 옛 번들을 물고 있으면 고친 내용이 안 보이는데, 화면만 봐서는
+ * 「안 고쳐진 것」과 구분이 안 됐다. 타이틀 구석에 찍어 두면 새로고침이
+ * 됐는지 한눈에 보인다.
+ */
+export const BUILD = '2026-08-23 b32';
+
 export type TitleAction = 'campaign' | 'solo' | 'versus' | 'login' | 'quit';
 
 /** 아트 원본 크기. 아래 좌표는 전부 이 기준의 픽셀. */
@@ -198,6 +207,14 @@ export function initTitle(audio: Audio, onPick: (a: TitleAction) => void): void 
     return b;
   });
   paint();
+
+  // 빌드 표식 (새로고침이 됐는지 확인용) — 그림 오른쪽 아래 구석에 작게
+  const stamp = document.createElement('div');
+  stamp.textContent = BUILD;
+  stamp.style.cssText = 'position:absolute;right:6px;bottom:4px;font-size:10px;'
+    + 'color:rgba(255,255,255,.42);pointer-events:none;letter-spacing:.4px;'
+    + 'text-shadow:0 1px 2px rgba(0,0,0,.8);font-family:monospace';
+  art.appendChild(stamp);
 
   /*
    * 어느 칸에 불을 켤지는 커서 좌표로 직접 판정한다.

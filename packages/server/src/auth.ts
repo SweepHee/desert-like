@@ -58,7 +58,7 @@ function emptySave(): SaveData {
   return { cleared: 0, perks: {}, boons: {}, updatedAt: 0 };
 }
 
-function load(): Store {
+function loadFile(): Store {
   try {
     if (existsSync(DATA_FILE)) {
       return JSON.parse(readFileSync(DATA_FILE, 'utf8')) as Store;
@@ -69,14 +69,108 @@ function load(): Store {
   return { accounts: {}, sessions: {} };
 }
 
-const store: Store = load();
+/*
+ * 저장소 계층.
+ *
+ *  - DATABASE_URL 이 있으면 Postgres (Railway 의 DB 서비스).
+ *    메모리의 store 가 작업본이고, persist() 가 1초 디바운스로 DB 에 흘려 쓴다.
+ *    첫 부팅에 DB 가 비어 있고 예전 accounts.json 이 남아 있으면 한 번만 이전한다.
+ *  - 없으면 예전 그대로 파일(JSON) — 로컬 개발은 설정 없이 돈다.
+ */
+interface PgPool {
+  query(text: string, values?: unknown[]): Promise<{ rows: Record<string, unknown>[] }>;
+}
+const DB_URL = process.env.DATABASE_URL?.trim() ?? '';
+let pool: PgPool | null = null;
+
+const store: Store = { accounts: {}, sessions: {} };
+
+async function flushPg(): Promise<void> {
+  if (!pool) return;
+  for (const acc of Object.values(store.accounts)) {
+    await pool.query(
+      `INSERT INTO accounts (sub, name, picture, email, save) VALUES ($1, $2, $3, $4, $5)
+       ON CONFLICT (sub) DO UPDATE SET name = $2, picture = $3, email = $4, save = $5`,
+      [acc.sub, acc.name, acc.picture, acc.email ?? null, JSON.stringify(acc.save)],
+    );
+  }
+  // 세션은 통째로 갈아 끼운다 — 수가 적고, 메모리 스냅샷이 항상 진실이다
+  await pool.query('DELETE FROM sessions');
+  for (const [token, sub] of Object.entries(store.sessions)) {
+    await pool.query(
+      'INSERT INTO sessions (token, sub) VALUES ($1, $2) ON CONFLICT (token) DO NOTHING',
+      [token, sub],
+    );
+  }
+}
+
+async function initStore(): Promise<void> {
+  if (!DB_URL) {
+    Object.assign(store, loadFile());
+    console.log('[auth] 저장소: 파일', DATA_FILE);
+    return;
+  }
+  const pg = (await import('pg')) as unknown as {
+    default: { Pool: new (cfg: object) => PgPool };
+  };
+  pool = new pg.default.Pool({
+    connectionString: DB_URL,
+    max: 3,
+    // Railway 사설망 주소(*.railway.internal)는 SSL 이 없고, 외부 프록시는 SSL 필수
+    ...(DB_URL.includes('railway.internal') ? {} : { ssl: { rejectUnauthorized: false } }),
+  });
+  await pool.query(`CREATE TABLE IF NOT EXISTS accounts (
+    sub TEXT PRIMARY KEY,
+    name TEXT NOT NULL DEFAULT '',
+    picture TEXT NOT NULL DEFAULT '',
+    email TEXT,
+    save JSONB NOT NULL
+  )`);
+  await pool.query('CREATE TABLE IF NOT EXISTS sessions (token TEXT PRIMARY KEY, sub TEXT NOT NULL)');
+  const accRows = await pool.query('SELECT sub, name, picture, email, save FROM accounts');
+  for (const r of accRows.rows) {
+    store.accounts[String(r.sub)] = {
+      sub: String(r.sub), name: String(r.name), picture: String(r.picture),
+      email: r.email === null ? undefined : String(r.email),
+      save: r.save as SaveData,
+    };
+  }
+  for (const r of (await pool.query('SELECT token, sub FROM sessions')).rows) {
+    store.sessions[String(r.token)] = String(r.sub);
+  }
+  if (accRows.rows.length === 0 && existsSync(DATA_FILE)) {
+    // 파일 시절의 세이브를 한 번만 DB 로 옮겨 심는다
+    try {
+      const old = loadFile();
+      Object.assign(store.accounts, old.accounts);
+      Object.assign(store.sessions, old.sessions);
+      await flushPg();
+      console.log(`[auth] 파일 세이브 ${Object.keys(old.accounts).length}건을 Postgres 로 이전했다`);
+    } catch (e) {
+      console.error('[auth] 파일 → DB 이전 실패', e);
+    }
+  }
+  console.log(`[auth] 저장소: Postgres (계정 ${Object.keys(store.accounts).length}건)`);
+}
+
+/** 저장소 준비 — API 는 이걸 기다렸다가 응답한다. 실패하면 파일로 물러난다. */
+const storeReady: Promise<void> = initStore().catch((e) => {
+  console.error('[auth] 저장소 초기화 실패 — 파일 저장으로 물러난다', e);
+  pool = null;
+  Object.assign(store, loadFile());
+});
+
 let saveTimer: NodeJS.Timeout | null = null;
 
-/** 디스크 기록 — 잦은 호출을 모아 1초에 한 번만 실제로 쓴다. */
+/** 기록 — 잦은 호출을 모아 1초에 한 번만 실제로 쓴다 (DB 또는 파일). */
 function persist(): void {
   if (saveTimer) return;
   saveTimer = setTimeout(() => {
     saveTimer = null;
+    if (pool) {
+      flushPg().catch((e) => console.error('[auth] DB 저장 실패', e));
+      return;
+    }
     try {
       if (!existsSync(DATA_DIR)) mkdirSync(DATA_DIR, { recursive: true });
       const tmp = `${DATA_FILE}.tmp`;
@@ -187,6 +281,7 @@ function readBody(req: IncomingMessage): Promise<string> {
 export async function handleApi(req: IncomingMessage, res: ServerResponse): Promise<boolean> {
   const url = req.url ?? '';
   if (!url.startsWith('/api/')) return false;
+  await storeReady; // DB 로딩이 끝나기 전의 요청이 빈 저장소를 보지 않게
 
   if (req.method === 'OPTIONS') {
     json(res, 204, {});

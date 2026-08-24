@@ -122,6 +122,17 @@ export const ASSET_UNITS: Record<string, string | string[]> = {
   p_minion_rat: '/assets/units/p_minion_rat.png',
   // 캠페인 전용 특수 유닛 — 기존 에셋 재활용 (크기 배율로 위압감)
   c_ash_revenant: '/assets/units/p_wraith.png',
+  c_rotting_corpse: '/assets/units/c_rotting_corpse.png',
+  c_villager_child_m: '/assets/units/c_villager_child_m.png',
+  c_villager_child_f: '/assets/units/c_villager_child_f.png',
+  c_villager_adult_m: '/assets/units/c_villager_adult_m.png',
+  c_villager_adult_f: '/assets/units/c_villager_adult_f.png',
+  c_villager_elder_m: '/assets/units/c_villager_elder_m.png',
+  c_villager_elder_f: '/assets/units/c_villager_elder_f.png',
+  c_village_a: '/assets/tiles/vg_house_a.png',
+  c_village_b: '/assets/tiles/vg_house_b.png',
+  c_village_c: '/assets/tiles/vg_house_c.png',
+  c_village_d: '/assets/tiles/vg_house_d.png',
   c_mad_ballerina: '/assets/units/m_puppet_ann.png',
   c_bone_colossus: '/assets/units/p_corpse_golem.png',
   // 라다만토스: 디멘터를 그대로 키운 것 — 같은 그림에 크기만 크게
@@ -439,6 +450,7 @@ const ASSET_ATTACK_ANIMS: Record<string, string[][]> = {
   teddy_guardian: atk4('teddy_guardian'),
   // 캠페인 특수 유닛 — 원본 유닛 모션 재활용
   c_ash_revenant: atk4('p_wraith'),
+  c_rotting_corpse: atk4('c_rotting_corpse'),
   c_mad_ballerina: atk4('m_puppet_ann'),
   c_bone_colossus: atk4('p_corpse_golem'),
   c_dread_gargoyle: atk4('p_demilich'),
@@ -529,6 +541,9 @@ const ASSET_SIZE_MUL: Record<string, number> = {
   tower: 0.8,
   // 캠페인 특수 유닛: 원본보다 크게 — 한눈에 "특별한 놈"으로 읽히게
   c_ash_revenant: 1.5,
+  c_rotting_corpse: 1.5,
+  // 마을 집: 반경 1.3 기준 공식보다 훨씬 커야 「집」으로 읽힌다
+  c_village_a: 1.5, c_village_b: 1.5, c_village_c: 1.4, c_village_d: 1.5,
   c_mad_ballerina: 1.4,
   c_bone_colossus: 1.9, c_radamanthus: 1.5, c_void_necromancer: 1.7,
   c_dread_gargoyle: 1.5,
@@ -698,6 +713,35 @@ const THEMES: Record<string, GroundTheme> = {
     midProps: ['wr_pine4', 'wr_pine3', 'wr_bush1', 'wr_pine4', 'wr_bush2'],
     laneProps: ['wr_grass4', 'wr_pebble3', 'wr_pebble4', 'wr_leaf3', 'wr_leaf4', 'wr_pebble3'],
   },
+  /**
+   * 독 늪 (캠페인 4 — 독이 스민 숲): 진창 흙길 양옆이 형광 산성 늪이다.
+   * 길(갈색)과 바깥(형광 초록)의 명도 차를 크게 잡았다 — 첫 판본은 둘 다
+   * 올리브색이라 어디가 길인지 안 보였다.
+   */
+  mire: {
+    sheet: '/assets/tiles/mire.png',
+    wang: WANG_16,
+    props: ['mire_deadtree', 'mire_deadtree', 'mire_shrooms', 'mire_log'],
+    // 길과 맞닿은 칸엔 키 큰 고사목 대신 낮은 것만 (가지가 길을 덮는다)
+    edgeProps: ['mire_shrooms', 'mire_log'],
+    laneProps: ['lane_leaves', 'lane_charred', 'lane_leaves'],
+  },
+  /**
+   * 올빼미 성채 (캠페인 5): 굽이치는 이끼 낀 판석길 + 검은 침엽수림.
+   * 잿길(13)의 침엽수 소품을 그대로 쓴다 — 같은 숲이라 결이 이어진다.
+   */
+  owlkeep: {
+    sheet: '/assets/tiles/owlkeep.png',
+    wang: WANG_16,
+    props: [
+      'wr_pine1', 'wr_pine2', 'wr_pine3', 'wr_pine4',
+      'wr_pine1', 'wr_pine2', 'wr_pine3', 'wr_pine4',
+      'wr_bush1', 'wr_bush2',
+    ],
+    edgeProps: ['wr_bush1', 'wr_bush2', 'wr_grass1', 'wr_grass2', 'wr_grass3', 'wr_grass6'],
+    midProps: ['wr_pine4', 'wr_pine3', 'wr_bush1', 'wr_pine4', 'wr_bush2'],
+    laneProps: ['wr_grass4', 'wr_pebble3', 'wr_pebble4', 'wr_leaf3', 'wr_leaf4'],
+  },
   // 장난감 나라 (캠페인 2막 — 마리오네타 왕국)
   toy: {
     sheet: '/assets/tiles/toy.png',
@@ -719,6 +763,8 @@ const MAP_THEMES: Record<string, readonly string[]> = {
   nest: ['alpine'],
   confluence: ['necro'],
   toybox: ['toy'],
+  mire: ['mire'],       // 4 독이 스민 숲
+  owlkeep: ['owlkeep'], // 5 올빼미 성채 (굽이치는 산길)
   ashroad: ['woodroad'], // 손그림 숲길 — Wang 흙길 위에 침엽수·바위를 심는다
   greatroot: ['greatwood'], // 14 전용 시트 (13 과 파일을 나눠 서로 안 건드린다)
 };
@@ -943,8 +989,12 @@ export interface Renderer {
   pick(g: Game, screenX: number, screenY: number): number | null;
   /** 화면 좌표 → 월드 y (FP). 두 갈래 맵에서 출정 레인을 고를 때 쓴다. */
   pickLaneY(screenY: number): number;
-  /** 출정 레인 표시 — y(FP) 두 곳 중 고른 쪽에 불이 들어온다. null = 표시 안 함. */
-  setDeployLanes(lanes: { y: number; label: string; hold?: boolean }[] | null, chosenY: number): void;
+  /**
+   * 출정 레인 표시 — 고른 칸(chosenIdx)에 불이 들어온다. null = 표시 안 함.
+   * y 가 아니라 번호를 받는다: 「가운데 대기」는 y 가 0 이라, 아직 아무 길도
+   * 고르지 않은 상태(deployLaneY 0)와 y 로는 구분되지 않는다.
+   */
+  setDeployLanes(lanes: { y: number; label: string; hold?: boolean }[] | null, chosenIdx: number): void;
   /** 선택 표시 링을 그릴 유닛 id (null = 해제). */
   setSelected(id: number | null): void;
   /** 효과음 재생기 연결 (없으면 무음으로 동작). */
@@ -2106,7 +2156,7 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
   let deployLanes: { y: number; label: string; hold?: boolean }[] | null = null;
   /** 레인 이름표 — 출정구 옆에 상시 떠 있어 「여길 눌러라」가 읽힌다. */
   const laneLabels: Text[] = [];
-  let deployChosenY = 0;
+  let deployChosenIdx = -1;
   /** 내리꽂기: 전체 연출 길이와 "착지" 시점 비율 (앞 40% 상승, 뒤 60% 급강하). */
   const DIVE_MS = 430;
   const DIVE_DOWN_AT = 0.55;
@@ -2534,6 +2584,7 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
         const color = z.kind === 'thorns' ? 0xd4574a // 가시밭 — 핏빛 빨강
           : z.kind === 'spores' ? 0x6ab82a // 포자 구름 — 탁한 독초록 (가시밭과 확실히 구분)
           : z.kind === 'balm' ? 0x9fefad // 치유 포자 — 밝은 민트 (독초록과도 구분)
+          : z.kind === 'venom' ? 0xb6e02a // 역병 늪 — 형광 산성 노랑초록 (포자보다 밝고 독하게)
           : z.kind === 'grave' ? 0x7a5fd0 // 사후의 경계
           : z.kind === 'blaze' ? 0xff7a2e // 블레이즈 — 불구덩이
           : z.kind === 'quake' ? 0xa8845c // 어스퀘이크 — 갈라진 땅
@@ -3916,8 +3967,9 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
       // 대신 출정구에 큼지막한 관문 표식을 하나씩 세우고, 고른 쪽에 불을 켠다.
       const gx = sx(g.map.spawnX[0]);
       const pulse = 0.5 + 0.5 * Math.sin(now * 0.004);
-      for (const lane of deployLanes) {
-        const chosen = lane.y === deployChosenY;
+      for (let li = 0; li < deployLanes.length; li++) {
+        const lane = deployLanes[li]!;
+        const chosen = li === deployChosenIdx;
         const ly = sy(lane.y);
         const R = 34;
         // 바닥에 눕는 원. 세로 맵은 월드가 90도 돌아 있어 축을 바꿔야 눕는다.
@@ -3958,7 +4010,7 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
           }
         }
         // 이름표를 관문 위에 얹는다
-        const lbl = laneLabels[deployLanes.indexOf(lane)];
+        const lbl = laneLabels[li];
         if (lbl) {
           lbl.visible = true;
           lbl.x = gx;
@@ -4200,9 +4252,9 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
       const w = curMap.vertical ? (screenY - world.x) / zoom : (screenY - world.y) / zoom;
       return worldYToFP(w);
     },
-    setDeployLanes(lanes, chosenY) {
+    setDeployLanes(lanes, chosenIdx) {
       deployLanes = lanes;
-      deployChosenY = chosenY;
+      deployChosenIdx = chosenIdx;
       // 이름표를 레인 수에 맞춰 만들어 두고, 좌표·강조는 매 프레임 갱신한다
       while (laneLabels.length > (lanes?.length ?? 0)) {
         const t = laneLabels.pop();

@@ -23,8 +23,10 @@ import {
   perkAlloc, savePerkAlloc, perkPointsSpent, perksToHero,
   treeLevel, treeProgress, treeStageImg, treeAutoBonus, addTreeXp, TREE_MILESTONES,
   BOON_UNLOCKS, boonChoices, toggleBoonChoice, boonSlots, BOON_SLOT2_STAGE,
-  HEROES, HERO_STORIES, HERO_POINTS, HERO_UPGRADES_BY_HERO, heroAlloc, saveHeroAlloc,
-  heroPointsSpent, heroUpgradesOpen, HERO_UNLOCK_STAGE, HERO_GROUP_POINTS, heroGroupLeft,
+  HEROES, HERO_STORIES, heroOwnPoints, HERO_UPGRADES, HERO_UPGRADES_BY_HERO, heroAlloc, saveHeroAlloc,
+  heroPointsSpent, heroUpgradesOpen, HERO_UNLOCK_STAGE, heroGroupCap, heroGroupLeft,
+  HERO_DEPLOY_MAX, HERO_PICK_COOLDOWN_SEC, heroGrowth, SHARED_GROUPS,
+  sharedSkillSpentOn, sharedSkillHolders,
   applyHeroUpgrades, kaelRetinue, kaelReviveSec, kaelReviveCharges,
   evergreenRetinue, evergreenReviveSec, evergreenReviveCharges,
   elowynRetinue, elowynReviveSec, elowynReviveCharges,
@@ -216,13 +218,11 @@ function attachCameraInput(canvas: HTMLCanvasElement): void {
         // 세로 맵은 레인이 화면 가로 방향이라 x 를 넘긴다
         const vertical = !!game.map.vertical;
         const wy = renderer.pickLaneY(vertical ? e.clientX - rect.left : e.clientY - rect.top);
-        let best = campaignLanes[0]!;
-        for (const lane of campaignLanes) {
-          if (Math.abs(lane.y - wy) < Math.abs(best.y - wy)) best = lane;
+        let bestIdx = 0;
+        for (let i = 0; i < campaignLanes.length; i++) {
+          if (Math.abs(campaignLanes[i]!.y - wy) < Math.abs(campaignLanes[bestIdx]!.y - wy)) bestIdx = i;
         }
-        // 머무르는 중이면 「지금 고른 것」은 hold 레인이다
-        const curY = game.deployHold ? (campaignLanes.find((l) => l.hold)?.y ?? 0) : game.deployLaneY;
-        if (best.y !== curY) chooseLane(best.y);
+        if (bestIdx !== currentLaneIdx()) chooseLaneAt(bestIdx);
       } else {
         selectUnit(hit);
       }
@@ -598,6 +598,17 @@ let campaignSpawnNext: number[] = [];
 let campaignDenied: readonly string[] = [];
 /** 두 갈래 맵의 출정 레인 후보 (없으면 레인 선택 UI 를 안 띄운다). */
 let campaignLanes: { y: number; label: string; hold?: boolean }[] | null = null;
+/** true = 판이 열릴 때 「가운데 대기」로 시작한다 (14라운드). */
+let campaignStartHold = false;
+// ── 영웅 출정 (14라운드~) ──
+/** 이번 판에 불러낸 영웅 defId (부른 순서). */
+let heroPicked: string[] = [];
+/** 다음 영웅을 부를 수 있는 시각(초). 첫 영웅은 0 = 바로. */
+let heroNextPickSec = 0;
+/** 이번 판에서 고를 수 있는 영웅 (스테이지의 heroPick 스폰 규칙에서 뽑는다). */
+let heroPickable: string[] = [];
+/** 상점 아래 칸에 지금 무엇을 띄우는가. */
+let shopTab: 'unit' | 'hero' = 'unit';
 let campaignSpawnedTotal: number[] = [];
 /** 영웅 상세 화면의 모션 타이머 (화면을 떠나면 끈다). */
 let heroAnimTimer = 0;
@@ -714,6 +725,16 @@ let campaignGrowthAnnounced: boolean[] = [];
 let campaignAlertUntil = 0;
 let campaignAlertText = '';
 /** 협공 주둔지 엔티티 id (-1 = 없음) + 다음 후방 웨이브 시각(초). */
+/*
+ * 마을 방어전(6) 집계.
+ *
+ * villageSeen 은 「이미 센 주민」의 엔티티 id — 탈출로 지웠든 죽었든 두 번 세지
+ * 않기 위해 남긴다. 죽은 주민은 다음 틱이면 배열에서 사라지므로, 살아 있는 동안
+ * 본 적 있는 id 를 들고 있다가 사라진 시점에 사인(死因)을 판정한다.
+ */
+let villageDeaths = 0;
+let villageEscaped = 0;
+const villageSeen = new Map<number, string>();
 let campaignWarcampId = -1;
 let campaignWarcampNext = Infinity;
 /** 이번 스테이지에 적용 중인 영웅 특성. */
@@ -847,10 +868,24 @@ function showEnhanceScreen(): void {
   let heroTabBack: 'stat' | 'special' | 'hero' | 'skill' = 'stat';
   // 펼쳐 둔 상세 줄 (스킬·패시브·동반) — 다시 그려도 펼침이 유지된다
   const specOpen = new Set<string>();
+/** 이름 뒤에 붙일 주격 조사 — 끝 글자 받침을 보고 「이 / 가」를 고른다. */
+function josaIGa(word: string): string {
+  const c = word.charCodeAt(word.length - 1);
+  if (c < 0xac00 || c > 0xd7a3) return '이';    // 한글이 아니면 무난한 쪽
+  return (c - 0xac00) % 28 === 0 ? '가' : '이';
+}
+
 /** 갈래 이름 (탭·포인트 표시 공용). */
 const GROUP_LABEL: Record<'stat' | 'special' | 'hero' | 'skill', string> = {
   stat: '기본', special: '특수', hero: '영웅', skill: '스킬',
 };
+/**
+ * 영웅이 자기 몫으로 쥐는 포인트를 쓴 만큼 (특수 + 영웅 능력).
+ * 스킬은 전 영웅 공용이라 여기 끼면 「이 영웅에 몇 개 남았나」가 뒤틀린다.
+ */
+function heroOwnSpent(hero: string, alloc: Record<string, number>): number {
+  return heroPointsSpent(hero, alloc, 'special') + heroPointsSpent(hero, alloc, 'hero');
+}
   // 카드 줄의 가로 스크롤 위치 — 다시 그릴 때 복원한다 (유닛을 누를 때마다
   // 맨 왼쪽으로 튕겨 돌아가던 문제)
   let cardsScroll = 0;
@@ -1057,7 +1092,7 @@ const GROUP_LABEL: Record<'stat' | 'special' | 'hero' | 'skill', string> = {
         const hAlloc = heroAlloc();
         const hero = openHeroes.find((h) => h.id === selectedHero) ?? openHeroes[0]!;
         const heroId = hero.id;
-        const ptsLeft = HERO_POINTS - heroPointsSpent(heroId, hAlloc);
+        const ptsLeft = heroOwnPoints() - heroOwnSpent(heroId, hAlloc);
         const base = DEFS[heroId]!;
         const curD = applyHeroUpgrades(base, heroId);
         const layout = document.createElement('div');
@@ -1067,13 +1102,14 @@ const GROUP_LABEL: Record<'stat' | 'special' | 'hero' | 'skill', string> = {
         const rail = document.createElement('div');
         rail.id = 'eh3-rail';
         for (const h of openHeroes) {
-          const leftP = HERO_POINTS - heroPointsSpent(h.id, hAlloc);
+          const leftP = heroOwnPoints() - heroOwnSpent(h.id, hAlloc);
           const el = document.createElement('div');
           el.className = 'eh3-card' + (h.id === heroId ? ' sel' : '');
           el.innerHTML =
             `<img src="/assets/units/${artId(h.id)}.png" onerror="this.onerror=null;this.src='${assetIconUrl(h.id) ?? ''}'" alt=""/>`
             + `<div class="nm">${h.name.split(' ').pop()}</div>`
-            + `<div class="lv">${leftP > 0 ? `✦ ${leftP}P` : '완료'}</div>`;
+            + `<div class="lv">${leftP > 0 ? `✦ ${leftP}P`
+              : sharedSkillSpentOn(h.id, hAlloc) > 0 ? `⚡ ${sharedSkillSpentOn(h.id, hAlloc)}` : '완료'}</div>`;
           el.onclick = () => { selectedHero = h.id; rerender(); };
           rail.appendChild(el);
         }
@@ -1128,12 +1164,13 @@ const GROUP_LABEL: Record<'stat' | 'special' | 'hero' | 'skill', string> = {
         center.appendChild(strip);
 
         // 포인트 게이지 (목업의 레벨 바 자리)
-        const used = HERO_POINTS - ptsLeft;
+        const ownCap = heroOwnPoints();
+        const used = ownCap - ptsLeft;
         const bar = document.createElement('div');
         bar.className = 'pts-bar';
         bar.innerHTML = '<span class="lb">✦ 강화 포인트</span>'
-          + `<div class="track"><i style="width:${Math.round(used / HERO_POINTS * 100)}%"></i>`
-          + `<span>${used} / ${HERO_POINTS} 사용</span></div>`;
+          + `<div class="track"><i style="width:${Math.round(used / Math.max(1, ownCap) * 100)}%"></i>`
+          + `<span>${used} / ${ownCap} 사용</span></div>`;
         center.appendChild(bar);
 
         // 스킬·스펙 상세 — 강화 포인트 바로 아래 (강화로 바뀐 줄은 초록)
@@ -1272,7 +1309,8 @@ const GROUP_LABEL: Record<'stat' | 'special' | 'hero' | 'skill', string> = {
         for (const key of ['stat', 'special', 'hero', 'skill'] as const) {
           const name = GROUP_LABEL[key];
           const b = document.createElement('button');
-          const leftT = heroGroupLeft(heroId, hAlloc, key);
+          // 기본 갈래는 포인트를 안 쓴다 — 세계수의 축복이 정한 레벨을 그대로 띄운다
+          const leftT = key === 'stat' ? heroGrowth() : heroGroupLeft(heroId, hAlloc, key);
           b.innerHTML = name + (leftT > 0 ? `<i class="tabpts">${leftT}</i>` : '');
           if (heroTab === key) b.classList.add('on');
           b.onclick = () => { heroTab = key; heroTabBack = key; rerender(); };
@@ -1322,15 +1360,37 @@ const GROUP_LABEL: Record<'stat' | 'special' | 'hero' | 'skill', string> = {
             w_bliz: 'hu_blizzard', w_meteor: 'hu_meteor',
           };
           const ups = (HERO_UPGRADES_BY_HERO.get(heroId) ?? []).filter((u) => u.group === heroTab);
-          // 갈래마다 포인트를 따로 쥔다 — 지금 보고 있는 갈래의 잔여를 머리에 띄운다
+          const capG = heroGroupCap(heroTab);
+          const leftG = heroGroupLeft(heroId, hAlloc, heroTab);
+          const shared = SHARED_GROUPS.includes(heroTab);
+          const growth = heroGrowth();
+          /*
+           * 「기본」은 포인트로 찍지 않는다 — 세계수의 축복 「영웅의 성장」 한 번에
+           * 6종이 함께 오른다 (레벨업). 그래서 여기서는 읽기만 한다.
+           * 나머지 갈래는 단계 강화다 — 같은 줄에 포인트를 더 부으면 1 → 2 → 3 단계로
+           * 깊어진다. 스킬 갈래의 주머니는 전 영웅 공용이고 판을 깰수록 늘어난다.
+           */
           {
-            const capG = HERO_GROUP_POINTS[heroTab] ?? 0;
-            const leftG = heroGroupLeft(heroId, hAlloc, heroTab);
             const head = document.createElement('div');
-            head.className = 'eh-grouppts' + (leftG > 0 ? ' has' : '');
-            head.innerHTML = `<span>${GROUP_LABEL[heroTab] ?? heroTab} 포인트</span>`
-              + `<b>${leftG} / ${capG}</b>`;
+            head.className = 'eh-grouppts' + (heroTab !== 'stat' && leftG > 0 ? ' has' : '');
+            head.innerHTML = heroTab === 'stat'
+              ? '<span>기본 능력 — 세계수의 축복이 올린다</span><b>Lv ' + growth + ' / 3</b>'
+              : `<span>${GROUP_LABEL[heroTab] ?? heroTab} 포인트${shared ? ' · 전 영웅 공용' : ''}</span>`
+                + `<b>${leftG} / ${capG}</b>`;
             list.appendChild(head);
+            const note = document.createElement('div');
+            note.className = 'eh-groupnote';
+            const holders = shared ? sharedSkillHolders(hAlloc) : [];
+            const nameOf = (id: string): string => HEROES.find((h) => h.id === id)?.name ?? id;
+            note.textContent = heroTab === 'stat'
+              ? '축복 탭의 「⭐ 영웅의 성장」을 하나 사면 공격·방어·체력·이동·공속·회복이 함께 한 단계씩 오른다. 모든 영웅에게 같이 적용된다.'
+              : shared
+                ? (holders.length > 0
+                  ? `같은 스킬에 더 부으면 단계가 오른다. 지금 쓰는 중 — ${holders.map((h) => `${nameOf(h.hero)} ${h.n}P`).join(' · ')}.`
+                    + ' 「−」로 빼서 다른 영웅에게 옮길 수 있다 (무료).'
+                  : '전 영웅이 나눠 쓰는 주머니다. 스테이지를 깰 때마다 1개씩 늘어난다 — 같은 스킬에 더 부으면 단계가 오른다.')
+                : '같은 줄에 포인트를 더 부으면 단계가 오른다. 「−」로 빼서 다른 줄로 옮길 수 있다 (무료).';
+            list.appendChild(note);
           }
           if (ups.length === 0) {
             const none = document.createElement('div');
@@ -1339,13 +1399,15 @@ const GROUP_LABEL: Record<'stat' | 'special' | 'hero' | 'skill', string> = {
             list.appendChild(none);
           }
           for (const u of ups) {
-            const lv = Math.min(u.max, hAlloc[u.id] ?? 0);
-            const canUp = lv < u.max && heroGroupLeft(heroId, hAlloc, u.group) > 0;
+            const readOnly = heroTab === 'stat';
+            const lv = Math.min(u.max, readOnly ? growth : (hAlloc[u.id] ?? 0));
+            const canUp = !readOnly && lv < u.max && leftG > 0;
             const row = document.createElement('div');
-            row.className = 'perk-row eh-boon' + (lv > 0 ? ' sel' : '');
+            row.className = 'perk-row eh-boon' + (lv > 0 ? ' sel' : '') + (readOnly ? ' ro' : '');
             row.innerHTML =
               `<span class="perk-ico art">${(() => { const a = HERO_ICON[u.id] ?? HERO_ICON[u.id.slice(2)]; return a ? `<img src="/assets/ui/${a}.png" alt=""/>` : u.icon; })()}</span>`
-              + `<span class="perk-body"><span class="perk-name"${lv > 0 ? ' style="color:var(--gold)"' : ''}>${u.name}</span>`
+              + `<span class="perk-body"><span class="perk-name"${lv > 0 ? ' style="color:var(--gold)"' : ''}>${u.name}`
+              + `<small>${lv}/${u.max}단계</small></span>`
               + (u.desc ? `<div class="hu-what">${u.desc}</div>` : '')
               + `<div class="perk-desc">${u.steps[lv] ?? ''}</div>`
               + (canUp && u.steps[lv + 1] ? `<div class="perk-desc" style="color:#7fe08a">▲ ${u.steps[lv + 1]}</div>` : '')
@@ -1356,33 +1418,43 @@ const GROUP_LABEL: Record<'stat' | 'special' | 'hero' | 'skill', string> = {
             side.style.alignItems = 'stretch';
             const lvEl = document.createElement('small');
             lvEl.style.cssText = `color:${lv > 0 ? 'var(--gold)' : 'var(--dim)'};font-weight:bold;text-align:center;font-size:11px;letter-spacing:1px`;
-            lvEl.textContent = '●'.repeat(lv) + '○'.repeat(u.max - lv) + ` ${lv}/${u.max}`;
+            lvEl.textContent = '●'.repeat(lv) + '○'.repeat(Math.max(0, u.max - lv));
             side.appendChild(lvEl);
-            const plus = document.createElement('button');
-            const maxed = lv >= u.max;
-            plus.className = 'up' + (maxed ? ' maxed' : '');
-            plus.textContent = maxed ? '최대' : '강화';
-            plus.disabled = !canUp;
-            side.appendChild(plus);
+            /** 단계를 올리거나 내린다. 되돌리기는 언제나 무료 — 다른 줄로 옮겨 낄 수 있다. */
+            const setLv = (next: number): void => {
+              const a2 = heroAlloc();
+              if (next <= 0) delete a2[u.id]; else a2[u.id] = next;
+              saveHeroAlloc(a2);
+              audio.play(next > lv ? 'ui_heroup' : 'ui_herodown',
+                { volume: next > lv ? (next >= u.max ? 0.95 : 0.7) : 0.6 });
+              rerender();
+            };
+            if (!readOnly) {
+              const plus = document.createElement('button');
+              const maxed = lv >= u.max;
+              plus.className = 'up' + (maxed ? ' maxed' : '');
+              plus.textContent = maxed ? '최대' : '강화';
+              plus.disabled = !canUp;
+              plus.onclick = (e) => { e.stopPropagation(); setLv(lv + 1); };
+              side.appendChild(plus);
+              const minus = document.createElement('button');
+              minus.textContent = '−';
+              minus.title = '한 단계 되돌린다 (포인트 반환 — 무료)';
+              minus.disabled = lv <= 0;
+              minus.onclick = (e) => { e.stopPropagation(); setLv(lv - 1); };
+              side.appendChild(minus);
+            }
             row.appendChild(side);
-            row.onclick = () => {
-              if (!canUp) { audio.play('ui_deny', { volume: 0.5 }); return; }
-              const a2 = heroAlloc();
-              a2[u.id] = lv + 1;
-              saveHeroAlloc(a2);
-              // 마지막 단계를 채웠으면 한 톤 더 크게 — 「완성」이 귀로 구분된다
-              audio.play('ui_heroup', { volume: lv + 1 >= u.max ? 0.95 : 0.7 });
-              rerender();
-            };
-            row.oncontextmenu = (e) => {
-              e.preventDefault();
-              if (lv === 0) return;
-              const a2 = heroAlloc();
-              if (lv - 1 <= 0) delete a2[u.id]; else a2[u.id] = lv - 1;
-              saveHeroAlloc(a2);
-              audio.play('ui_herodown', { volume: 0.6 });
-              rerender();
-            };
+            if (!readOnly) {
+              row.onclick = () => {
+                if (!canUp) { audio.play('ui_deny', { volume: 0.5 }); return; }
+                setLv(lv + 1);
+              };
+              row.oncontextmenu = (e) => {
+                e.preventDefault();
+                if (lv > 0) setLv(lv - 1);
+              };
+            }
             list.appendChild(row);
           }
         }
@@ -1475,7 +1547,7 @@ const GROUP_LABEL: Record<'stat' | 'special' | 'hero' | 'skill', string> = {
       const PERK_ICON2: Record<string, string> = {
         sap: 'bless_hp', thorn: 'bless_atk', fruit: 'bless_gold', season: 'bless_leaf',
         bark: 'bless_def', haste: 'bless_star', stride: 'bless_spd', mana: 'bless_mana',
-        aegis: 'bless_crest', roots: 'bless_tree',
+        aegis: 'bless_crest', roots: 'bless_tree', heroLv: 'bless_herolv',
       };
       for (const pk of PERKS) {
         const n = alloc[pk.id] ?? 0;
@@ -1811,21 +1883,29 @@ async function startCampaignStage(st: CampaignStage): Promise<void> {
       : {}),
   } as { incomeCap?: number; techCap?: number };
   campaignDenied = deniedUnitsOf(st);
-  // 맵에서도 고를 수 있게 「기지에 머무르기」를 가운데 선택지로 끼워 넣는다
+  // 맵에서도 고를 수 있게 「가운데 대기」를 가운데 선택지로 끼워 넣는다
   campaignLanes = st.deployLanes
     ? [
       ...st.deployLanes.filter((l) => l.yTile < 0).map((l) => ({ y: Math.round(l.yTile * FP), label: l.label })),
-      { y: 0, label: '기지에 머무르기', hold: true },
+      { y: 0, label: '가운데 대기', hold: true },
       ...st.deployLanes.filter((l) => l.yTile >= 0).map((l) => ({ y: Math.round(l.yTile * FP), label: l.label })),
     ]
     : null;
+  campaignStartHold = !!st.deployStartHold;
   // 두 갈래 맵에서만 「길 바꾸기」 버튼을 띄운다
   const laneBtn = document.getElementById('btn-lane');
   if (laneBtn) laneBtn.style.display = campaignLanes ? 'flex' : 'none';
   campaignSpawnNext = (st.spawns ?? []).map((r) => (
-    r.onCampDown !== undefined ? Infinity
-      : r.atSec ?? (r.fromSec !== undefined ? r.fromSec : r.everySec) ?? Infinity
+    // 영웅 출정: 플레이어가 상점 영웅 탭에서 부르기 전엔 잠들어 있다
+    r.heroPick ? Infinity
+      : r.onCampDown !== undefined ? Infinity
+        : r.atSec ?? (r.fromSec !== undefined ? r.fromSec : r.everySec) ?? Infinity
   ));
+  // 이번 판에 부를 수 있는 영웅 (스폰 스크립트가 정한다) — 없으면 영웅 탭도 안 뜬다
+  heroPickable = (st.spawns ?? []).filter((r) => r.heroPick).map((r) => r.defId);
+  heroPicked = [];
+  heroNextPickSec = 0;
+  shopTab = 'unit';
   campaignCampDown = new Set<number>();
   campaignSpawnedTotal = (st.spawns ?? []).map(() => 0);
   campaignCaptureStartTick = -1;
@@ -1855,8 +1935,19 @@ async function startCampaignStage(st: CampaignStage): Promise<void> {
   });
   await startGame(st.seed, players, 0, false, st.mapId ?? DEFAULT_MAP, rosterNames, st.botDifficulty);
   campaignCaps = null;
-  // 두 갈래 맵의 기본값은 「기지에 머무르기」 — 첫 턴부터 무작정 나가지 않게
-  if (game && campaignLanes) setDeployHold(game, true);
+  /*
+   * 두 갈래 맵의 시작 상태.
+   * deployStartHold 를 단 판(14라운드)은 「가운데 대기」로 연다 — 길을 고르기 전엔
+   * 첫 턴부터 무작정 나가지 않는다. 아니면 첫 갈래를 골라 둔다 (고른 칸이 없는
+   * 어정쩡한 상태를 만들지 않는다 — 그러면 어느 칸에도 불이 안 들어온다).
+   */
+  if (game && campaignLanes) {
+    if (campaignStartHold) setDeployHold(game, true);
+    else {
+      const first = campaignLanes.find((l) => !l.hold);
+      if (first) setDeployLane(game, first.y);
+    }
+  }
   syncLaneBtn();
   if (st.startMoney !== undefined && game) game.players[0]!.money = st.startMoney;
   if (st.noEnemyNexus && game) {
@@ -1870,6 +1961,22 @@ async function startCampaignStage(st: CampaignStage): Promise<void> {
     campaignBossId = boss.id;
     campaignAlertText = '⚔ 사령장군 카르가스가 요새 앞을 지키고 있다!';
     campaignAlertUntil = performance.now() + 5000;
+  }
+  if (st.noNexus && game) {
+    // 마을 방어전: 지킬 넥서스가 없다. 양 팀 넥서스를 걷어내고 보호막도 푼다.
+    game.entities = game.entities.filter((e) => e.defId !== 'nexus');
+    game.guardianDown = [true, true];
+  }
+  villageDeaths = 0;
+  villageEscaped = 0;
+  villageSeen.clear();
+  if (st.village && game) {
+    // 마을 집 네 채 — 우리 편 건물이지만 무장이 없다. 순수 목표물.
+    for (const h of st.village.houses) {
+      const hx = Math.floor(h.xTile * FP);
+      const hy = laneCenterY(game.map, hx) + Math.floor(h.yOffTile * FP);
+      spawnUnit(game, h.defId, 0, hx, hy);
+    }
   }
   if (st.obstacles && game) {
     // 불타는 숲 장애물: 무적·부동 — 아무도 조준하지 않지만 지상 유닛의 길을 막는다
@@ -2164,6 +2271,7 @@ async function startGame(
   acc = 0;
   selectUnit(null);
   buildShop(players[myIdx]!.race);
+  syncShopTabs();
   // 참여자 이름: 멀티는 서버 좌석 이름, 연습 게임은 AI 표기
   playerNames = players.map((p, i) =>
     seatNames?.[i] ?? (i === myIdx ? '나' : p.isBot ? 'AI' : `플레이어 ${i + 1}`));
@@ -2202,6 +2310,159 @@ const shopKeyMap = new Map<string, string>();
  * 캠페인 전용 — 상점 점령·둥지·보스 같은 캠페인 장치를 전제로 설계된 맵이다.
  */
 const PVP_MAPS = ['plains', 'toybox', 'valley'];
+
+// ── 영웅 출정 칸 (14라운드~) ───────────────────────────────────────────────
+/*
+ * 영웅은 이제 스크립트로 저절로 나오지 않는다 — 여기서 직접 부른다.
+ * 부르는 순간 야영지에서 나서고, 그 뒤론 쓰러져도 알아서 다시 온다 (부활).
+ * 다음 영웅까지는 5분 — 그래서 「누구를 먼저 부를까」가 판의 첫 결정이 된다.
+ */
+/** 지금 게임 시각(초). 스폰 스크립트가 쓰는 시계와 같은 것. */
+function campNowSec(): number {
+  return game ? game.tick / TICK_HZ : 0;
+}
+
+/** 이 영웅의 부활 주기(초) — 강화가 줄여 준 값. */
+function heroReviveSec(defId: string): number {
+  return defId === 'c_kael' ? kaelReviveSec()
+    : defId === 'c_evergreen' ? evergreenReviveSec()
+      : defId === 'c_elowyn' ? elowynReviveSec() : 0;
+}
+
+/** 영웅 출정 — 스폰 규칙을 깨워 지금 즉시 야영지에서 나서게 한다. */
+function callHero(defId: string): void {
+  if (!game || !campaign) return;
+  if (heroPicked.includes(defId)) return;
+  if (heroPicked.length >= HERO_DEPLOY_MAX) return;
+  const now = campNowSec();
+  if (now < heroNextPickSec) { audio.play('ui_deny', { volume: 0.5 }); return; }
+  const idx = (campaign.spawns ?? []).findIndex((r) => r.heroPick && r.defId === defId);
+  if (idx < 0) return;
+  heroPicked.push(defId);
+  campaignSpawnNext[idx] = now;           // 다음 프레임에 스폰 드라이버가 세운다
+  heroNextPickSec = now + HERO_PICK_COOLDOWN_SEC;
+  audio.play('ui_heroup', { volume: 0.95 });
+  const name = HEROES.find((h) => h.id === defId)?.name ?? DEFS[defId]?.name ?? defId;
+  showToast(heroPicked.length >= HERO_DEPLOY_MAX
+    ? `⚔ ${name} 참전! — 영웅 ${HERO_DEPLOY_MAX}명을 모두 불렀다`
+    : `⚔ ${name} 참전! — 다음 영웅까지 ${HERO_PICK_COOLDOWN_SEC}초`);
+  buildHeroShop();
+}
+
+/** 영웅 칸을 처음부터 다시 짓는다 (판이 열릴 때·영웅을 부른 뒤). */
+function buildHeroShop(): void {
+  const box = document.getElementById('hero-shop');
+  if (!box) return;
+  box.innerHTML = '';
+  if (heroPickable.length === 0) return;
+
+  const note = document.createElement('div');
+  note.className = 'hs-note';
+  box.appendChild(note);
+
+  for (const defId of heroPickable) {
+    const meta = HEROES.find((h) => h.id === defId);
+    const d = DEFS[defId];
+    const btn = document.createElement('button');
+    btn.className = 'herobtn';
+    btn.dataset.hero = defId;
+    const fallback = iconUrl(defId, 0);
+    btn.innerHTML =
+      `<img src="${assetIconUrl(defId) ?? fallback}" onerror="this.onerror=null;this.src='${fallback}'" alt=""/>`
+      + `<span class="nm">${meta?.name ?? d?.name ?? defId}</span>`
+      + `<span class="role">${meta?.blurb ?? ''}</span>`
+      + '<span class="act"></span>';
+    btn.onclick = () => callHero(defId);
+    box.appendChild(btn);
+  }
+  syncHeroShop();
+}
+
+/** 영웅 칸의 남은 쿨·상태를 지금 값으로 맞춘다 (매 프레임). */
+function syncHeroShop(): void {
+  const box = document.getElementById('hero-shop');
+  if (!box || heroPickable.length === 0 || box.classList.contains('hidden')) return;
+  const now = campNowSec();
+  const waitLeft = Math.max(0, Math.ceil(heroNextPickSec - now));
+  const full = heroPicked.length >= HERO_DEPLOY_MAX;
+
+  const note = box.querySelector('.hs-note');
+  if (note) {
+    note.innerHTML = `<b>🛡 영웅 출정 ${heroPicked.length} / ${HERO_DEPLOY_MAX}</b>`
+      + '<div>한 번 부르면 쓰러져도 스스로 다시 온다 — 다시 부를 필요 없다.</div>'
+      + (full ? '<div>더 부를 수 없다.</div>'
+        : waitLeft > 0
+          ? `<div class="cd">다음 영웅까지 ${Math.floor(waitLeft / 60)}:${String(waitLeft % 60).padStart(2, '0')}</div>`
+          : '<div class="cd">지금 부를 수 있다</div>');
+  }
+  for (const el of Array.from(box.querySelectorAll('.herobtn'))) {
+    const btn = el as HTMLButtonElement;
+    const defId = btn.dataset.hero ?? '';
+    const called = heroPicked.includes(defId);
+    const act = btn.querySelector('.act') as HTMLElement | null;
+    btn.classList.toggle('on', called);
+    btn.disabled = called || full || waitLeft > 0;
+    if (!act) continue;
+    act.classList.toggle('wait', !called && waitLeft > 0);
+    const rev = heroReviveSec(defId);
+    act.textContent = called ? (rev > 0 ? `출정 중 · 부활 ${rev}초` : '출정 중')
+      : full ? '자리 없음'
+        : waitLeft > 0 ? `${waitLeft}초 뒤` : '⚔ 부르기';
+  }
+}
+
+// ── 코치마크 ──────────────────────────────────────────────────────────────
+const COACH_KEY = 'camp_coach_herotab';
+
+/** 영웅 탭이 새로 생겼다고 한 번만 짚어 준다. */
+function showCoachHeroTab(): void {
+  const el = document.getElementById('coach');
+  if (!el) return;
+  let seen = false;
+  try { seen = localStorage.getItem(COACH_KEY) === '1'; } catch { /* 무시 */ }
+  const tabBtn = document.querySelector('#shop-tabs button[data-tab="hero"]');
+  tabBtn?.classList.toggle('fresh', !seen);
+  el.classList.toggle('hidden', seen);
+}
+
+function dismissCoach(): void {
+  document.getElementById('coach')?.classList.add('hidden');
+  document.querySelector('#shop-tabs button[data-tab="hero"]')?.classList.remove('fresh');
+  try { localStorage.setItem(COACH_KEY, '1'); } catch { /* 무시 */ }
+}
+
+/**
+ * 「유닛 / 영웅」 탭 줄을 지금 판에 맞춘다.
+ * 영웅을 부를 수 있는 판(14라운드~)에서만 탭이 뜨고, 아니면 유닛 칸 하나뿐이다.
+ */
+function syncShopTabs(): void {
+  const tabs = document.getElementById('shop-tabs');
+  const on = !!campaign && heroPickable.length > 0;
+  if (tabs) tabs.style.display = on ? 'flex' : 'none';
+  if (!on) {
+    document.getElementById('hero-shop')?.classList.add('hidden');
+    document.getElementById('shop')?.classList.remove('hidden');
+    document.getElementById('coach')?.classList.add('hidden');
+    shopTab = 'unit';
+    return;
+  }
+  buildHeroShop();
+  setShopTab('unit');
+  showCoachHeroTab();
+}
+
+/** 상점 아래 칸을 유닛/영웅 중 하나로 바꾼다. */
+function setShopTab(tab: 'unit' | 'hero'): void {
+  shopTab = tab;
+  document.getElementById('shop')?.classList.toggle('hidden', tab !== 'unit');
+  document.getElementById('hero-shop')?.classList.toggle('hidden', tab !== 'hero');
+  for (const b of Array.from(document.querySelectorAll('#shop-tabs button'))) {
+    const el = b as HTMLElement;
+    el.classList.toggle('on', el.dataset.tab === tab);
+    if (el.dataset.tab === tab) el.classList.remove('fresh');
+  }
+  if (tab === 'hero') { syncHeroShop(); dismissCoach(); }
+}
 
 function buildShop(race: RaceId): void {
   const shop = $('#shop');
@@ -2704,43 +2965,74 @@ function updateSpeedButtons(): void {
 }
 
 // ── 게임 내 알림 토스트 ───────────────────────────────────────────────────
+/*
+ * 지금 고른 출정 칸의 번호. y 로 찾으면 안 된다 — 「가운데 대기」 칸의 y 는 0 이고,
+ * 아직 아무 길도 고르지 않은 상태(deployLaneY 0)와 값이 같기 때문이다.
+ * 그래서 예전엔 판이 열리자마자 가운데 칸에 불이 들어와 있는데도 부대는 그냥
+ * 나가 버렸고, 가운데를 「고를 수」가 없어 보였다.
+ */
+function currentLaneIdx(): number {
+  if (!game || !campaignLanes) return -1;
+  if (game.deployHold) return campaignLanes.findIndex((l) => l.hold);
+  return campaignLanes.findIndex((l) => !l.hold && l.y === game!.deployLaneY);
+}
+
 /** 출정 길을 고른다 (버튼·전장 탭 공용). 표시와 효과음까지 여기서 챙긴다. */
-function chooseLane(y: number): void {
+function chooseLaneAt(idx: number): void {
   if (!game || !campaignLanes) return;
-  if (campaignLanes.find((l) => l.y === y)?.hold) { chooseHold(); return; }
+  const lane = campaignLanes[idx];
+  if (!lane) return;
+  if (lane.hold) { chooseHold(); return; }
   const wasHeld = game.deployHeld;
   setDeployHold(game, false);
-  setDeployLane(game, y);
+  setDeployLane(game, lane.y);
   audio.play('ui_click');
-  const lane = campaignLanes.find((l) => l.y === y);
-  if (lane) {
-    showToast(wasHeld > 0
-      ? `⚔ ${lane.label} 쪽으로 진군 — 모아 둔 ${wasHeld + 1}개 부대가 한꺼번에 나선다!`
-      : `⚔ ${lane.label} 쪽으로 출정한다`);
-  }
+  // 길을 골라도 그 자리에서 뛰쳐나가지 않는다 — 다음 턴이 시작될 때 함께 나선다
+  showToast(wasHeld > 0
+    ? `⚔ ${lane.label} — 모아 둔 ${wasHeld + 1}개 부대가 다음 턴에 한꺼번에 나선다!`
+    : `⚔ ${lane.label} 쪽으로 출정한다 (다음 턴부터)`);
   syncLaneBtn();
 }
 
-/** 「기지에 머무르기」 — 이번 턴 출정을 미루고 병력을 모은다. */
+/** 「가운데 대기」 — 이번 턴 출정을 미루고 병력을 모은다. */
 function chooseHold(): void {
   if (!game) return;
   setDeployHold(game, true);
   audio.play('ui_click');
-  showToast('🛡 기지에 머무른다 — 출정하지 않고 병력을 모은다');
+  showToast('🛡 가운데에서 대기한다 — 출정하지 않고 병력을 모은다');
   syncLaneBtn();
 }
 
-/** 상단 버튼에 지금 고른 길 이름을 적는다. */
+/** 상단 「출정 경로」 칸을 지금 상태에 맞춘다 (칸이 없으면 만든다). */
 function syncLaneBtn(): void {
-  const nameEl = document.getElementById('lane-name');
-  if (!nameEl || !game || !campaignLanes) return;
-  if (game.deployHold) {
-    const held = game.deployHeld;
-    nameEl.textContent = held > 0 ? `기지에 머무르는 중 (${held}턴 모음)` : '기지에 머무르기';
-    return;
+  const wrap = document.getElementById('lane-pick');
+  if (!wrap) return;
+  const lanes = campaignLanes;
+  if (!game || !lanes) { wrap.innerHTML = ''; return; }
+  // 칸 수가 달라졌을 때만 새로 만든다 — 매번 다시 그리면 누르는 순간 사라져 씹힌다
+  if (wrap.children.length !== lanes.length) {
+    wrap.innerHTML = '';
+    lanes.forEach((lane, i) => {
+      const b = document.createElement('button');
+      b.className = 'lanebtn' + (lane.hold ? ' hold' : '');
+      // 「서쪽 숲길 (C → A)」에서 괄호 앞까지만 — 상단바는 좁다 (전체는 툴팁으로)
+      b.innerHTML = `<b>${lane.hold ? '⏸ ' : ''}${lane.label.split(' (')[0]}</b><small></small>`;
+      b.title = lane.label;
+      b.onclick = () => chooseLaneAt(i);
+      wrap.appendChild(b);
+    });
   }
-  const lane = campaignLanes.find((l) => l.y === game!.deployLaneY) ?? campaignLanes[0]!;
-  nameEl.textContent = lane.label;
+  const cur = currentLaneIdx();
+  lanes.forEach((lane, i) => {
+    const b = wrap.children[i] as HTMLElement | undefined;
+    if (!b) return;
+    b.classList.toggle('on', i === cur);
+    const sub = b.querySelector('small');
+    if (!sub) return;
+    sub.textContent = lane.hold
+      ? (i === cur && game!.deployHeld > 0 ? `${game!.deployHeld}턴 모음` : '출정하지 않음')
+      : (i === cur ? '이 길로 출정' : '이 길로 바꾸기');
+  });
 }
 
 function showToast(text: string): void {
@@ -2758,6 +3050,7 @@ function consumeEvents(g: Game): void {
   for (const ev of g.events) {
     if (ev.kind === 'wave') {
       audio.play('wave', { volume: 0.7 });
+      syncLaneBtn();   // 「가운데 대기」에 쌓인 턴 수가 이때 늘어난다
     } else if (ev.kind === 'towerDown') {
       const winners = ev.team === 0 ? 1 : 0;
       showToast(`💥 ${ev.team! + 1}팀 수호탑 파괴 — ${winners + 1}팀 전원 +${MAP.TOWER_BOUNTY}원!`);
@@ -3192,12 +3485,22 @@ function tick(deltaMS: number): void {
     }
     for (let i = 0; i < campaign.spawns.length; i++) {
       const rule = campaign.spawns[i]!;
-      // 거점 보스: 그 거점이 무너지는 순간 예약된다
+      /*
+       * 거점 보스: 그 거점이 무너지는 순간 딱 한 번 예약된다.
+       *
+       * 「이미 나왔나」(campaignSpawnedTotal)를 함께 봐야 한다. 거점은 한 번 무너지면
+       * 계속 무너져 있고, everySec 이 없는 규칙은 스폰 직후 시계가 Infinity 로 돌아간다 —
+       * 그러면 다음 프레임에 이 조건이 그대로 다시 참이 되어 매 프레임 보스가 하나씩
+       * 튀어나온다 (구울 군주가 무한히 불어나던 버그).
+       */
       if (rule.onCampDown !== undefined) {
-        if (campaignSpawnNext[i] === Infinity && campaignCampDown.has(rule.onCampDown)) {
+        if (campaignSpawnNext[i] === Infinity && campaignSpawnedTotal[i] === 0
+          && campaignCampDown.has(rule.onCampDown)) {
           campaignSpawnNext[i] = nowSec;   // 지금 바로
         }
       }
+      // 영웅 출정: 아직 부르지 않았으면 이 규칙은 잠들어 있다
+      if (rule.heroPick && !heroPicked.includes(rule.defId)) continue;
       // 거점이 무너졌으면 그쪽 증원은 영구히 끊긴다
       if (rule.whileCampSlot !== undefined && campaignCampDown.has(rule.whileCampSlot)) {
         campaignSpawnNext[i] = Infinity;
@@ -3316,16 +3619,21 @@ function tick(deltaMS: number): void {
           void runDialogue(rule.onFirstDialogue).then(() => setCutscenePause(false));
         }
       }
-      campaignAlertText = `⚠ ${rule.label} 출현!`;
-      campaignAlertUntil = performance.now() + 4000;
-      audio.play('cast_skill', { volume: 0.9 });
+      // 주민 행렬처럼 매 턴 여러 번 나오는 스폰은 배너를 띄우지 않는다 (화면을 계속 가린다)
+      if (!rule.quiet) {
+        // 이름표가 이미 「… 참전!」 처럼 끝나면 「출현!」 을 덧붙이지 않는다
+        campaignAlertText = /[!?]$/.test(rule.label) ? `⚠ ${rule.label}` : `⚠ ${rule.label} 출현!`;
+        campaignAlertUntil = performance.now() + 4000;
+        audio.play('cast_skill', { volume: 0.9 });
+      }
     }
   }
   // 두 갈래 맵: 지금 고른 출정 레인에 불이 들어온다
   if (renderer) {
-    const holdLane = campaignLanes?.find((l) => l.hold);
-    renderer.setDeployLanes(campaignLanes, game.deployHold && holdLane ? holdLane.y : game.deployLaneY);
+    renderer.setDeployLanes(campaignLanes, currentLaneIdx());
   }
+  // 영웅 출정 칸: 다음 영웅까지 남은 시간이 여기서 줄어든다
+  if (shopTab === 'hero') syncHeroShop();
   // 캠페인: 확정 성장 — fromWave 턴부터 매 턴 적 봇 comp 에 +1 (캡 도달 시 멈춤).
   // 출정 직전 턴에 미리 편입해 fromWave 웨이브부터 실제로 필드에 나오게 한다.
   if (campaign && !campaignDone && !game.over && campaign.growth) {
@@ -3417,13 +3725,58 @@ function tick(deltaMS: number): void {
           `[${campaign.id}. ${campaign.title}] ${campaign.goal} — 남은 턴 ${leftWaves}`;
       }
     }
+    /*
+     * 마을 방어전: 시간을 버티는 것만으로는 이기지 못한다.
+     *  · 서쪽 끝에 닿은 주민은 탈출 성공 — 화면에서 지운다 (안 지우면 벽에 붙어 쌓인다)
+     *  · 죽은 주민을 센다. loseDeaths 명이면 그 자리에서 패배
+     *  · 집 네 채가 모두 무너져도 패배
+     */
+    if (campaign.village && game && !game.over) {
+      const vg = campaign.village;
+      const escX = vg.escapeXTile * FP;
+      for (const e of game.entities) {
+        if (!e.alive || !e.defId.startsWith('c_villager_')) continue;
+        villageSeen.set(e.id, e.defId);
+        if (e.x <= escX) {
+          e.alive = false;          // 탈출 — 전투에서 빼고 화면에서도 사라진다
+          e.hp = 0;
+          villageSeen.delete(e.id);
+          villageEscaped++;
+        }
+      }
+      // 살아 있는 목록에서 사라진 id = 적에게 죽은 주민 (탈출은 위에서 이미 뺐다)
+      const aliveIds = new Set(game.entities.filter((e) => e.alive).map((e) => e.id));
+      for (const id of [...villageSeen.keys()]) {
+        if (!aliveIds.has(id)) {
+          villageSeen.delete(id);
+          villageDeaths++;
+        }
+      }
+      if (villageDeaths >= vg.loseDeaths) {
+        campaignFinish(false, `주민 ${villageDeaths}명 사망`);
+        return;
+      }
+      const housesLeft = game.entities.filter(
+        (e) => e.alive && e.defId.startsWith('c_village_')).length;
+      if (housesLeft === 0) {
+        campaignFinish(false, '마을이 전부 불탔다');
+        return;
+      }
+      const left = (campaign.surviveSec ?? 900) - Math.floor(game.tick / TICK_HZ);
+      if (left > 0 && performance.now() >= campaignAlertUntil) {
+        const turns = Math.ceil(left / 60);
+        $('#campaign-goal').textContent =
+          `[6. ${campaign.title}] 남은 ${turns}턴 · 🏠 ${housesLeft}/4 · 🏃 대피 ${villageEscaped} · ☠ ${villageDeaths}/${vg.loseDeaths}`;
+      }
+    }
     if (campaign.mission === 'survive' && campaign.surviveSec !== undefined) {
       const left = campaign.surviveSec - Math.floor(game.tick / TICK_HZ);
       if (!game.over && left <= 0) {
         campaignFinish(true);
         return;
       }
-      if (left > 0 && performance.now() >= campaignAlertUntil) {
+      // 마을 방어전은 위에서 집·주민까지 함께 찍었다 — 덮어쓰지 않는다
+      if (left > 0 && !campaign.village && performance.now() >= campaignAlertUntil) {
         // 1턴 = 60초 — 턴 수와 시계를 함께 보여준다
         const leftTurns = Math.ceil(left / 60);
         $('#campaign-goal').textContent =
@@ -3460,6 +3813,13 @@ function setBar(id: string, hp: number, max: number): void {
 /** 넥서스 판: 팀 이름 + 남은 체력 숫자. */
 function setNexusHead(team: 0 | 1, name: string, hp: number, max: number): void {
   const plate = $(`#nx-${team}`);
+  // 넥서스가 아예 없는 판(마을 방어전)에서는 판 자체를 감춘다 —
+  // 그냥 두면 시작하자마자 양쪽 다 「파괴됨」이라 지고 있는 것처럼 보인다.
+  if (campaign?.noNexus) {
+    plate.style.display = 'none';
+    return;
+  }
+  plate.style.display = '';
   const nameEl = plate.querySelector('.nx-name') as HTMLElement;
   const hpEl = plate.querySelector('.nx-hp') as HTMLElement;
   if (nameEl.textContent !== name) nameEl.textContent = name;
@@ -3770,18 +4130,14 @@ function initSoundUi(): void {
  * 게임에서 나가기. 멀티면 좌석을 완전히 반납하고(그 자리는 AI 가 이어받는다)
  * 재접속 토큰도 지운다 — 이게 없으면 새로고침할 때마다 같은 방으로 되돌아간다.
  */
-// 「길 바꾸기」 — 누를 때마다 다음 갈래로 (전장의 빈 땅을 눌러도 같은 동작)
+// 상점 탭 (유닛 / 영웅 출정) — 14라운드부터 뜬다
+for (const b of Array.from(document.querySelectorAll('#shop-tabs button'))) {
+  const el = b as HTMLElement;
+  el.onclick = () => setShopTab(el.dataset.tab === 'hero' ? 'hero' : 'unit');
+}
 {
-  const laneBtnEl = document.getElementById('btn-lane');
-  if (laneBtnEl) {
-    laneBtnEl.onclick = () => {
-      if (!game || !campaignLanes || campaignLanes.length === 0) return;
-      const cur = game.deployHold
-        ? campaignLanes.findIndex((l) => l.hold)
-        : campaignLanes.findIndex((l) => l.y === game!.deployLaneY);
-      chooseLane(campaignLanes[(cur + 1) % campaignLanes.length]!.y);
-    };
-  }
+  const ok = document.getElementById('coach-ok');
+  if (ok) ok.onclick = () => { dismissCoach(); setShopTab('hero'); };
 }
 
 $('#btn-quit').onclick = () => {

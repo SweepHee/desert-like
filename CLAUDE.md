@@ -31,10 +31,12 @@ npx tsx packages/sim/src/cli/battle.ts [seed] # 풀 게임 헤드리스
 
 - **종족 3**: 실바린(숲/회복) · 판데모니엄(망자/흡혈/소환) · 마리오네타(인형/태엽).
 - **상태이상**: 둔화·독·속박·기절·혼란(자기 편 공격)·수면(3피격 해제)·빙결·약화·한기·공포(도주)·지상화(리버스그라비티)·반사. 수호자(guardian 티어)는 전면 면역.
+- **장판**: `ZONE_DEFS` — dps/slow/healBio/pull/hitsAir 에 더해 `poison`(역병 늪). poison 은 장판이 직접 깎지 않고 **밟은 적에게 독 상태이상을 옮긴다** — 장판을 벗어나도 남으므로 「물러서기」가 답이 아니게 된다.
 - **해금 스킬**: `ActiveSkill.requiresUpgrade` — 업그레이드 구매 시 사용 가능 (세이지 마법 3종, 앨리스 인형의 실, 태엽 감기).
 - **넥서스**: 방어 28(기본 유닛 평타=1), 수호자 생존 중 무적.
 - **봇 AI**: 난이도 3단계(easy/normal=인컴 이점/hard=미러링+카운터픽) + 성격 4유형 시드 배정. `incomeCap`/`techCap`/`enemyPreferredUnits`는 GameConfig 옵션.
 - **타이틀 화면** (`packages/client/src/title.ts`): 종족 아트 4종(실바린·판데모니엄·마리오네타·카르자, `/assets/ui/title_*.jpg`) 중 하나가 접속마다 랜덤(직전 것 제외). **메뉴 버튼이 그림에 그려져 있어** 그 위에 투명 핫스팟을 얹어 클릭을 받는다 — 좌표는 원본 아트 767×511 기준 픽셀(변종별 `menu: {x, w, tops[5], hs[5]}`, 아트마다 위치·크기가 다름)이므로 아트를 새로 뽑으면 반드시 다시 재야 한다. 메뉴 5칸 = 캠페인 / 연습 / 대전 / **로그인** / 종료. 로그인 칸은 구글 공식 버튼(GIS)을 그 위에 투명하게 덮어 클릭을 받고(커스텀 버튼으로는 팝업 불가), 칸보다 크게 덮은 뒤 `overflow:hidden` 으로 잘라 구석까지 눌리게 한다. 로그인하면 그 칸이 계정 이름 패널(`#tl-me`)로 바뀐다. 고른 아트는 이후 메뉴 화면의 흐린 배경(`--title-art`)과 강조색(`--tt-rgb` → `#overlay`의 `--gold`)으로 이어진다. 메뉴 4개 → 캠페인 목록 / 연습 종족선택 / 대전 로비 / 작별 화면.
+- **맵** (`data.ts MAPS`): 기본 `plains`(잿불 숲) 외 valley/greedvalley/nest/confluence/toybox/greatroot/ashroad + **`mire`**(4 독 늪 — 그림만 늪, 형태는 기본형) · **`owlkeep`**(5 굽이치는 세로 맵 — 마스크). 마스크 맵은 지상만 `isWalkable`/흐름장에 걸리고 **비행은 마스크를 통째로 무시**한다(`battle.ts` moveToward) — owlkeep 의 「지상 291타일 vs 비행 57타일(5.11배)」이 이 성질 위에 서 있다. 마스크는 손그림이 아니라 `packages/client/tools/gen_owlkeep_mask.py` 가 만들고 배수는 skill-check 가 잠근다.
 - **캠페인** (`packages/client/src/campaign.ts`): 실바린 「자정의 세계수」 18스테이지(14까지 공개). 대화(포트레이트 11종 `/assets/portraits/`) + 컷신 그림(`DialogueLine.img` — `/assets/cutscenes/`, '' 로 해제), localStorage 진행/특성 저장, 미션 destroy/survive/tower/boss + **호위전**(13: `escort` = 거점 5개 순차 점령·마차 후퇴·holdLineX 전선, `obstacles` = 무적 소품 길막(speed 0 은 충돌 분리에서 안 밀림, 비행은 통과)). noTowers·warcamp·스폰 스크립트·mapId(toybox/ashroad 등) 옵션. 시나리오 원본: `docs/campaign-sylvarin.md`.
 
 ## 에셋 파이프라인 (픽셀랩 MCP)

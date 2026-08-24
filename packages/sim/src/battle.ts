@@ -69,6 +69,11 @@ function isStatusImmune(e: Entity): boolean {
   return d.tier === 'guardian' || d.statusImmune === true || e.warded;
 }
 
+/** 마법(액티브) 면역 — 넥서스. 스킬 피해도 장판 효과도 받지 않는다. */
+function isMagicImmune(e: Entity): boolean {
+  return def(e).magicImmune === true;
+}
+
 /**
  * 상태이상 차단 판정 — 수호자 / 인큐버스 「완전 해제」 20초 면역 /
  * 하얀토끼 「멈춘 시계」 영구 면역.
@@ -979,6 +984,7 @@ function pickNukeTarget(
 
 /** 액티브 strike 피해 (처형기). 무기 부가효과(둔화·독 등)는 묻지 않는다. */
 function applyStrike(g: Game, attacker: Entity, a: ActiveSkill, victim: Entity): void {
+  if (isMagicImmune(victim)) return;        // 넥서스 — 마법은 통하지 않는다
   if (g.tick < victim.stealthUntil) return; // 은신은 스킬 피해도 받지 않는다
   if (g.tick < victim.buriedUntil) return; // 「토끼굴」 도 마찬가지
   if (g.tick < victim.vanishUntil) return; // 「커튼콜」 무대 밖
@@ -1350,7 +1356,7 @@ export function stepCombat(g: Game): void {
       }
       const zd = ZONE_DEFS[z.kind]!;
       for (const e of g.entities) {
-        if (!e.alive) continue;
+        if (!e.alive || isMagicImmune(e)) continue; // 넥서스는 장판도 안 받는다
         const d = def(e);
         const r = z.radius + d.radius;
         if (dist2(z.x, z.y, e.x, e.y) > r * r) continue;
@@ -1374,6 +1380,18 @@ export function stepCombat(g: Game): void {
           if (zd.slow && d.speed > 0 && !isStatusImmune(e)) {
             const until = g.tick + 6;
             if (until > e.slowedUntil) e.slowedUntil = until;
+          }
+          /*
+           * 역병 늪: 장판을 밟는 순간 「독」이 옮겨 붙는다.
+           *
+           * 다른 장판은 안에 있는 동안만 효과가 있어 물러서면 그만이지만,
+           * 이건 유닛에 상태이상으로 얹히므로 나와도 계속 닳는다 — 물러서기가
+           * 답이 아니라 치유가 답이 되게 하는 장치. 갱신은 더 센 쪽·더 긴 쪽.
+           */
+          if (zd.poison && !blocksStatus(g, e)) {
+            const until = g.tick + zd.poison.ticks;
+            if (until > e.dotUntil) e.dotUntil = until;
+            if (zd.poison.dps > e.dotDps) e.dotDps = zd.poison.dps;
           }
           // 「인분의 장막」: 안에 있는 동안 공속과 사거리가 깎인다 (한기로 공속을,
           // moonveilUntil 로 사거리를 — 나가면 0.3초 뒤 풀린다)
@@ -1725,6 +1743,21 @@ export function stepCombat(g: Game): void {
       }
       continue;
     }
+    /*
+     * 피난민: 진군이 아니라 도주다. 전선·수비선·흐름장 목적지와 무관하게
+     * 서쪽 끝만 보고 걷는다 (마스크 맵이면 흐름장으로 길을 찾아서).
+     * 맵 밖으로 내보내는 것과 세는 것은 캠페인 쪽 몫.
+     */
+    if (d.flees) {
+      if (g.map.mask && !d.flying) {
+        const cell = flowStepTo(g.map, 0, laneCenterY(g.map, 0), e.x, e.y);
+        if (cell) moveToward(g, e, d, cell.x, cell.y, slowed);
+        else moveToward(g, e, d, 0, laneCenterY(g.map, 0), slowed);
+      } else {
+        moveToward(g, e, d, 0, laneCenterY(g.map, 0), slowed);
+      }
+      continue;
+    }
     // 진군: 중앙선을 따라 적 넥서스 방향으로. (--_-- 같은 굽은 코리도어 지원)
     // 단, 적 넥서스가 아직 보호막(수호자 생존) 상태면 수호탑 자리까지만 밀고 간다.
     const m = g.map;
@@ -1798,7 +1831,10 @@ export function stepCombat(g: Game): void {
           : (nextCell.x > nexusX ? nextCell.x : nexusX);
         moveToward(g, e, d, tx, nextCell.y, slowed);
       } else {
-        moveToward(g, e, d, nexusX, e.y, slowed); // 목적지 줄에 닿았다 — 넥서스로
+        // 목적지 줄에 닿았다 — 이제 넥서스 자리로 곧장 모인다.
+        // 예전엔 y 를 e.y 로 뒀는데, 흐름장 목적지가 「줄」이라 도착한 폭 그대로
+        // 멈춰 서서 넥서스 옆에 늘어서기만 하고 끝내 치러 오지 않았다.
+        moveToward(g, e, d, nexusX, laneCenterY(g.map, nexusX), slowed);
       }
       continue;
     }

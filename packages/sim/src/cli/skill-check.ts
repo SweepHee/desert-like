@@ -6,8 +6,8 @@
  */
 import { createGame, spawnUnit } from '../game.ts';
 import { stepCombat } from '../battle.ts';
-import { tiles } from '../math.ts';
-import { DEFS, unitsOfRace } from '../data.ts';
+import { tiles, seconds, TICK_HZ } from '../math.ts';
+import { DEFS, MAPS, unitsOfRace, flowFieldOf, laneCenterY, maskIndexOf } from '../data.ts';
 import type { Entity, Game, RaceId, TeamId } from '../types.ts';
 
 const races: RaceId[] = ['sylvarin', 'pandemonium', 'marionetta', 'sylvarin', 'pandemonium', 'marionetta'];
@@ -1202,6 +1202,54 @@ function unlockSage(g: Game, sage: Entity): void {
   }
   ok(!targetedGuard, '둥지 수호탑: 적이 조준하지 않음 (어그로 흡수 없음)');
   ok(ally.hp < 150, '둥지 수호탑 옆 아군이 대신 공격받음 (정상 타겟 전환)');
+}
+
+{
+  /*
+   * 「역병 늪」(썩어가는 시체, 4스테이지) — 이 판의 설계 자체가 여기에 걸려 있다.
+   * 장판 안에서만 아픈 게 아니라 독이 유닛에 옮겨 붙어야 한다. 옮겨 붙지 않으면
+   * 「물러서면 그만」이 되어 드루이드를 살 이유가 사라진다.
+   */
+  const g = newArena();
+  const mid = tiles(30);
+  spawnUnit(g, 'c_rotting_corpse', 1, mid, 0);
+  const v = spawnUnit(g, 's_gouto', 0, mid - tiles(3), 0);
+  let castAt = -1;
+  for (let t = 0; t < seconds(12) && castAt < 0; t++) {
+    g.tick++;
+    stepCombat(g);
+    if (g.tick < v.dotUntil) castAt = g.tick;
+  }
+  ok(castAt > 0, '역병 늪: 밟은 적이 독에 걸린다');
+  ok(v.dotDps === 6, `역병 늪: 초당 6 (실제 ${v.dotDps})`);
+  ok(v.dotUntil - castAt > seconds(14), `역병 늪: 16초 지속 (실제 ${((v.dotUntil - castAt) / TICK_HZ).toFixed(1)}초)`);
+  // 장판을 걷어내고 멀리 치워도 계속 닳아야 한다
+  g.zones = [];
+  v.x = tiles(5);
+  const before = v.hp;
+  for (let t = 0; t < seconds(4); t++) { g.tick++; stepCombat(g); }
+  ok(v.hp < before, `역병 늪: 장판 밖에서도 계속 닳는다 (${before} -> ${v.hp})`);
+}
+
+{
+  /*
+   * 「올빼미 성채」(5스테이지) 지형 계약 — 지상 우회로가 비행 직선의 5배 이상.
+   *
+   * 이 판이 「하늘을 사는 판」인 근거가 전부 이 배수다. 마스크를 손대면 소리 없이
+   * 깨지므로 여기서 잠근다. 모양을 바꾸려면 packages/client/tools/gen_owlkeep_mask.py
+   * 를 고쳐 다시 굽고 이 수치를 확인할 것.
+   */
+  const m = MAPS['owlkeep']!;
+  const fields = flowFieldOf(m);
+  ok(!!fields, '올빼미 성채: 흐름장 생성');
+  const sx = m.spawnX[0];
+  const idx = maskIndexOf(m, sx, laneCenterY(m, sx));
+  const cells = idx >= 0 ? (fields?.[0]?.[idx] ?? -1) : -1;
+  ok(cells > 0, '올빼미 성채: 아군 스폰에서 적 넥서스까지 지상 경로가 이어진다');
+  const groundTiles = cells / 2;                  // 마스크는 타일당 2칸
+  const airTiles = (m.nexusX[1] - sx) / tiles(1);
+  ok(groundTiles / airTiles >= 5,
+    `올빼미 성채: 지상 ${groundTiles.toFixed(0)}타일 / 비행 ${airTiles.toFixed(0)}타일 = ${(groundTiles / airTiles).toFixed(2)}배`);
 }
 
 if (failed) process.exitCode = 1;

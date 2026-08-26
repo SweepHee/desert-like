@@ -146,10 +146,14 @@ def main():
                       else '#' for c in range(0, COLS, 3)))
 
     im, boxes = cut_objects()
+    # 잘린 조각은 눈으로 확인하려고 떨궈 두는 것 — 게임이 쓰는 그림이 아니다.
+    # public/assets 에 쓰면 60장이 그대로 배포에 실린다. 도구 폴더로 뺀다.
+    dump = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'objdump')
+    os.makedirs(dump, exist_ok=True)
     print(f'\n오브젝트 {len(boxes)}개:')
     for i, (x0, y0, x1, y1, n) in enumerate(boxes):
         print(f'  {i:2d}: ({x0},{y0})-({x1},{y1}) {x1 - x0}x{y1 - y0} px={n}')
-        im.crop((x0, y0, x1, y1)).save(os.path.join(TILES, f'vg_raw{i}.png'))
+        im.crop((x0, y0, x1, y1)).save(os.path.join(dump, f'vg_raw{i}.png'))
 
 
 if __name__ == '__main__':

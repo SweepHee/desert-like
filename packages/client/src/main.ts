@@ -13,7 +13,7 @@ import {
   setDeployHold,
   findStructure, nextWaveInfo, hashGame, incomeUpgradeCost, techOfUnit, techUpCost,
   unitsOfRace, upgradesOfUnit,
-  laneCenterY, spawnUnit, spawnGarrison,
+  laneCenterY, clampLaneY, spawnUnit, spawnGarrison,
   type BotDifficulty, type EntityDef, type Game, type RaceId, type TeamId,
 } from '@desertlike/sim';
 import { assetIconUrl, createRenderer, worldToPxX, type Renderer } from './render.ts';
@@ -629,6 +629,8 @@ let heroPickable: string[] = [];
 /** 상점 아래 칸에 지금 무엇을 띄우는가. */
 let shopTab: 'unit' | 'hero' = 'unit';
 let campaignSpawnedTotal: number[] = [];
+/** 규칙별 「몇 번째 등장인가」 (countAdd 로 물량이 불어나는 기습용). */
+let campaignSpawnFires: number[] = [];
 /** 영웅 상세 화면의 모션 타이머 (화면을 떠나면 끈다). */
 let heroAnimTimer = 0;
 /** 카엘 「숲은 기다린다」 — 쟁여 둔 부활 횟수와 다음 충전 시각(초). */
@@ -2007,6 +2009,7 @@ async function startCampaignStage(st: CampaignStage): Promise<void> {
   shopTab = 'unit';
   campaignCampDown = new Set<number>();
   campaignSpawnedTotal = (st.spawns ?? []).map(() => 0);
+  campaignSpawnFires = (st.spawns ?? []).map(() => 0);
   campaignCaptureStartTick = -1;
   campaignBossId = -1;
   escortFrontier = 0;
@@ -3729,16 +3732,31 @@ function tick(deltaMS: number): void {
           continue;
         }
       }
-      const n = rule.count ?? 1;
+      // countAdd: 등장할 때마다 물량이 불어난다 (버틸수록 거세지는 기습)
+      const n = (rule.count ?? 1) + (rule.countAdd ?? 0) * campaignSpawnFires[i]!;
+      campaignSpawnFires[i] = campaignSpawnFires[i]! + 1;
       campaignSpawnedTotal[i] = campaignSpawnedTotal[i]! + n;
       const sx0 = rule.atXTile !== undefined ? Math.floor(rule.atXTile * FP) : game.map.spawnX[1];
       const yBase = laneCenterY(game.map, sx0) + Math.floor((rule.yOffTile ?? 0) * FP);
       // 영웅이면 「영웅 강화」를 반영한 정의로 세운다
       const heroOv = rule.friendly ? applyHeroUpgrades(DEFS[rule.defId]!, rule.defId) : undefined;
+      /*
+       * 한 줄로만 세우면 물량이 많을 때 줄이 길 밖으로 삐져나간다 (기습 5회차면
+       * 25기 = 위아래 14타일). 다섯 기마다 열을 바꾸고, 열은 좌우로 번갈아 벌린다.
+       * n <= 5 면 예전과 완전히 같은 자리다.
+       */
+      const perCol = 5;
+      const rowsN = n < perCol ? n : perCol;
       for (let k = 0; k < n; k++) {
+        const colN = Math.floor(k / perCol);
+        const side = colN % 2 === 0 ? 1 : -1;
+        const px = Math.max(0, Math.min(game.map.length,
+          sx0 + side * Math.ceil(colN / 2) * 700));
+        const py0 = yBase + Math.round((k % perCol - (rowsN - 1) / 2) * 600);
+        // 마스크 맵은 길 밖에 세우면 벽 속에서 시작한다 — 가장 가까운 길로 붙인다
+        const py = game.map.mask ? clampLaneY(game.map, px, py0) : py0;
         // 야생 무리(neutral)는 제3팀(2) — 자기들끼리는 한 편, 플레이어·적 모두와 적대
-        spawnUnit(game, rule.defId, rule.friendly ? 0 : rule.neutral ? 2 : 1, sx0,
-          yBase + (k - (n - 1) / 2) * 600,
+        spawnUnit(game, rule.defId, rule.friendly ? 0 : rule.neutral ? 2 : 1, px, py,
           heroOv !== DEFS[rule.defId] ? heroOv : undefined);
       }
       // 영웅이 이끌고 오는 호위 부대 — 같은 자리에 흩어 세운다.

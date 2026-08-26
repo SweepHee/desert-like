@@ -1,35 +1,38 @@
 """
-「자정의 마을」 2단계 — 배경 합성 + 건물 잘라내기 + 마스크 정리.
+「자정의 마을」 2단계 — 작가 지형을 그대로 굽는다.
 
-gen_village.py 가 잡아 둔 오브젝트 경계 상자를 받아,
-  · 건물 4채 -> assets/tiles/vg_house_{a..d}.png  (게임 안에서 부술 수 있는 실물)
-  · 나무·덤불·바위 -> 지형.png 의 숲 구역에 합성  -> assets/maps/village.png
-로 나눈다. 「완성.png」를 그대로 배경으로 쓰지 않는 이유는 건물이 그림에 박혀
-버리면 부서져도 계속 서 있기 때문이다 — 건물만 떼어 내고 나머지를 굽는다.
+받은 자료(6라운드지형자료)는 이렇게 쓴다:
+  · 지형.png   — 길·빈터가 그려진 바닥. 통행 마스크는 여기서 나온다(gen_village.py).
+  · 오브젝트.png — 집·나무·바위 스프라이트 시트. 집 4채만 잘라 쓴다.
+  · 완성.png   — 작가가 직접 배치를 끝낸 그림. **이게 곧 맵 배경이다.**
 
-배치는 시드 난수(결정론 무관 — 굽는 시점에만 쓴다)로 흩되, 통행 가능한 칸에는
-절대 심지 않는다.
+한때 지형.png 위에 나무를 난수로 흩뿌려 배경을 만들었는데, 작가가 그려 놓은
+구도(길 여덟 갈래·집 네 채가 광장을 둘러싼 별 모양)가 통째로 뭉개졌다.
+지금은 완성.png 를 그대로 쓰고, 집 네 채 자리만 지형.png 로 되메운다 —
+집은 부술 수 있는 실물이라 그림에 박혀 있으면 무너져도 계속 서 있기 때문이다.
 
 실행: python packages/client/tools/gen_village2.py
 """
 import os
-import random
 import sys
-from PIL import Image
+from PIL import Image, ImageFilter
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import gen_village as G  # noqa: E402
 
 TILES = G.TILES
 MAPS = G.MAPS
+LEN_T = 56.0        # 진행축(x) 타일 수
+HALF_T = 21.0       # 반폭(y) — 그림 세로 절반
 
-# gen_village.cut_objects() 정렬 순서 기준 인덱스
-HOUSES = {'a': 0, 'b': 1, 'c': 3, 'd': 2}   # 11시 / 1시 / 7시 / 5시
-BIG_TREES = [4, 5, 6, 9]
-PINES = [7, 8]
-BURNT = [10]
-BUSHES = [12, 16, 17, 20, 23, 11, 13]
-ROCKS = [32, 33, 34, 35, 31]
+# gen_village.cut_objects() 정렬 순서의 집 인덱스와, 완성.png 안에서 잰 자리.
+# (px 상자는 오브젝트 스프라이트를 배율별로 맞춰 본 결과 — gen_village2 주석 참고)
+HOUSES = [
+    ('a', 0, (480, 360, 708, 604)),   # 11시
+    ('b', 1, (768, 340, 968, 568)),   # 1시
+    ('c', 3, (472, 664, 660, 860)),   # 7시
+    ('d', 2, (844, 632, 1072, 868)),  # 5시
+]
 
 
 def largest_regions(data, min_cells=40):
@@ -58,66 +61,41 @@ def largest_regions(data, min_cells=40):
 
 
 def main():
-    im, boxes = G.cut_objects()
-    crop = lambda i: im.crop(boxes[i][:4])
+    obj, boxes = G.cut_objects()
 
-    for name, idx in HOUSES.items():
-        c = crop(idx)
+    # ── 집 스프라이트: 시트에서 잘라 그대로 (게임 안에서 부술 수 있는 실물) ──
+    for name, idx, _ in HOUSES:
+        c = obj.crop(boxes[idx][:4])
         c.save(os.path.join(TILES, f'vg_house_{name}.png'))
         print(f'vg_house_{name}.png <- obj{idx} {c.size}')
 
-    terr = Image.open(os.path.join(G.SRC, '지형.png')).convert('RGBA')
-    W, H = terr.size
-    grid = largest_regions(open('packages/client/tools/village_mask.txt').read())
-    walk = lambda x, y: grid[min(G.ROWS - 1, int(x * G.ROWS / W))][min(G.COLS - 1, int(y * G.COLS / H))] == '.'
+    # ── 배경: 완성.png 그대로. 집 자리만 지형.png 로 되메운다 ──
+    done = Image.open(os.path.join(G.SRC, '완성.png')).convert('RGB')
+    ground = Image.open(os.path.join(G.SRC, '지형.png')).convert('RGB')
+    W, H = done.size
+    assert ground.size == (W, H), (done.size, ground.size)
+    for name, _, (x0, y0, x1, y1) in HOUSES:
+        pad = 14
+        bx = (max(0, x0 - pad), max(0, y0 - pad), min(W, x1 + pad), min(H, y1 + pad))
+        patch = ground.crop(bx)
+        # 가장자리를 부드럽게 — 딱 잘린 사각형이 보이면 그게 더 눈에 띈다
+        m = Image.new('L', (bx[2] - bx[0], bx[3] - bx[1]), 0)
+        m.paste(255, (pad, pad, m.width - pad, m.height - pad))
+        done.paste(patch, (bx[0], bx[1]), m.filter(ImageFilter.GaussianBlur(pad * 0.8)))
+        cx = (x0 + x1) / 2 * LEN_T / W
+        fy = y1 * HALF_T * 2 / H - HALF_T
+        wt = (x1 - x0) * LEN_T / W
+        print(f'  집 {name}: 발밑 타일 ({cx:.1f}, {fy:.1f})  폭 {wt:.1f}타일')
+    done.save(os.path.join(MAPS, 'village.png'))
+    print(f'-> {MAPS}/village.png  {W}x{H} (완성.png 그대로, 집 4채만 되메움)')
 
-    rng = random.Random(606)
-    plan = []   # (y_bottom, sprite, x, y, scale)
-
-    # 북쪽 두 진입로가 내려오는 목 — gen_village3 이 여기까지 길을 뚫으므로
-    # 나무를 심어 두면 넓힌 숲길 위에 나무가 얹힌다 (부대가 나무를 밟고 지난다).
-    LANE_FX = (0.215, 0.790)
-    LANE_R = 3.4 * 1.3 / 56 * W      # gen_village3 의 LANE_HALF_T 와 같은 값
-    LANE_DEPTH = int(H * 0.25)
-
-    def in_lane(x, y):
-        return y < LANE_DEPTH and any(abs(x - fx * W) < LANE_R for fx in LANE_FX)
-
-    def scatter(idxs, count, lo, hi, only=None):
-        tries = 0
-        placed = 0
-        while placed < count and tries < count * 60:
-            tries += 1
-            x, y = rng.randrange(W), rng.randrange(H)
-            if walk(x, y) or in_lane(x, y):
-                continue
-            if only and not only(x, y):
-                continue
-            s = crop(rng.choice(idxs))
-            sc = rng.uniform(lo, hi)
-            plan.append((y, s, x, y, sc))
-            placed += 1
-        return placed
-
-    # 불타는 숲은 위쪽 두 모서리에만 (적이 밀고 들어오는 길목)
-    scatter(BURNT, 14, 0.5, 0.8, only=lambda x, y: y < H * 0.30 and (x < W * 0.32 or x > W * 0.68))
-    scatter(BIG_TREES, 150, 0.55, 0.95)
-    scatter(PINES, 90, 0.5, 0.85)
-    scatter(BUSHES, 130, 0.5, 0.9)
-    scatter(ROCKS, 70, 0.45, 0.8)
-
-    plan.sort(key=lambda p: p[0])   # 위에 있는 것부터 — 아래 것이 위를 덮는다
-    for _, s, x, y, sc in plan:
-        w, h = int(s.width * sc), int(s.height * sc)
-        t = s.resize((max(1, w), max(1, h)), Image.LANCZOS)
-        terr.alpha_composite(t, (x - w // 2, y - h))   # 발밑 기준
-    terr.convert('RGB').save(os.path.join(MAPS, 'village.png'))
-    print(f'-> {MAPS}/village.png  소품 {len(plan)}개 합성')
-
+    # ── 마스크: 지형.png 에서 뽑은 것을 다듬어 확정 ──
+    grid = largest_regions(open('packages/client/tools/village_mask.txt').read().strip())
     data = ''.join(''.join(r) for r in grid)
-    with open('packages/client/tools/village_mask.txt', 'w') as f:
-        f.write(data)
-    print(f'마스크 정리 후 통행 {data.count(".") * 100 // len(data)}%')
+    for path in ('packages/client/tools/village_mask.txt', 'packages/client/tools/village_mask_v1.txt'):
+        with open(path, 'w') as f:
+            f.write(data)
+    print(f'마스크 {G.ROWS}x{G.COLS} — 통행 {data.count(".") * 100 // len(data)}%')
 
 
 if __name__ == '__main__':

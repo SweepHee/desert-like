@@ -548,8 +548,9 @@ const ASSET_SIZE_MUL: Record<string, number> = {
   // 캠페인 특수 유닛: 원본보다 크게 — 한눈에 "특별한 놈"으로 읽히게
   c_ash_revenant: 1.5,
   c_rotting_corpse: 1.5,
-  // 마을 집: 반경 1.3 기준 공식보다 훨씬 커야 「집」으로 읽힌다
-  c_village_a: 1.5, c_village_b: 1.5, c_village_c: 1.4, c_village_d: 1.5,
+  // 마을 집: 작가 그림(완성.png) 안에서 잰 폭에 맞춘 값 —
+  // 기본 공식(반경 1.3 x2 x2.2 = 5.72타일)에 이걸 곱하면 그림과 같은 크기가 된다
+  c_village_a: 1.54, c_village_b: 1.35, c_village_c: 1.26, c_village_d: 1.56,
   c_mad_ballerina: 1.4,
   c_bone_colossus: 1.9, c_radamanthus: 1.5, c_void_necromancer: 1.7,
   c_dread_gargoyle: 1.5,
@@ -3646,19 +3647,28 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
         // 업그레이드로 최대 체력이 늘어난 유닛은 유효 정의 기준으로 비율 계산
         const maxHp = e.defOv?.maxHp ?? d.maxHp;
         const hpr = Math.min(1, Math.max(0, e.hp / maxHp));
-        const bx = px - w / 2;
-        const by = py - sp.height - 5;
-        bars.rect(bx, by, w, 3.5).fill({ color: 0x120d08, alpha: 0.85 });
-        bars.rect(bx, by, w * hpr, 3.5).fill(hpr > 0.5 ? 0x6fce62 : hpr > 0.25 ? 0xe0b840 : 0xe0524a);
+        /*
+         * 세로 맵은 월드가 -90도 돌아 있다 — 진행축(월드 x)이 화면 세로,
+         * 코리도어 폭(월드 y)이 화면 가로다. 그래서 가로 막대를 그대로 그리면
+         * 화면에서 「유닛 왼쪽에 선 세로 막대」가 된다 (실제로 5라운드가 그랬다).
+         * 스프라이트처럼 회전을 되돌릴 수 없는 Graphics 라서 축을 바꿔 그린다:
+         *   길이 w 는 월드 y(화면 가로), 두께 3.5 는 월드 x(화면 세로),
+         *   머리 위 = 월드 x 가 커지는 쪽.
+         */
+        const bar = (off: number, len: number, color: number, alpha = 1): void => {
+          if (vert) bars.rect(px + sp.height + 5 + off, py - w / 2, 3.5, len).fill({ color, alpha });
+          else bars.rect(px - w / 2, py - sp.height - 5 - off, len, 3.5).fill({ color, alpha });
+        };
+        bar(0, w, 0x120d08, 0.85);
+        bar(0, w * hpr, hpr > 0.5 ? 0x6fce62 : hpr > 0.25 ? 0xe0b840 : 0xe0524a);
         // 보호막: 체력바 바로 위 한 칸. 기준은 「받을 수 있는 최대 보호막」이 아니라
         // 이 유닛이 실제로 받았던 양이라, 닳는 만큼 줄어드는 게 눈에 보인다.
         if (shielded) {
           const peak = Math.max(e.shieldHp, shieldPeak.get(e.id) ?? 0);
           shieldPeak.set(e.id, peak);
           const sr = Math.min(1, e.shieldHp / Math.max(1, peak));
-          const sy2 = by - 4.5;
-          bars.rect(bx, sy2, w, 3.5).fill({ color: 0x0c1626, alpha: 0.85 });
-          bars.rect(bx, sy2, w * sr, 3.5).fill(0x5ab8ff);
+          bar(4.5, w, 0x0c1626, 0.85);
+          bar(4.5, w * sr, 0x5ab8ff);
         } else {
           shieldPeak.delete(e.id);
         }

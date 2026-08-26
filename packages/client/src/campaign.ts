@@ -255,6 +255,12 @@ export interface CampaignStage {
     readonly untilSec?: number;
     readonly count?: number;     // 기본 1
     /**
+     * 등장할 때마다 count 가 이만큼 늘어난다 (2번째 등장 = count + countAdd).
+     * 「버틸수록 거세지는 기습」을 만든다 — 상한이 없으니 maxTotal 이나
+     * 클리어 시간과 함께 봐야 한다.
+     */
+    readonly countAdd?: number;
+    /**
      * 이 규칙이 스폰할 총 마릿수 상한 (생략 = 무제한).
      * 반복 스폰은 상한이 없으면 후반에 무한 누적된다 — 승산이 사라진다(실측).
      */
@@ -533,33 +539,62 @@ export const SYLVARIN_CAMPAIGN: readonly CampaignStage[] = [
      * 지상 부대는 첫 접촉까지 3분 가까이 걸리므로 초반의 판은 하늘에서 갈린다.
      */
     incomeCap: 4, techCap: 2,
-    enemyPreferredUnits: ['p_wraith', 'p_banshee'],
+    // 밴시는 테크 3이라 이 판(techCap 2)에서는 애초에 못 산다 — 망령만 민다
+    enemyPreferredUnits: ['p_wraith'],
+    /*
+     * 적 생산 제한 (거점 phases).
+     *   1~3턴 — 1티어만 (망자병·스켈레톤·시체 사냥개·해골 투척병)
+     *   4턴부터 — 시체 사냥개 / 해골 투척병 / 망령 / 목없는 기사, 이 넷만
+     *
+     * 하늘이 이 판의 답인데 적 공중이 거의 안 나와서 숲올빼미 한 무리로 그냥
+     * 밀렸다. 목록을 좁히고 망령을 선호로 걸어 대공을 상시로 만든다.
+     * 좌표는 적 스폰 지점 그대로 (spawnPos[1]) — 출정 자리는 바뀌지 않는다.
+     */
+    enemyCamps: [{
+      slot: 0, x: 62.5 * 1000, y: 16.2 * 1000,
+      phases: [
+        { fromWave: 1, units: ['p_deadman', 'p_skeleton', 'p_hound', 'p_bone_thrower'] },
+        { fromWave: 4, units: ['p_hound', 'p_bone_thrower', 'p_wraith', 'p_headless_knight'] },
+      ],
+      /*
+       * 4턴 망령은 확정 편입으로 못 박는다 — 돈과 테크에 맡기면 봇이 테크 2를
+       * 늦게 찍어 5~6턴에야 첫 망령이 떴다 (실측). 편성은 매 턴 통째로 다시
+       * 나가므로 이 한 줄이 「턴이 갈수록 두꺼워지는 대공」이 된다.
+       */
+      forcedGrowth: [{ fromWave: 4, units: ['p_wraith'], perWave: 1 }],
+    }],
     spawns: [
       { defId: 'c_dread_gargoyle', label: '공포의 가고일', everySec: 120 },
       /*
-       * 절벽 기습 — 80초마다 우리 언덕 남쪽 벼랑을 기어올라 온다.
+       * 절벽 기습 — 70초마다 「기지 앞 진흙탕」(terrain mud[0], 16.5/-14.1) 옆
+       * 벼랑을 기어올라 온다.
        *
-       * 산길이 워낙 멀어 적 지상 부대는 도착할 때쯤 진흙·덩굴에 다 닳아 있었고,
-       * 넥서스에 흠집도 못 냈다. 그래서 「걸어오는 적」과 별개로 기지 문턱에서
-       * 시작하는 부대를 따로 붙인다 — 하늘로 밀어붙이는 동안에도 집을 비울 수 없다.
+       * 산길이 워낙 멀어 걸어오는 적은 도착할 때쯤 진흙·덩굴에 다 닳아 있었고
+       * 넥서스에 흠집도 못 냈다. 처음엔 언덕 뒤에 세웠는데 그러면 우리 부대가
+       * 이미 출정한 뒤라 아무도 안 마주쳤다 — 출정로 위, 첫 굽이에 세운다.
+       *
+       * countAdd: 등장할 때마다 불어난다. 1회 2/5/5(12기) → 2회 4/8/10(22기)
+       * → 3회 6/11/15(32기) … 오래 끌수록 감당이 안 되게.
        */
-      { defId: 'p_bone_thrower', label: '절벽에서 기어오른다! 해골 투척병·목없는 기사·리치!',
-        everySec: 80, count: 2, atXTile: 37.0, yOffTile: -19.5,
+      { defId: 'p_bone_thrower', label: '절벽에서 기어오른다! 목없는 기사·해골 투척병·시체 사냥개!',
+        everySec: 70, count: 5, countAdd: 3, atXTile: 15.5, yOffTile: -15.0,
         onFirstDialogue: [
-          { who: '아린', text: '대장! 뒤! 벼랑 아래에서… 손이 올라옵니다.' },
+          { who: '아린', text: '대장! 첫 굽이 진흙탕입니다. 벼랑 아래에서… 손이 올라옵니다.' },
           { who: '카엘', text: '기어올라 온다고? 저 절벽을?' },
           { who: '티아', text: '죽은 것들이잖아요. 떨어져도 안 아파요.' },
-          { who: '카엘', text: '…집을 비우지 마라. 하늘은 하늘대로, 문턱은 문턱대로 지킨다.' },
+          { who: '카엘', text: '…나가는 길목이 그대로 싸움터다. 하늘만 보고 있으면 발밑이 끊긴다.' },
         ] },
       { defId: 'p_headless_knight', label: '', quiet: true,
-        everySec: 80, count: 1, atXTile: 36.5, yOffTile: -18.0 },
-      { defId: 'p_lich', label: '', quiet: true,
-        everySec: 80, count: 1, atXTile: 36.5, yOffTile: -20.5 },
+        everySec: 70, count: 2, countAdd: 2, atXTile: 16.5, yOffTile: -13.0 },
+      { defId: 'p_hound', label: '', quiet: true,
+        everySec: 70, count: 5, countAdd: 5, atXTile: 17.5, yOffTile: -14.5 },
     ],
     briefing: [
       { who: '아린', text: '…길이 없습니다. 저건 길이 아니라 미로예요.' },
       { who: '카엘', text: '걸어서 저 위까지 가면?' },
-      { who: '아린', text: '해가 집니다. 두 번 집니다.' },
+      { who: '아린', text: '해가 집니다, 두 번. 게다가 굽이마다 진흙탕이고 그 사이사이가 전부 가시덩굴입니다.' },
+      { who: '카엘', text: '베어 내면서 가면 되지 않나.' },
+      { who: '아린', text: '베는 동안 발이 묶여요. 진흙에 잡히고 가시에 긁히고 — 한 굽이 돌 때마다 조금씩 깎입니다. 저 위에 닿을 때쯤이면 싸우기도 전에 반은 닳아 있을 거예요.' },
       { who: '티아', text: '…그럼 걷지 말죠. 저 위 둥지에 올빼미들이 아직 남아 있어요.' },
       { who: '카엘', text: '태워 줄까요, 그게?' },
       { who: '티아', text: '부탁은 제가 합니다. 대장은 하늘에서 뭐가 날아오는지나 보세요.' },
@@ -592,25 +627,31 @@ export const SYLVARIN_CAMPAIGN: readonly CampaignStage[] = [
      * 확정 편입은 턴이 갈수록 제곱으로 불어난다 (실측: 12분에 465기).
      */
     enemyCamps: [
-      { slot: 0, x: 44.2 * 1000, y: -28 * 1000,
+      { slot: 0, x: 47.5 * 1000, y: -18.5 * 1000,
         waveMoney: [{ fromWave: 4, amount: 150 }, { fromWave: 15, amount: 850 }] },
-      { slot: 1, x: 12.0 * 1000, y: -28 * 1000,
+      { slot: 1, x: 10.0 * 1000, y: -18.5 * 1000,
         waveMoney: [{ fromWave: 4, amount: 150 }, { fromWave: 15, amount: 850 }] },
     ],
     village: {
+      /*
+        * 좌표는 전부 작가 그림(완성.png)에서 직접 잰 값이다 — 집은 스프라이트를
+        * 배율별로 맞춰 본 자리의 발밑, 길목은 통행 마스크가 열린 구간의 한복판.
+        * 그림을 새로 받으면 gen_village2.py 가 찍어 주는 값으로 다시 맞춰야 한다.
+        */
       houses: [
-        { defId: 'c_village_a', xTile: 22.8, yOffTile: 6.2 },
-        { defId: 'c_village_b', xTile: 34.0, yOffTile: 5.4 },
-        { defId: 'c_village_c', xTile: 21.8, yOffTile: 17.2 },
-        { defId: 'c_village_d', xTile: 36.6, yOffTile: 18.0 },
+        { defId: 'c_village_a', xTile: 23.0, yOffTile: 2.4 },
+        { defId: 'c_village_b', xTile: 33.6, yOffTile: 1.0 },
+        { defId: 'c_village_c', xTile: 21.9, yOffTile: 12.3 },
+        { defId: 'c_village_d', xTile: 37.0, yOffTile: 12.6 },
       ],
       loseDeaths: 10,
-      centerXTile: 30.2, centerYOffTile: 13.7,
-      // 6시 길 — 마스크상 남쪽으로 열린 유일한 출구
-      fleeXTile: 35.5, fleeYOffTile: 28.0, fleeRadiusTiles: 2.5,
+      // 광장 한복판의 문양 자리
+      centerXTile: 29.8, centerYOffTile: 3.0,
+      // 6시 길 — 남쪽으로 열린 두 갈래 중 깊은 쪽 (x 34.5~37.5)
+      fleeXTile: 36.0, fleeYOffTile: 18.5, fleeRadiusTiles: 2.5,
       lanes: [
-        { xTile: 44.2, yOffTile: -28, label: '1시 숲길' },
-        { xTile: 12.0, yOffTile: -28, label: '11시 숲길' },
+        { xTile: 47.5, yOffTile: -18.5, label: '1시 숲길' },
+        { xTile: 10.0, yOffTile: -18.5, label: '11시 숲길' },
       ],
       secondLaneWave: 6,
       bothLanesWave: 15,
@@ -620,20 +661,21 @@ export const SYLVARIN_CAMPAIGN: readonly CampaignStage[] = [
         { who: '엘로윈', text: '막지 마라. 늦추기만 해라. 행렬이 먼저다.' },
       ],
       /*
-       * 수비대·집합지는 「마을 입구」 — 숲길이 빈터로 들어오는 목이다.
-       * 집(11시 x22.8 / 1시 x34.0) 사이가 아니라 그 바깥이어야 길을 막는 그림이 된다.
+       * 수비대·집합지는 「마을 입구」 — 숲길이 빈터로 들어오는 목이다 (y -10 줄:
+       * 11시는 x 12~21, 1시는 x 34.5~45 가 열려 있다). 집 사이가 아니라 그
+       * 바깥이어야 길을 막는 그림이 된다.
        */
       garrisons: [
-        { defId: 's_treekeeper', count: 2, xTile: 14.0, yOffTile: -1.5 },
-        { defId: 's_elf_archer', count: 3, xTile: 14.0, yOffTile: -0.3 },
-        { defId: 's_treekeeper', count: 2, xTile: 39.5, yOffTile: -1.0 },
-        { defId: 's_elf_archer', count: 3, xTile: 39.5, yOffTile: 0.2 },
+        { defId: 's_treekeeper', count: 2, xTile: 13.0, yOffTile: -10.0 },
+        { defId: 's_elf_archer', count: 3, xTile: 13.5, yOffTile: -8.8 },
+        { defId: 's_treekeeper', count: 2, xTile: 43.5, yOffTile: -10.0 },
+        { defId: 's_elf_archer', count: 3, xTile: 43.0, yOffTile: -8.8 },
       ],
       rallyPoints: [
-        { xTile: 39.5, yOffTile: -1.0, label: '1시 입구' },
-        { xTile: 14.0, yOffTile: -1.5, label: '11시 입구' },
-        { xTile: 30.2, yOffTile: 13.7, label: '마을 광장' },
-        { xTile: 34.5, yOffTile: 24.0, label: '6시 길목' },
+        { xTile: 43.5, yOffTile: -10.0, label: '1시 입구' },
+        { xTile: 13.0, yOffTile: -10.0, label: '11시 입구' },
+        { xTile: 29.8, yOffTile: 3.0, label: '마을 광장' },
+        { xTile: 36.0, yOffTile: 15.0, label: '6시 길목' },
       ],
       bossWave: 30,
       bossDefId: 'c_kurga',
@@ -653,17 +695,17 @@ export const SYLVARIN_CAMPAIGN: readonly CampaignStage[] = [
        * 쓰러져도 부활 시간을 지켜 다시 온다. 이끌고 오는 부대는 없다.
        */
       { defId: 'c_kael', label: '🛡 숲지기 카엘', atSec: 1, friendly: true,
-        concurrentCap: 1, respawnAfterDeathSec: 110, atXTile: 30.2, yOffTile: 13.7 },
+        concurrentCap: 1, respawnAfterDeathSec: 110, atXTile: 29.8, yOffTile: 3.0 },
       { defId: 'c_villager_adult_m', label: '', everySec: 60, count: 2, friendly: true,
-        atXTile: 30.2, yOffTile: 12.5, quiet: true, untilSec: 1800 },
+        atXTile: 29.4, yOffTile: 2.0, quiet: true, untilSec: 1800 },
       { defId: 'c_villager_adult_f', label: '', everySec: 60, count: 2, friendly: true,
-        atXTile: 30.2, yOffTile: 14.0, quiet: true, untilSec: 1800 },
+        atXTile: 30.4, yOffTile: 3.4, quiet: true, untilSec: 1800 },
       { defId: 'c_villager_child_m', label: '', everySec: 60, count: 2, friendly: true,
-        atXTile: 30.2, yOffTile: 13.0, quiet: true, untilSec: 1800 },
+        atXTile: 29.0, yOffTile: 4.2, quiet: true, untilSec: 1800 },
       { defId: 'c_villager_elder_f', label: '', everySec: 60, count: 2, friendly: true,
-        atXTile: 30.2, yOffTile: 15.0, quiet: true, untilSec: 1800 },
+        atXTile: 30.8, yOffTile: 1.8, quiet: true, untilSec: 1800 },
       { defId: 'c_villager_child_f', label: '', everySec: 60, count: 2, friendly: true,
-        atXTile: 30.2, yOffTile: 13.8, quiet: true, untilSec: 1800 },
+        atXTile: 28.6, yOffTile: 2.6, quiet: true, untilSec: 1800 },
     ],
     briefing: [
       { who: '엘로윈', text: '카엘. 이 마을은 지킬 수 없다. 지켜야 하는 건 마을이 아니라 마을 사람이다.' },

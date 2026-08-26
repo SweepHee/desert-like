@@ -11,3 +11,6 @@ dist/
 desert-like-google-login-keys.json
 *google-login-keys*.json
 client_secret_*.json
+
+# 파이썬 도구 캐시
+__pycache__/

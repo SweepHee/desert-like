@@ -7,7 +7,7 @@
 import { createGame, spawnUnit } from '../game.ts';
 import { stepCombat } from '../battle.ts';
 import { tiles, seconds, TICK_HZ } from '../math.ts';
-import { DEFS, MAPS, unitsOfRace, flowFieldOf, laneCenterY, maskIndexOf } from '../data.ts';
+import { DEFS, MAPS, unitsOfRace, flowFieldOf, maskStepsOf, isWalkable, maskIndexOf } from '../data.ts';
 import type { Entity, Game, RaceId, TeamId } from '../types.ts';
 
 const races: RaceId[] = ['sylvarin', 'pandemonium', 'marionetta', 'sylvarin', 'pandemonium', 'marionetta'];
@@ -1233,23 +1233,113 @@ function unlockSage(g: Game, sage: Entity): void {
 
 {
   /*
-   * 「올빼미 성채」(5스테이지) 지형 계약 — 지상 우회로가 비행 직선의 5배 이상.
+   * 「올빼미 성채」(5스테이지) 지형 계약 — 절벽·언덕·계단 판.
    *
-   * 이 판이 「하늘을 사는 판」인 근거가 전부 이 배수다. 마스크를 손대면 소리 없이
-   * 깨지므로 여기서 잠근다. 모양을 바꾸려면 packages/client/tools/gen_owlkeep_mask.py
-   * 를 고쳐 다시 굽고 이 수치를 확인할 것.
+   * 이 판의 근거가 전부 지형에 있다. 마스크는 작가 지형에서 굽는 것이라
+   * (packages/client/tools/gen_owlkeep2.py) 그림을 고치면 소리 없이 깨진다.
+   * 그래서 여기서 잠근다:
+   *   1) 양쪽 언덕이 지상으로 이어진다 (계단이 끊기면 아무도 못 올라간다)
+   *   2) 지상 우회로가 비행 직선보다 한참 길다
+   *   3) 적 지상 부대가 「우리 언덕」에 실제로 도달한다 (흐름장 목표가 건너편
+   *      산길로 새면 적이 중간에 멈춰 서고 판이 성립하지 않는다)
+   *   4) 진흙길·덩굴길이 전부 걸어다닐 수 있는 자리에 있다
    */
   const m = MAPS['owlkeep']!;
   const fields = flowFieldOf(m);
   ok(!!fields, '올빼미 성채: 흐름장 생성');
-  const sx = m.spawnX[0];
-  const idx = maskIndexOf(m, sx, laneCenterY(m, sx));
-  const cells = idx >= 0 ? (fields?.[0]?.[idx] ?? -1) : -1;
-  ok(cells > 0, '올빼미 성채: 아군 스폰에서 적 넥서스까지 지상 경로가 이어진다');
-  const groundTiles = cells / 2;                  // 마스크는 타일당 2칸
-  const airTiles = (m.nexusX[1] - sx) / tiles(1);
-  ok(groundTiles / airTiles >= 5,
+  /*
+   * 배수는 흐름장 값이 아니라 「걸음 수」로 잰다.
+   * 흐름장은 절벽에 붙지 말라고 벽 근처 칸에 통행 비용을 얹으므로 그 값은
+   * 거리가 아니다 — 그걸 그대로 나누면 배수가 비용만큼 부풀어 검증이 헐거워진다.
+   */
+  const steps = maskStepsOf(m);
+  const sp0 = m.spawnPos![0];
+  const np1 = m.nexusPos![1];
+  const idx = maskIndexOf(m, sp0[0], sp0[1]);
+  const cells = idx >= 0 ? (steps?.[0]?.[idx] ?? -1) : -1;
+  ok(cells > 0, '올빼미 성채: 아군 언덕에서 적 넥서스까지 지상 경로가 이어진다');
+  // 마스크 해상도(타일당 칸 수)는 맵마다 다르다 — 고정값 2 로 나누면 해상도를
+  // 올린 순간 배수가 소리 없이 두 배로 부풀어 검증이 무의미해진다
+  const cellsPerTile = m.mask!.rows / (m.length / tiles(1));
+  const groundTiles = cells / cellsPerTile;
+  const dx = (np1[0] - sp0[0]) / tiles(1);
+  const dy = (np1[1] - sp0[1]) / tiles(1);
+  const airTiles = Math.hypot(dx, dy);
+  ok(groundTiles / airTiles >= 2.2,
     `올빼미 성채: 지상 ${groundTiles.toFixed(0)}타일 / 비행 ${airTiles.toFixed(0)}타일 = ${(groundTiles / airTiles).toFixed(2)}배`);
+
+  // 적 지상 부대가 우리 언덕까지 온다 (절벽을 돌아 계단으로 올라온다)
+  const sp1 = m.spawnPos![1];
+  const idx1 = maskIndexOf(m, sp1[0], sp1[1]);
+  const cells1 = idx1 >= 0 ? (steps?.[1]?.[idx1] ?? -1) : -1;
+  ok(cells1 > 0, '올빼미 성채: 적 언덕에서 우리 넥서스까지 지상 경로가 이어진다');
+  // 우리 넥서스 자리가 그 흐름장의 도착점인지 — 건너편 산길로 새지 않았는가
+  const np0 = m.nexusPos![0];
+  const idxN0 = maskIndexOf(m, np0[0], np0[1]);
+  ok(idxN0 >= 0 && (fields?.[1]?.[idxN0] ?? -1) === 0,
+    '올빼미 성채: 적 흐름장의 목적지가 우리 언덕이다');
+
+  // 지형 해저드 — 진흙 3 · 덩굴 3, 전부 걸을 수 있는 자리
+  const terr = m.terrain ?? [];
+  ok(terr.filter((t) => t.kind === 'mud').length === 3, `올빼미 성채: 진흙길 3곳 (실제 ${terr.filter((t) => t.kind === 'mud').length})`);
+  ok(terr.filter((t) => t.kind === 'vinepath').length === 3, `올빼미 성채: 덩굴길 3곳 (실제 ${terr.filter((t) => t.kind === 'vinepath').length})`);
+  ok(terr.every((t) => isWalkable(m, t.x, t.y)), '올빼미 성채: 지형 해저드가 전부 길 위에 있다');
+}
+
+{
+  /*
+   * 지형 해저드 — 진흙길(둔화) · 덩굴길(둔화 + 초당 6).
+   *
+   * 스킬 장판과 달리 맵에 처음부터 깔려 있고 team 2(중립적대)라 양 진영 모두
+   * 걸린다. 지상 전용이라 비행은 그냥 지나간다 — 「하늘을 사야 하는 이유」를
+   * 지형이 한 번 더 설명하는 장치라서, 여기가 깨지면 판의 의도가 통째로 바뀐다.
+   */
+  const g = createGame({
+    seed: 5,
+    players: [{ race: 'sylvarin' as RaceId, isBot: true, team: 0 as TeamId },
+              { race: 'pandemonium' as RaceId, isBot: true, team: 1 as TeamId }],
+    mapId: 'owlkeep',
+  });
+  g.guardianDown = [true, true];
+  // 넥서스·수호탑을 걷어낸다 — 이 검증은 지형 효과만 본다
+  // (덩굴길 하나가 적 넥서스 사거리 근처라 그냥 두면 넥서스 포격이 섞인다)
+  g.entities = g.entities.filter((e) => e.defId !== 'nexus' && e.defId !== 'tower');
+  const terr = MAPS['owlkeep']!.terrain!;
+  const muds = terr.filter((t) => t.kind === 'mud');
+  const mud = muds[0]!;
+  const mud2 = muds[1]!;   // 두 팀을 다른 진흙에 떼어 놓는다 (붙여 놓으면 서로 때린다)
+  const vine = terr.find((t) => t.kind === 'vinepath')!;
+  ok(g.zones.filter((z) => z.kind === 'mud' || z.kind === 'vinepath').length === terr.length,
+    '지형 해저드: 게임 시작과 함께 맵에 깔린다');
+  ok(g.zones.every((z) => z.kind !== 'mud' && z.kind !== 'vinepath' ? true : z.team === 2),
+    '지형 해저드: 중립(team 2) — 양 진영 모두에게 걸린다');
+
+  // 진흙길: 둔화만, 피해 없음. 양 팀 모두.
+  const a = spawnUnit(g, 's_gouto', 0, mud.x, mud.y);
+  const b = spawnUnit(g, 'p_skeleton', 1, mud2.x, mud2.y);
+  const aHp0 = a.hp, bHp0 = b.hp;
+  for (let t = 0; t < seconds(3); t++) { g.tick++; stepCombat(g); }
+  ok(a.slowedUntil > g.tick - 10, '진흙길: 아군 지상 유닛이 둔화된다');
+  ok(b.slowedUntil > g.tick - 10, '진흙길: 적 지상 유닛도 둔화된다 (중립 지형)');
+  ok(a.hp === aHp0 && b.hp === bHp0, '진흙길: 피해는 없다 (발만 묶는다)');
+
+  // 덩굴길: 둔화 + 지속피해. 비행은 안 걸린다.
+  const g2 = createGame({
+    seed: 5,
+    players: [{ race: 'sylvarin' as RaceId, isBot: true, team: 0 as TeamId },
+              { race: 'pandemonium' as RaceId, isBot: true, team: 1 as TeamId }],
+    mapId: 'owlkeep',
+  });
+  g2.guardianDown = [true, true];
+  g2.entities = g2.entities.filter((e) => e.defId !== 'nexus' && e.defId !== 'tower');
+  const ground = spawnUnit(g2, 's_gouto', 0, vine.x, vine.y);
+  const flyer = spawnUnit(g2, 's_owl', 0, vine.x, vine.y);
+  const gHp0 = ground.hp, fHp0 = flyer.hp;
+  for (let t = 0; t < seconds(3); t++) { g2.tick++; stepCombat(g2); }
+  const lost = gHp0 - ground.hp;
+  ok(lost >= 12 && lost <= 24, `덩굴길: 지상이 초당 6씩 닳는다 (3초에 ${lost})`);
+  ok(ground.slowedUntil > g2.tick - 10, '덩굴길: 지상이 둔화된다');
+  ok(flyer.hp === fHp0, '덩굴길: 비행은 지나가도 멀쩡하다');
 }
 
 if (failed) process.exitCode = 1;

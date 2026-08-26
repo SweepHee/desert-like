@@ -214,6 +214,9 @@ export const ASSET_UNITS: Record<string, string | string[]> = {
   nexus_nest: '/assets/units/nexus_nest.png?v=2',
   // 잿길 (13스테이지) — 아군은 세계수 수정이 선 실바린 본영, 적은 악마 요새
   nexus_forestcamp: '/assets/units/nexus_forestcamp.png',
+  // 올빼미 성채(5): 우리는 올빼미 둥지 요새, 적은 뼈 야영지 — 둘 다 언덕 위
+  nexus_owlnest: '/assets/units/nexus_owlnest.png',
+  nexus_bonecamp: '/assets/units/nexus_bonecamp.png',
   nexus_demon: '/assets/units/nexus_demon.png',
   // 잿불 숲 우측(2팀) — 불에 탄 숲 쪽 진영. 좌측은 기본 그림을 그대로 쓴다.
   nexus_ash: '/assets/units/nexus_ash.png',
@@ -344,6 +347,9 @@ const atk4 = (id: string): string[][] => [[0, 1, 2, 3].map((n) => `/assets/units
 const DIR_SPRITE_UNITS: string[] = [
   'c_evergreen',
   'c_kael',
+  // 마을 주민 — 상하좌우 그림이 다 있다 (없으면 좌우 반전이라 위/아래가 어색하다)
+  'c_villager_child_m', 'c_villager_child_f', 'c_villager_adult_m',
+  'c_villager_adult_f', 'c_villager_elder_m', 'c_villager_elder_f',
   's_gouto', 's_vine_hunter', 's_marmot', 's_druid', 's_mushroom_bomber',
   's_owl', 's_butterfly', 's_thorn_witch', 's_treekeeper', 's_apostle',
   's_treant', 's_marksman', 's_sage', 's_wyvern', 's_unicorn', 's_fairy',
@@ -595,6 +601,15 @@ const WANG_16: Record<number, readonly [number, number]> = {
 const SKIN_SIZE_MUL: Record<string, number> = {
   nexus_forestcamp: 2.1,
   nexus_demon: 1.9,
+  /*
+   * 언덕 상면을 채우되 맵 밖으로 나가지 않는 크기.
+   *
+   * 스프라이트는 바닥 중심 기준으로 위로 자라므로(anchor 0.5,1) 배율이 크면
+   * 맵 위쪽 끝을 뚫는다. 적 언덕은 맵 꼭대기라 여유가 5.8타일뿐이다 —
+   * 1.5 면 높이 약 8타일로 언덕 안에 들어온다 (2.3 은 12.3타일이라 넘쳤다).
+   */
+  nexus_owlnest: 1.5,
+  nexus_bonecamp: 1.5,
 };
 
 interface GroundTheme {
@@ -990,11 +1005,21 @@ export interface Renderer {
   /** 화면 좌표 → 월드 y (FP). 두 갈래 맵에서 출정 레인을 고를 때 쓴다. */
   pickLaneY(screenY: number): number;
   /**
+   * 화면 좌표가 집합지 표식(노란 원) 안인가 — 맞으면 그 칸 번호, 아니면 null.
+   * 표식을 직접 눌러야만 집합지가 바뀌게 하려고 쓴다 (빈 땅은 아무 일도 안 한다).
+   */
+  pickLaneMark(screenX: number, screenY: number): number | null;
+  /**
    * 출정 레인 표시 — 고른 칸(chosenIdx)에 불이 들어온다. null = 표시 안 함.
    * y 가 아니라 번호를 받는다: 「가운데 대기」는 y 가 0 이라, 아직 아무 길도
    * 고르지 않은 상태(deployLaneY 0)와 y 로는 구분되지 않는다.
    */
-  setDeployLanes(lanes: { y: number; label: string; hold?: boolean }[] | null, chosenIdx: number): void;
+  /**
+   * 이 유닛이 사라질 때 시체 연출을 내지 않는다 (마을 주민 대피).
+   * 「죽은 게 아니라 빠져나간 것」이라 쓰러지는 그림이 나오면 안 된다.
+   */
+  quietRemove(id: number): void;
+  setDeployLanes(lanes: { y: number; label: string; hold?: boolean; x?: number }[] | null, chosenIdx: number): void;
   /** 선택 표시 링을 그릴 유닛 id (null = 해제). */
   setSelected(id: number | null): void;
   /** 효과음 재생기 연결 (없으면 무음으로 동작). */
@@ -1398,6 +1423,8 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
   const cloudLayer = new Container();
   const shadows = new Graphics();
   const corpseLayer = new Container();
+  /** 시체 연출 없이 지울 유닛 id (대피한 주민). */
+  const quietIds = new Set<number>();
   const units = new Container();
   units.sortableChildren = true;
   /** 맵 경계 장식 (렌더 전용 — 심 엔티티가 아니라 밸런스 영향 없음). */
@@ -1537,19 +1564,31 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
       if (tex) {
         const sp = new Sprite(tex);
         sp.anchor.set(0.5);
-        const w = worldW();
-        const h = worldH();
+        /*
+         * 그림을 「통행 마스크가 덮는 범위」에 정확히 맞춘다.
+         *
+         * worldW/worldH 는 가장자리 여백(EDGE_MARGIN)과 위아래 패딩까지 포함한
+         * 화면 상자다. 그 상자에 그림을 늘리면 그림 속 길과 실제 걸을 수 있는
+         * 칸이 어긋난다 (올빼미 성채에서 폭이 15% 벌어져, 유닛이 그림상 절벽
+         * 밖을 걸어 다니는 것처럼 보였다).
+         * 마스크는 x 0~length, y -mapHalfH~+mapHalfH 를 덮으므로 거기에 맞춘다.
+         */
+        const boxW = worldW();
+        const halfH = mapHalfH(m);
+        const yTop = sy(-halfH);
+        const boxH = sy(halfH) - yTop;
         if (m.vertical) {
-          // 컨테이너가 -90도 돌아 있으니 그림은 +90도 돌려 화면에서 바로 서게 한다
+          // 컨테이너가 -90도 돌아 있으니 그림은 +90도 돌려 화면에서 바로 세운다.
+          // 회전하면 스프라이트의 가로가 월드 y축, 세로가 월드 x축을 덮는다.
           sp.rotation = Math.PI / 2;
-          sp.width = h;   // 회전 후 화면 가로 = 월드 높이
-          sp.height = w;  // 회전 후 화면 세로 = 월드 길이
+          sp.width = boxH;
+          sp.height = boxW;
         } else {
-          sp.width = w;
-          sp.height = h;
+          sp.width = boxW;
+          sp.height = boxH;
         }
-        sp.x = w / 2;
-        sp.y = h / 2;
+        sp.x = boxW / 2;
+        sp.y = yTop + boxH / 2;
         groundTiles.addChild(sp);
       }
       return;
@@ -2153,7 +2192,7 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
   /** 「정각의 일격」 치명타 표시 — 떠올랐다 사라지는 텍스트 풀. */
   const critTexts: { t: Text; until: number; x: number; y: number; start: number }[] = [];
   /** 출정 레인 표시 (두 갈래 맵). */
-  let deployLanes: { y: number; label: string; hold?: boolean }[] | null = null;
+  let deployLanes: { y: number; label: string; hold?: boolean; x?: number }[] | null = null;
   /** 레인 이름표 — 출정구 옆에 상시 떠 있어 「여길 눌러라」가 읽힌다. */
   const laneLabels: Text[] = [];
   let deployChosenIdx = -1;
@@ -2329,7 +2368,15 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
       const fitH = app.screen.height / sh;
       const fitW = app.screen.width / sw;
       const fit = Math.min(2.4, Math.max(0.35, Math.max(fitH, fitW * 0.9)));
-      zoom = fit * userZoom;
+      /*
+       * 축소 하한 = 「맵 전체가 딱 들어오는」 배율.
+       *
+       * 이보다 더 줄이면 맵은 그대로 다 보이면서 둘레의 빈 배경만 넓어진다
+       * (세로로 긴 맵이라 좌우로 갈색 여백이 크게 남았다). 더 볼 것이 없으므로
+       * 여기서 막는다.
+       */
+      const containZoom = Math.min(app.screen.height / sh, app.screen.width / sw);
+      zoom = Math.max(containZoom, fit * userZoom);
       clampCam();
       world.rotation = -Math.PI / 2;
       world.scale.set(zoom);
@@ -2499,6 +2546,12 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
     zonesGr.clear();
     const zoneSeen = new Set<number>();
     for (const z of g.zones) {
+      /*
+       * 지형 해저드(진흙길·덩굴길)는 그림을 그리지 않는다.
+       * 작가가 지형 배경에 이미 그려 넣은 자리라, 여기서 데칼·타원을 또 얹으면
+       * 그림 위에 색판이 덧칠된다. 효과(둔화·지속피해)는 심에서 그대로 돈다.
+       */
+      if (z.kind === 'mud' || z.kind === 'vinepath') continue;
       const remain = z.untilTick - g.tick;
       if (remain <= 0) continue;
       // 생성 직후 0.3초 확대 등장, 만료 0.5초 전부터 페이드아웃 + 은은한 맥동
@@ -2626,21 +2679,28 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
         // 예외: 둥지 맵의 아군 넥서스는 「둥지」 그림 (지켜야 할 대상이 한눈에 보이게)
         const autoSkin = curMap?.id === 'toybox' ? 'toy' : null;
         const skin = enemySkin ?? autoSkin;
-        const toyKey = curMap?.id === 'nest' && e.team === 0 && e.defId === 'nexus'
+        const toyKey = curMap?.id === 'owlkeep' && e.defId === 'nexus'
+          // 올빼미 성채: 우리는 올빼미 둥지, 적은 뼈 야영지
+          ? (e.team === 0 ? 'nexus_owlnest' : 'nexus_bonecamp')
+          : curMap?.id === 'nest' && e.team === 0 && e.defId === 'nexus'
           ? 'nexus_nest'
           : curMap?.id === 'greatroot' && e.defId === 'nexus'
             // 걸어가는 숲: 우리는 엘프 야영지, 적은 언덕 위 악마 요새
             ? (e.team === 0 ? 'nexus_elfcamp' : 'nexus_demon')
             : curMap?.id === 'ashroad' && e.defId === 'nexus'
               ? (e.team === 0 ? 'nexus_forestcamp' : 'nexus_demon')
+            /*
+             * 적(팀1) 기지 스킨. 캠페인이 명시한 enemySkin 이 맵 자동 규칙보다 우선이다 —
+             * 예전엔 잿불 숲 규칙이 먼저 걸려 1막에 'bone' 을 지정해도 무시됐다.
+             */
+            : skin && e.team === 1 && (e.defId === 'tower' || e.defId === 'nexus')
+              ? `${e.defId}_${skin}`
             // 잿불 숲: 맵 절반을 기준으로 왼쪽은 살아 있는 숲, 오른쪽은 불에 탄 숲이다.
             // 양쪽 기지가 같은 그림이면 어느 쪽이 내 진영인지 한눈에 안 들어와서,
             // 오른쪽만 잿빛으로 갈아 끼운다 (왼쪽은 기본 그림 유지).
             : curMap?.id === 'plains' && e.team === 1
               && (e.defId === 'nexus' || e.defId === 'tower')
-              ? `${e.defId}_ash`
-            : skin && e.team === 1 && (e.defId === 'tower' || e.defId === 'nexus')
-              ? `${e.defId}_${skin}` : undefined;
+              ? `${e.defId}_ash` : undefined;
         if (toyKey && assetTex.has(toyKey)) skinnedStructures.add(e.id);
         const variants = (toyKey ? assetTex.get(toyKey) : undefined) ?? assetTex.get(e.defId);
         // 변형은 유닛 id 로 결정론적 배정 (엘프 궁수 여/남 50:50 등)
@@ -3608,6 +3668,18 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
     // ── 사망 처리: 사라진 유닛 → 시체 연출 ──
     for (const [id, sp] of sprites) {
       if (seen.has(id)) continue;
+      // 대피한 주민: 소리도 시체도 없이 그냥 사라진다
+      if (quietIds.has(id)) {
+        quietIds.delete(id);
+        sprites.delete(id);
+        spriteTeam.delete(id);
+        spriteDefId.delete(id);
+        prevPos.delete(id);
+        unitFx.delete(id);
+        units.removeChild(sp);
+        sp.destroy();
+        continue;
+      }
       const deadDefId = spriteDefId.get(id);
       // 구조물 파괴는 별도 이벤트(towerDown)로 처리하므로 여기선 유닛만
       if (deadDefId && DEFS[deadDefId]?.tier !== 'structure') {
@@ -3965,12 +4037,18 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
     if (deployLanes) {
       // 출정 표식: 굽은 길 위에 띠를 긋는 건 의미가 없다 (숲에 걸린다).
       // 대신 출정구에 큼지막한 관문 표식을 하나씩 세우고, 고른 쪽에 불을 켠다.
-      const gx = sx(g.map.spawnX[0]);
+      /*
+       * 출정 레인은 x 가 없어 출정구 한 줄에 나란히 서지만, 집합지(마을 방어전)는
+       * 자기 x 를 들고 온다. 예전엔 전부 spawnX[0] 에 그려서 「1시 입구」와
+       * 「11시 입구」 표식이 마을 한복판에 겹쳐 있었다.
+       */
+      const laneX0 = sx(g.map.spawnX[0]);
       const pulse = 0.5 + 0.5 * Math.sin(now * 0.004);
       for (let li = 0; li < deployLanes.length; li++) {
         const lane = deployLanes[li]!;
         const chosen = li === deployChosenIdx;
-        const ly = sy(lane.y);
+        const gx = lane.x !== undefined ? sx(lane.x) : laneX0;
+        const ly = sy(lane.x !== undefined ? laneCenterY(g.map, lane.x) + lane.y : lane.y);
         const R = 34;
         // 바닥에 눕는 원. 세로 맵은 월드가 90도 돌아 있어 축을 바꿔야 눕는다.
         const vertM = curMap.vertical;
@@ -4252,6 +4330,27 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
       const w = curMap.vertical ? (screenY - world.x) / zoom : (screenY - world.y) / zoom;
       return worldYToFP(w);
     },
+    pickLaneMark(screenX, screenY) {
+      // 세로 맵(14 출정 경로)은 월드가 90도 돌아 있어 이 판정을 쓰지 않는다 —
+      // 거기선 예전처럼 빈 땅을 눌러 길을 고른다.
+      if (!deployLanes || curMap.vertical) return null;
+      const wx = (screenX - world.x) / zoom;
+      const wy = (screenY - world.y) / zoom;
+      const R = 34;
+      // 그릴 때 쓰는 반지름과 같게. 누르기 쉽도록 조금만 넉넉히 잡는다.
+      const rx = R * 1.2;
+      const ry = R * 0.55 * 1.35;
+      for (let i = 0; i < deployLanes.length; i++) {
+        const lane = deployLanes[i]!;
+        const gx = lane.x !== undefined ? sx(lane.x) : sx(curMap.spawnX[0]);
+        const ly = sy(lane.x !== undefined ? laneCenterY(curMap, lane.x) + lane.y : lane.y);
+        const dx = (wx - gx) / rx;
+        const dy = (wy - ly) / ry;
+        if (dx * dx + dy * dy <= 1) return i;
+      }
+      return null;
+    },
+    quietRemove(id) { quietIds.add(id); },
     setDeployLanes(lanes, chosenIdx) {
       deployLanes = lanes;
       deployChosenIdx = chosenIdx;
@@ -4283,6 +4382,14 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
 }
 
 function drawGround(gr: Graphics, tiled = false): void {
+  /*
+   * 손그림 지형(bgImage) 맵은 바닥을 아무것도 덧그리지 않는다.
+   *
+   * 아래의 진영 바닥 틴트와 중앙선은 코드 지형(모래 체커) 시절의 안내선이다.
+   * 작가가 절벽·언덕·계단까지 그려 넣은 그림 위에 얹으면 맵 한복판을 가로지르는
+   * 밝은 줄이 생겨 지형이 잘려 보인다.
+   */
+  if (curMap.bgImage) return;
   gr.clear();
   const m = curMap;
   const tilesX = m.length / FP;

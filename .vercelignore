@@ -3,3 +3,21 @@ node_modules
 packages/*/node_modules
 packages/client/dist
 docs
+
+# 비밀 — .vercelignore 가 있으면 Vercel 은 .gitignore 를 보지 않는다.
+# 여기 다시 적지 않으면 구글 OAuth 키(client_secret 포함)가 빌드 소스에 딸려 올라간다.
+*google-login-keys*.json
+client_secret_*.json
+.env
+.env.*
+
+# 작업 원본 (AI 생성 재료·목업) — 게임 실행에 안 쓰이는데 90MB 가 넘는다.
+# 반드시 앞에 / 를 붙여 루트만 걸리게 한다 — 안 그러면 하위 경로에서도 매칭돼
+# packages/client/public/assets 의 게임 그림까지 통째로 빠진다.
+/13round
+/13라운드타일셋폴더
+/14라운드
+/세계수의축복
+/암살자모델링후보
+/언덕표시스프라이트
+/*.png

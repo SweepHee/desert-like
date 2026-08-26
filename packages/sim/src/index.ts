@@ -6,7 +6,7 @@ export {
   BOONS, BOONS_BY_UNIT, applyBoons, applyMods,
   unitsOfRace, incomeUpgradeCost, techOfTier, techOfUnit, techUpCost,
   upgradeById, upgradesOfUnit, effectiveDef,
-  laneCenterY, clampLaneY, laneHalfWAt, mapHalfH, isWalkable, flowStep, flowFieldOf, flowStepTo,
+  laneCenterY, clampLaneY, laneHalfWAt, mapHalfH, isWalkable, flowStep, flowFieldOf, maskStepsOf, flowStepTo,
   type MapDef, type UnitUpgrade, type UpgradeMods, type UnitBoon,
 } from './data.ts';
 export {

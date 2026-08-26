@@ -4,12 +4,13 @@
 import { stepCombat } from './battle.ts';
 import {
   DEFS, DEFAULT_MAP, GUARDIAN_OF, MAP, MAPS, applyBoons, clampLaneY, effectiveDef, techOfUnit,
-  incomeUpgradeCost, laneCenterY, techOfTier, techUpCost,
+  incomeUpgradeCost, isWalkable, laneCenterY, maskCellCenter, maskIndexOf, techOfTier, techUpCost,
   upgradeById, upgradesOfUnit, unitsOfRace,
 } from './data.ts';
-import { clamp, idiv, tiles } from './math.ts';
+import { FP, clamp, idiv, tiles } from './math.ts';
 import { createRng, nextChance, nextInt, nextRange } from './rng.ts';
 import { isCombatTag } from './types.ts';
+import type { MapDef } from './data.ts';
 import type { BotStyle, CombatTeam, EnemyCamp, Entity, EntityDef, Game, GameConfig, HeroPerks, PlayerState, TeamId } from './types.ts';
 
 /** 테스트/밸런스 도구용 직접 스폰. 게임 로직은 deployWave 를 쓴다. */
@@ -38,6 +39,8 @@ function spawnEntity(g: Game, defId: string, team: CombatTeam, owner: number, x:
     targetId: -1,
     lastAttackerId: -1,
     slowedUntil: 0,
+    homeX: -1,
+    homeY: -1,
     dotUntil: 0,
     dotDps: 0,
     rootedUntil: 0,
@@ -162,6 +165,10 @@ export function createGame(cfg: GameConfig): Game {
     mercCaptureRequired: cfg.mercCaptureRequired ?? false,
     holdLineX: cfg.holdLineX ?? 0,
     rallyX: 0,
+    foeGoalX: 0,
+    foeGoalY: 0,
+    fleeX: 0,
+    fleeY: 0,
     rallyY: 0,
     enemyHoldLineX: 0,
     defendNexus: cfg.defendNexus ?? false,
@@ -207,8 +214,49 @@ export function createGame(cfg: GameConfig): Game {
     over: null,
   };
   for (const team of [0, 1] as const) {
-    spawnEntity(g, 'nexus', team, -1, map.nexusX[team], laneCenterY(map, map.nexusX[team]));
-    spawnEntity(g, 'tower', team, -1, map.towerX[team], laneCenterY(map, map.towerX[team]));
+    // 손그림 지형 맵은 진영이 코리도어 한복판이 아니라 구석 언덕 위에 있다 (nexusPos)
+    const np = map.nexusPos?.[team];
+    spawnEntity(g, 'nexus', team, -1,
+      np ? np[0] : map.nexusX[team],
+      np ? np[1] : laneCenterY(map, map.nexusX[team]));
+    if (!cfg.noTowers) {
+      spawnEntity(g, 'tower', team, -1, map.towerX[team], laneCenterY(map, map.towerX[team]));
+    }
+  }
+  /*
+   * 지형 해저드 (진흙길·덩굴길) — 맵에 처음부터 깔린 장판.
+   *
+   * team 2(중립적대)로 깔면 장판 판정이 `e.team !== z.team` 이므로 양 진영
+   * 모두가 걸린다. untilTick 은 사실상 무한 — 지형이라 사라지지 않는다.
+   */
+  if (map.terrain) {
+    for (const t of map.terrain) {
+      g.zones.push({
+        id: g.nextZoneId++,
+        team: 2,
+        kind: t.kind,
+        x: t.x,
+        y: t.y,
+        radius: t.radius,
+        untilTick: Number.MAX_SAFE_INTEGER,
+        followId: -1,
+        dpsOverride: 0,
+      });
+    }
+  }
+  /*
+   * 넥서스 방어력 오버라이드 (캠페인 스테이지 전용).
+   *
+   * 기본 넥서스는 방어 28 이라 공중 유닛의 평타가 1 로 잘린다. 「하늘로만
+   * 갈 수 있는 판」(5 올빼미 성채)에서는 그 넥서스를 깰 방법이 아예 없어지므로
+   * 방어력만 낮춘 판본을 쓴다. defId 는 그대로 'nexus' — 승패 판정이 defId 로
+   * 구조물을 찾기 때문에 별도 defId 로 갈아끼우면 게임이 끝나지 않는다.
+   */
+  if (cfg.nexusArmor !== undefined) {
+    for (const e of g.entities) {
+      if (e.defId !== 'nexus') continue;
+      e.defOv = { ...DEFS['nexus']!, armor: cfg.nexusArmor };
+    }
   }
   // 영웅 특성: 시작 자금 (사람 플레이어에게만)
   if (g.heroPerks) {
@@ -453,6 +501,52 @@ export function buyIncomeUpgrade(g: Game, playerIdx: number): boolean {
 // ── 출정 ──────────────────────────────────────────────────────────────────
 
 /** 부대 구성을 진형으로 전개. 사거리 짧은 유닛이 앞열. */
+/**
+ * 마스크 맵에서 「이 근처의 빈 길 칸」 하나. 없으면 null.
+ *
+ * 출정 대형은 격자를 모른다. 좁은 숲길 거점(6 자정의 마을 1시 입구)에서는
+ * 뒷열이 통째로 벽에 박혔고, clampLaneY 가 그걸 전부 같은 몇 칸으로 몰아넣어
+ * 열 몇 기가 한 자리에 겹쳐 섰다 — 서로 밀어내느라 길목이 그대로 막혔다.
+ * 벽에 걸리는 자리는 대형을 접고 길을 따라 퍼뜨린다.
+ *
+ * 결정론: 반경 오름차순 → 행 → 열 고정 순회. 난수를 쓰지 않는다.
+ */
+function freeCellNear(m: MapDef, x: number, y: number, taken: number[]): { x: number; y: number } | null {
+  const mk = m.mask;
+  if (!mk) return null;
+  const here = maskIndexOf(m, x, y);
+  if (here < 0) return null;
+  const r0 = (here / mk.cols) | 0;
+  const c0 = here - r0 * mk.cols;
+  // 서로 밀어내지 않을 최소 간격 (칸) — 0.75타일
+  const cellsPerTile = idiv(mk.rows * FP, m.length);
+  const gap = Math.max(1, idiv(cellsPerTile * 3, 4));
+  for (let rad = 0; rad <= 48; rad++) {
+    for (let dr = -rad; dr <= rad; dr++) {
+      for (let dc = -rad; dc <= rad; dc++) {
+        if (rad > 0 && dr !== -rad && dr !== rad && dc !== -rad && dc !== rad) continue;
+        const r = r0 + dr;
+        const c = c0 + dc;
+        if (r < 0 || r >= mk.rows || c < 0 || c >= mk.cols) continue;
+        const i = r * mk.cols + c;
+        if (mk.data.charCodeAt(i) !== 46) continue;
+        let clash = false;
+        for (const t of taken) {
+          const tr = (t / mk.cols) | 0;
+          const tc = t - tr * mk.cols;
+          const dr2 = tr > r ? tr - r : r - tr;
+          const dc2 = tc > c ? tc - c : c - tc;
+          if (dr2 < gap && dc2 < gap) { clash = true; break; }
+        }
+        if (clash) continue;
+        taken.push(i);
+        return maskCellCenter(m, i);
+      }
+    }
+  }
+  return null;
+}
+
 function deployWave(g: Game, p: PlayerState): void {
   const list: EntityDef[] = [];
   for (const d of unitsOfRace(p.race)) {
@@ -474,7 +568,7 @@ function deployWave(g: Game, p: PlayerState): void {
   const colGap = tiles(0.7);
   const rowGap = tiles(0.75);
   const m = g.map;
-  let baseX = m.spawnX[p.team];
+  let baseX = m.spawnPos?.[p.team]?.[0] ?? m.spawnX[p.team];
   // 아군 봇 출정 위치 오버라이드 (앨리스 군단 — 위 갈래에서 내려온다)
   const allyOv = p.team === 0 && p.isBot ? g.allyDeploy : null;
   if (allyOv) baseX = allyOv.x;
@@ -487,19 +581,36 @@ function deployWave(g: Game, p: PlayerState): void {
   const slotY = idiv((2 * p.slot - (n - 1)) * m.halfW, n);
   // 두 갈래 맵: 사람 플레이어는 고른 레인에서 출정한다 (땅을 눌러 바꾼다)
   const laneOv = p.team === 0 && !p.isBot && g.deployLaneY !== 0 ? g.deployLaneY : 0;
+  const spawnOv = m.spawnPos?.[p.team];
   const baseY = campHere?.y !== undefined ? campHere.y
     : allyOv ? allyOv.y
+    : spawnOv ? spawnOv[1] + (laneOv !== 0 ? laneOv : slotY)
     : laneCenterY(m, baseX) + (laneOv !== 0 ? laneOv : slotY);
   const dir = p.team === 0 ? -1 : 1; // 후열이 자기 진영 쪽으로
 
+  // 마스크 맵: 대형이 벽에 걸린 자리를 길 위로 퍼뜨릴 때 이미 쓴 칸을 기억한다
+  const taken: number[] = [];
   for (let i = 0; i < list.length; i++) {
     const d = list[i]!;
     const col = Math.floor(i / perCol);
     const row = i % perCol;
     const jx = nextRange(g.rng, -150, 150);
     const jy = nextRange(g.rng, -150, 150);
-    const x = clamp(baseX + dir * col * colGap + jx, 0, m.length);
-    const y = clampLaneY(m, x, baseY + (row * rowGap - Math.floor(((perCol - 1) * rowGap) / 2)) + jy);
+    let x = clamp(baseX + dir * col * colGap + jx, 0, m.length);
+    const idealY = baseY + (row * rowGap - Math.floor(((perCol - 1) * rowGap) / 2)) + jy;
+    // 대형 자리가 벽이면 거점 둘레의 빈 길 칸으로 (좁은 숲길에서 겹쳐 서는 걸 막는다)
+    const spot = m.mask && !isWalkable(m, x, idealY) ? freeCellNear(m, baseX, baseY, taken) : null;
+    let y: number;
+    if (spot) {
+      x = spot.x;
+      y = spot.y;
+    } else {
+      y = clampLaneY(m, x, idealY);
+      if (m.mask) {
+        const cell = maskIndexOf(m, x, y);
+        if (cell >= 0) taken.push(cell);
+      }
+    }
     let ov = effectiveDef(d.id, p.upgrades);
     // 캠페인 유닛 강화 (사람 플레이어의 유닛만)
     if (!p.isBot && g.unitBoons.length > 0) {

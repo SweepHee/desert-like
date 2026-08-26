@@ -1025,6 +1025,8 @@ function spawnBattleEntity(g: Game, defId: string, team: CombatTeam, owner: numb
     targetId: -1,
     lastAttackerId: -1,
     slowedUntil: 0,
+    homeX: -1,
+    homeY: -1,
     dotUntil: 0,
     dotDps: 0,
     rootedUntil: 0,
@@ -1749,12 +1751,33 @@ export function stepCombat(g: Game): void {
      * 맵 밖으로 내보내는 것과 세는 것은 캠페인 쪽 몫.
      */
     if (d.flees) {
+      const fx = g.fleeX > 0 ? g.fleeX : 0;
+      const fy = g.fleeX > 0 ? g.fleeY : laneCenterY(g.map, 0);
       if (g.map.mask && !d.flying) {
-        const cell = flowStepTo(g.map, 0, laneCenterY(g.map, 0), e.x, e.y);
+        const cell = flowStepTo(g.map, fx, fy, e.x, e.y);
         if (cell) moveToward(g, e, d, cell.x, cell.y, slowed);
-        else moveToward(g, e, d, 0, laneCenterY(g.map, 0), slowed);
+        else moveToward(g, e, d, fx, fy, slowed);
       } else {
-        moveToward(g, e, d, 0, laneCenterY(g.map, 0), slowed);
+        moveToward(g, e, d, fx, fy, slowed);
+      }
+      continue;
+    }
+    /*
+     * 마을 수비대 — 자기 자리를 지킨다.
+     *
+     * 진군하지 않고, 사거리 안 적과 싸우다 밀려나면 주둔지로 되돌아온다.
+     * 플레이어의 집합지 지정에도 따라가지 않는다 (내 부대가 아니라 마을의 파수다).
+     */
+    if (e.homeX >= 0) {
+      const back = tiles(2);
+      if (dist2(e.x, e.y, e.homeX, e.homeY) > back * back) {
+        if (g.map.mask && !d.flying) {
+          const cell = flowStepTo(g.map, e.homeX, e.homeY, e.x, e.y);
+          if (cell) moveToward(g, e, d, cell.x, cell.y, slowed);
+          else moveToward(g, e, d, e.homeX, e.homeY, slowed);
+        } else {
+          moveToward(g, e, d, e.homeX, e.homeY, slowed);
+        }
       }
       continue;
     }
@@ -1764,19 +1787,31 @@ export function stepCombat(g: Game): void {
     const foe = enemyOf(e.team);
     let nexusX = g.guardianDown[foe] ? m.nexusX[foe] : m.towerX[foe];
     const dir = e.team === 0 ? 1 : -1;
+    /*
+     * 「전선」이 걸린 판인가 — 수호탑 보호막·상점 점령·호위전 홀드라인.
+     *
+     * 전선이 있으면 그 x 를 넘어 진격하면 안 되므로 목표 x 를 잘라 낸다.
+     * 반대로 전선이 없으면 자르면 안 된다: 굽이길 맵(5 올빼미 성채)은 길이
+     * 진행축을 거슬러 내려갔다 다시 올라오므로, x 를 자르면 부대가 내려가야 할
+     * 굽이에서 그대로 멈춰 선다.
+     */
+    let frontier = !g.guardianDown[foe];
     // 마몬의 상점 (점령제): 우리 팀 소유가 아니면 상점을 지나 진격하지 않는다 —
     // 점령이 먼저다. 부대가 상점 앞에 멈춰 서고, 단독 점유 10초로 깃발을 꽂는다.
     if (g.mercCaptureRequired && g.mercOwner !== e.team) {
       const shopX = idiv(m.length, 2);
       nexusX = dir > 0 ? Math.min(nexusX, shopX) : Math.max(nexusX, shopX);
+      frontier = true;
     }
     // 디펜스전 (둥지 방어): 팀 0 부대는 수비선 너머로 진격하지 않는다
     if (g.holdLineX > 0 && e.team === 0) {
       nexusX = Math.min(nexusX, g.holdLineX);
+      frontier = true;
     }
     // 호위전: 적(팀1)은 현재 다툼 중인 거점에 멈춰 서서 점거한다
     if (g.enemyHoldLineX > 0 && e.team === 1) {
       nexusX = Math.max(nexusX, g.enemyHoldLineX);
+      frontier = true;
     }
     // 수비 모드: 진군 대신 — 위협이 있으면 그 위치로 마중, 없으면 둥지 주변 대기
     if (g.defendNexus && e.team === 0) {
@@ -1792,6 +1827,14 @@ export function stepCombat(g: Game): void {
       }
       continue;
     }
+    /*
+     * 목표 y. 보통은 코리도어 한가운데지만, 진영이 폭 구석의 언덕 위에 있는
+     * 맵(nexusPos)에서는 그 실제 자리를 쓴다. 레인중앙을 쓰면 목표가 늪
+     * 한복판이 되어 비행 유닛이 허공에 멈춰 서고, 지상은 도착 판정을 못 한다.
+     * 전선이 걸려 목표 x 가 잘린 경우엔 그 x 의 레인중앙이 맞다.
+     */
+    const npos = m.nexusPos?.[foe];
+    const goalY = (!frontier && npos) ? npos[1] : laneCenterY(m, nexusX);
     const distToNexus = dir > 0 ? nexusX - e.x : e.x - nexusX;
     // 격자 마스크 지형: 흐름장이 알려주는 다음 칸으로 간다.
     // 중앙선을 따라가면 굽은 길에서 벽을 향해 걷다 끼어 버린다 (실측: 중앙선
@@ -1812,10 +1855,27 @@ export function stepCombat(g: Game): void {
       else moveToward(g, e, d, rx, ry, slowed); // 거점 칸에 닿았다 — 지점으로 모인다
       continue;
     }
+    /*
+     * 적이 노리는 지점이 따로 정해진 판 (마을 방어전): 넥서스가 없으므로
+     * 「맵 서쪽 끝」이 아니라 마을 한복판을 향해 온다. 도착하면 그 자리에서
+     * 교전하며 눌러앉는다 (더 갈 곳이 없다).
+     */
+    if (g.foeGoalX > 0 && e.team === 1) {
+      const gx = g.foeGoalX;
+      const gy = g.foeGoalY;
+      if (d.flying || !g.map.mask) {
+        moveToward(g, e, d, gx, gy, slowed);
+      } else {
+        const cell = flowStepTo(g.map, gx, gy, e.x, e.y);
+        if (cell) moveToward(g, e, d, cell.x, cell.y, slowed);
+        else moveToward(g, e, d, gx, gy, slowed);
+      }
+      continue;
+    }
     if (g.map.mask && d.flying) {
       // 비행은 지형을 무시하고 길 위를 그대로 가로질러 난다 (강·숲을 넘는다).
       // 목표 x 는 nexusX — 전선이 걸려 있으면 거기서 멈춘다.
-      moveToward(g, e, d, nexusX, laneCenterY(g.map, nexusX), slowed);
+      moveToward(g, e, d, nexusX, goalY, slowed);
       continue;
     }
     if (g.map.mask) {
@@ -1826,15 +1886,16 @@ export function stepCombat(g: Game): void {
       if (nextCell) {
         // 전선 너머로는 목표 x 를 잘라 낸다. 넘어가 있으면 목표가 뒤가 되어
         // 다시 전선으로 물러난다 (겹침에 밀려 조금씩 앞으로 새는 것도 이걸로 잡힌다).
-        const tx = dir > 0
-          ? (nextCell.x < nexusX ? nextCell.x : nexusX)
-          : (nextCell.x > nexusX ? nextCell.x : nexusX);
+        const tx = !frontier ? nextCell.x
+          : dir > 0
+            ? (nextCell.x < nexusX ? nextCell.x : nexusX)
+            : (nextCell.x > nexusX ? nextCell.x : nexusX);
         moveToward(g, e, d, tx, nextCell.y, slowed);
       } else {
         // 목적지 줄에 닿았다 — 이제 넥서스 자리로 곧장 모인다.
         // 예전엔 y 를 e.y 로 뒀는데, 흐름장 목적지가 「줄」이라 도착한 폭 그대로
         // 멈춰 서서 넥서스 옆에 늘어서기만 하고 끝내 치러 오지 않았다.
-        moveToward(g, e, d, nexusX, laneCenterY(g.map, nexusX), slowed);
+        moveToward(g, e, d, nexusX, goalY, slowed);
       }
       continue;
     }

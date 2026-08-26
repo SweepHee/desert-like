@@ -213,8 +213,21 @@ function attachCameraInput(canvas: HTMLCanvasElement): void {
     if (drag && dragDist < 6 && renderer && game) {
       const rect = canvas.getBoundingClientRect();
       const hit = renderer.pick(game, e.clientX - rect.left, e.clientY - rect.top);
-      // 두 갈래 맵: 빈 땅을 누르면 그쪽 길로 출정 방향을 바꾼다 (유닛을 눌렀으면 선택)
-      if (hit === null && campaignLanes) {
+      /*
+       * 두 갈래 맵: 빈 땅을 누르면 그쪽 길로 출정 방향을 바꾼다 (유닛을 눌렀으면 선택).
+       *
+       * 단 집합지(x 를 가진 칸 — 마을 방어전)는 제외한다. 이 판정은 y 만 보고
+       * 가장 가까운 칸을 고르는데, 「1시 입구」와 「11시 입구」는 y 가 0.5타일밖에
+       * 차이 나지 않아 땅을 아무 데나 눌러도 둘 사이를 오갔다. 집합지는 위쪽
+       * 칸을 눌러서만 바꾼다.
+       */
+      // 집합지 표식(노란 원)을 직접 눌렀으면 그 자리로 모은다 — 빈 땅은 무시
+      const markIdx = hit === null && campaignLanes && campaignLanes[0]?.x !== undefined
+        ? renderer.pickLaneMark(e.clientX - rect.left, e.clientY - rect.top)
+        : null;
+      if (markIdx !== null) {
+        if (markIdx !== currentLaneIdx()) chooseLaneAt(markIdx);
+      } else if (hit === null && campaignLanes && campaignLanes[0]?.x === undefined) {
         // 세로 맵은 레인이 화면 가로 방향이라 x 를 넘긴다
         const vertical = !!game.map.vertical;
         const wy = renderer.pickLaneY(vertical ? e.clientX - rect.left : e.clientY - rect.top);
@@ -597,7 +610,13 @@ let campaignSpawnNext: number[] = [];
 /** 이번 스테이지에서 막힌 유닛 (전역 잠금 − 스테이지별 해제). */
 let campaignDenied: readonly string[] = [];
 /** 두 갈래 맵의 출정 레인 후보 (없으면 레인 선택 UI 를 안 띄운다). */
-let campaignLanes: { y: number; label: string; hold?: boolean }[] | null = null;
+/*
+ * 상단 칸에 뜨는 선택지.
+ *  · x 없음 = 출정 레인 (14 두 갈래 숲길) — 어디서 나올지를 고른다
+ *  · x 있음 = 집합지 (6 자정의 마을) — 나온 부대가 어디로 모일지를 고른다
+ * 둘 다 같은 칸·같은 조작을 쓴다.
+ */
+let campaignLanes: { y: number; label: string; hold?: boolean; x?: number }[] | null = null;
 /** true = 판이 열릴 때 「가운데 대기」로 시작한다 (14라운드). */
 let campaignStartHold = false;
 // ── 영웅 출정 (14라운드~) ──
@@ -735,6 +754,51 @@ let campaignAlertText = '';
 let villageDeaths = 0;
 let villageEscaped = 0;
 const villageSeen = new Map<number, string>();
+/** 마지막으로 숲길을 정한 턴 (-1 = 아직). */
+let villageWave = -1;
+/** 두 번째 숲길 경고 대사를 이미 띄웠는가. */
+let villageWarned = false;
+/** 등장한 쿠르가의 엔티티 id (-1 = 아직). */
+let villageBossId = -1;
+
+/**
+ * 「turn 턴에」 어느 숲길이 열리는가.
+ *
+ * 두 번째 길(11시)이 열리기 전에는 첫 길만 쓴다. 열리는 턴(secondLaneWave)에는
+ * 곧바로 양쪽에서 들이치고, 그 뒤로는 턴을 번갈아 한쪽씩 오다가 6의 배수 턴마다
+ * 다시 양쪽이 열린다. bothLanesWave 부터는 번갈아가 없다 — 매 턴 양쪽이다.
+ * 「어느 쪽을 비워 둘 것인가」가 매 턴의 선택이 되게 하는 장치다.
+ */
+function villageLanesFor(vg: NonNullable<CampaignStage['village']>, turn: number): number[] {
+  if (vg.lanes.length < 2 || turn < vg.secondLaneWave) return [0];
+  if (turn >= vg.bothLanesWave) return [0, 1];
+  if (turn % 6 === 0) return [0, 1];
+  return [turn % 2 === 0 ? 1 : 0];
+}
+
+/**
+ * 적 출정 자리를 「다음에 나올 부대」의 숲길로 옮긴다.
+ *
+ * 적 플레이어는 둘(slot 0·1)이고 각자 enemyCamps 자리에서 출정한다. 양쪽이
+ * 열리는 턴에는 슬롯마다 다른 입구를 줘서 병력이 절반씩 갈라지고, 한쪽만
+ * 열리는 턴에는 두 슬롯이 같은 길로 쏟아진다 — 그때는 길을 따라 조금 물려
+ * 세운다 (같은 점에 겹쳐 두면 좁은 숲길에서 서로 밀며 통째로 막혔다).
+ *
+ * turn 은 「이 자리에서 나올 부대가 화면에 몇 턴으로 뜨는가」다. 출정은 턴이
+ * 넘어가는 그 틱에 일어나므로, 지금 waveIndex 가 N 이면 다음 출정은 N+1 턴이다.
+ */
+function applyVillageLanes(vg: NonNullable<CampaignStage['village']>, turn: number): void {
+  if (!game) return;
+  const open = villageLanesFor(vg, turn);
+  for (const camp of game.enemyCamps) {
+    const lane = vg.lanes[open[camp.slot % open.length]!]!;
+    const lx = Math.floor(lane.xTile * FP);
+    const stack = open.length === 1 ? camp.slot * 3.2 : 0;
+    const c = camp as { x: number; y: number };
+    c.x = lx;
+    c.y = laneCenterY(game.map, lx) + Math.floor((lane.yOffTile + stack) * FP);
+  }
+}
 let campaignWarcampId = -1;
 let campaignWarcampNext = Infinity;
 /** 이번 스테이지에 적용 중인 영웅 특성. */
@@ -901,6 +965,24 @@ function heroOwnSpent(hero: string, alloc: Record<string, number>): number {
    * 로드해 보고 조용히 빼서 404 깜빡임이 없다.
    */
   let animTimer: number | null = null;
+  /*
+   * 모션 재생 세대 번호.
+   *
+   * startPortraitAnim 은 그림이 있는지 확인하느라 비동기로 도는데, 확인이 끝나기
+   * 전에 다른 유닛을 누르면 이전 요청이 뒤늦게 깨어나 자기 setInterval 을 걸어
+   * 버렸다. animTimer 는 마지막 것만 가리키므로 앞선 타이머들은 영영 안 멈추고,
+   * 여럿이 같은 <img> 를 서로 다른 유닛 프레임으로 덮어썼다 (마멋·올빼미·가시마녀가
+   * 섞여 보이던 증상). 영웅 탭으로 넘어가도 그 유령 타이머들이 계속 돌았다.
+   *
+   * 그래서 「지금 몇 번째 요청인가」를 들고 다니며, 세대가 바뀌었으면 늦게 온
+   * 작업은 화면에 손대지 않고 스스로 물러난다.
+   */
+  let animGen = 0;
+  /** 재생 중인 모션을 멈추고, 아직 안 끝난 비동기 요청까지 전부 무효화한다. */
+  const stopPortraitAnim = (): void => {
+    animGen++;
+    if (animTimer !== null) { clearInterval(animTimer); animTimer = null; }
+  };
   /**
    * 영웅 아트 파일 접두사 — 자기 그림이 없어 다른 유닛 그림을 빌려 쓰는 영웅이 있다.
    * 엘로윈은 「세이지 사본」이라 전장에서도 세이지 스프라이트로 그려진다
@@ -917,7 +999,8 @@ function heroOwnSpent(hero: string, alloc: Record<string, number>): number {
 
   const startPortraitAnim = (id: string): void => {
     id = artId(id);
-    if (animTimer !== null) { clearInterval(animTimer); animTimer = null; }
+    stopPortraitAnim();
+    const gen = animGen;
     const probe = (u: string): Promise<string | null> => new Promise((res) => {
       const t = new Image();
       t.onload = () => res(u);
@@ -932,6 +1015,7 @@ function heroOwnSpent(hero: string, alloc: Record<string, number>): number {
       if (await probe(`/assets/units/${cand}.png`)) { prefix = cand; break; }
     }
     if (!prefix) return; // 기본 그림조차 없으면 아이콘 폴백을 그대로 둔다
+    if (gen !== animGen) return; // 그 사이 다른 유닛·탭으로 옮겨 갔다
     const base = `/assets/units/${prefix}.png${ART_V}`;
     { const el = document.getElementById('eh-art') as HTMLImageElement | null; if (el) el.src = base; }
     // 정면부터 — 앞을 봤다가, 뒤를 봤다가, 옆으로 돌고, 휘두른다
@@ -945,16 +1029,19 @@ function heroOwnSpent(hero: string, alloc: Record<string, number>): number {
       const seq: string[] = [];
       for (const u of dir.length ? dir : [base]) seq.push(u, u);   // 방향은 두 박자씩 (느긋하게)
       for (const u of atk.length ? atk : fly) seq.push(u);          // 공격·부유는 한 박자씩 (경쾌하게)
+      if (gen !== animGen) return; // 프레임을 다 확인하는 사이에 바뀌었다
       const el0 = document.getElementById('eh-art') as HTMLImageElement | null;
       if (!el0) return;
       if (seq.length <= 2) { el0.src = base; return; }
       let i = 0;
-      animTimer = window.setInterval(() => {
+      const mine = window.setInterval(() => {
         const el = document.getElementById('eh-art') as HTMLImageElement | null;
-        if (!el) { if (animTimer !== null) clearInterval(animTimer); animTimer = null; return; }
+        // 세대가 바뀌었으면 내 타이머만 스스로 걷는다 (animTimer 는 이미 남의 것)
+        if (!el || gen !== animGen) { clearInterval(mine); return; }
         el.src = seq[i % seq.length]!;
         i++;
       }, 250);
+      animTimer = mine;
     });
     })();
   };
@@ -965,11 +1052,17 @@ function heroOwnSpent(hero: string, alloc: Record<string, number>): number {
    */
   const setHeroIdle = (id0: string): void => {
     const id = artId(id0);
-    if (animTimer !== null) { clearInterval(animTimer); animTimer = null; }
+    stopPortraitAnim();
+    const gen = animGen;
     const el = document.getElementById('eh-art') as HTMLImageElement | null;
     if (!el) return;
     const front = new Image();
-    front.onload = () => { const a = document.getElementById('eh-art') as HTMLImageElement | null; if (a) a.src = front.src; };
+    // 정면 그림 로드도 비동기다 — 늦게 끝나면 이미 다른 걸 보고 있을 수 있다
+    front.onload = () => {
+      if (gen !== animGen) return;
+      const a = document.getElementById('eh-art') as HTMLImageElement | null;
+      if (a) a.src = front.src;
+    };
     front.src = `/assets/units/${id}_s.png${ART_V}`; // 없으면 기본 그림 그대로 둔다
     el.style.cursor = 'pointer';
     el.title = '눌러서 움직여 보기';
@@ -1807,14 +1900,14 @@ function heroOwnSpent(hero: string, alloc: Record<string, number>): number {
     const back = document.createElement('button');
     back.className = 'menubtn';
     back.innerHTML = '<span class="arw">←</span><span>캠페인으로</span>';
-    back.onclick = () => { if (animTimer !== null) { clearInterval(animTimer); animTimer = null; } showCampaignSelect(); };
+    back.onclick = () => { stopPortraitAnim(); showCampaignSelect(); };
     foot.appendChild(back);
     panel.appendChild(foot);
 
     // 유닛 탭은 자동으로 돌고, 영웅 탭은 정면으로 서 있다가 누르면 움직인다
     if (mode === 'unit' && selected) startPortraitAnim(selected);
     else if (mode === 'hero' && selectedHero) setHeroIdle(selectedHero);
-    else if (animTimer !== null) { clearInterval(animTimer); animTimer = null; }
+    else stopPortraitAnim();
   };
   rerender();
   outer.appendChild(panel);
@@ -1852,6 +1945,8 @@ async function startCampaignStage(st: CampaignStage): Promise<void> {
   // (스테이지가 더 낮은 상한을 정해 뒀으면 그쪽을 따른다)
   const stageTechCap = st.id <= 14 ? Math.min(st.techCap ?? 3, 3) : st.techCap;
   campaignCaps = {
+    ...(st.noTowers ? { noTowers: true } : {}),
+    ...(st.nexusArmor !== undefined ? { nexusArmor: st.nexusArmor } : {}),
     ...(st.incomeCap !== undefined ? { incomeCap: st.incomeCap } : {}),
     ...(stageTechCap !== undefined ? { techCap: stageTechCap } : {}),
     ...(st.enemyPreferredUnits ? { enemyPreferredUnits: st.enemyPreferredUnits } : {}),
@@ -1890,9 +1985,13 @@ async function startCampaignStage(st: CampaignStage): Promise<void> {
       { y: 0, label: '가운데 대기', hold: true },
       ...st.deployLanes.filter((l) => l.yTile >= 0).map((l) => ({ y: Math.round(l.yTile * FP), label: l.label })),
     ]
-    : null;
+    : st.village
+      ? st.village.rallyPoints.map((r) => ({
+        x: Math.round(r.xTile * FP), y: Math.round(r.yOffTile * FP), label: r.label,
+      }))
+      : null;
   campaignStartHold = !!st.deployStartHold;
-  // 두 갈래 맵에서만 「길 바꾸기」 버튼을 띄운다
+  // 두 갈래 맵·마을 방어전에서만 상단 선택 칸을 띄운다
   const laneBtn = document.getElementById('btn-lane');
   if (laneBtn) laneBtn.style.display = campaignLanes ? 'flex' : 'none';
   campaignSpawnNext = (st.spawns ?? []).map((r) => (
@@ -1970,13 +2069,50 @@ async function startCampaignStage(st: CampaignStage): Promise<void> {
   villageDeaths = 0;
   villageEscaped = 0;
   villageSeen.clear();
+  villageWave = -1;
+  villageWarned = false;
+  villageBossId = -1;
   if (st.village && game) {
+    const vg = st.village;
+    const at = (xTile: number, yOff: number): { x: number; y: number } => {
+      const x = Math.floor(xTile * FP);
+      return { x, y: laneCenterY(game!.map, x) + Math.floor(yOff * FP) };
+    };
     // 마을 집 네 채 — 우리 편 건물이지만 무장이 없다. 순수 목표물.
-    for (const h of st.village.houses) {
-      const hx = Math.floor(h.xTile * FP);
-      const hy = laneCenterY(game.map, hx) + Math.floor(h.yOffTile * FP);
-      spawnUnit(game, h.defId, 0, hx, hy);
+    for (const h of vg.houses) {
+      const q = at(h.xTile, h.yOffTile);
+      spawnUnit(game, h.defId, 0, q.x, q.y);
     }
+    /*
+     * 마을 수비대 — 두 입구를 지킨다.
+     *
+     * homeX/homeY 가 박히면 진군하지 않고, 싸우다 밀려나도 제자리로 돌아오며,
+     * 플레이어의 집합지 지정에도 따라가지 않는다 (내 부대가 아니다).
+     */
+    for (const gr of vg.garrisons) {
+      for (let i = 0; i < gr.count; i++) {
+        const q = at(gr.xTile + (i % 3) * 0.6, gr.yOffTile + Math.floor(i / 3) * 0.6);
+        const e = spawnUnit(game, gr.defId, 0, q.x, q.y);
+        e.homeX = q.x;
+        e.homeY = q.y;
+      }
+    }
+    // 적은 넥서스가 아니라 마을 한복판을 치러 온다
+    const c = at(vg.centerXTile, vg.centerYOffTile);
+    game.foeGoalX = c.x;
+    game.foeGoalY = c.y;
+    // 주민은 6시 길로 빠진다
+    const f = at(vg.fleeXTile, vg.fleeYOffTile);
+    game.fleeX = f.x;
+    game.fleeY = f.y;
+    // 내 부대 기본 집합지 = 1시 입구 (rallyPoints[0])
+    const r0 = vg.rallyPoints[0];
+    if (r0) {
+      const q = at(r0.xTile, r0.yOffTile);
+      game.rallyX = q.x;
+      game.rallyY = q.y;
+    }
+    applyVillageLanes(vg, 1); // 첫 출정은 1턴
   }
   if (st.obstacles && game) {
     // 불타는 숲 장애물: 무적·부동 — 아무도 조준하지 않지만 지상 유닛의 길을 막는다
@@ -2973,6 +3109,9 @@ function updateSpeedButtons(): void {
  */
 function currentLaneIdx(): number {
   if (!game || !campaignLanes) return -1;
+  if (campaignLanes[0]?.x !== undefined) {
+    return campaignLanes.findIndex((l) => l.x === game!.rallyX);
+  }
   if (game.deployHold) return campaignLanes.findIndex((l) => l.hold);
   return campaignLanes.findIndex((l) => !l.hold && l.y === game!.deployLaneY);
 }
@@ -2983,6 +3122,15 @@ function chooseLaneAt(idx: number): void {
   const lane = campaignLanes[idx];
   if (!lane) return;
   if (lane.hold) { chooseHold(); return; }
+  if (lane.x !== undefined) {
+    // 집합지: 부대가 모일 자리를 옮긴다 (이미 나와 있는 부대도 그리로 향한다)
+    game.rallyX = lane.x;
+    game.rallyY = laneCenterY(game.map, lane.x) + lane.y;
+    audio.play('ui_click');
+    showToast(`🚩 ${lane.label} 로 집합한다`);
+    syncLaneBtn();
+    return;
+  }
   const wasHeld = game.deployHeld;
   setDeployHold(game, false);
   setDeployLane(game, lane.y);
@@ -3022,6 +3170,9 @@ function syncLaneBtn(): void {
       wrap.appendChild(b);
     });
   }
+  // 머리말도 성격에 맞춘다 — 출정 레인과 집합지는 다른 조작이다
+  const head = document.getElementById('lane-head');
+  if (head) head.textContent = lanes[0]?.x !== undefined ? '집합지' : '출정 경로';
   const cur = currentLaneIdx();
   lanes.forEach((lane, i) => {
     const b = wrap.children[i] as HTMLElement | undefined;
@@ -3029,9 +3180,11 @@ function syncLaneBtn(): void {
     b.classList.toggle('on', i === cur);
     const sub = b.querySelector('small');
     if (!sub) return;
-    sub.textContent = lane.hold
-      ? (i === cur && game!.deployHeld > 0 ? `${game!.deployHeld}턴 모음` : '출정하지 않음')
-      : (i === cur ? '이 길로 출정' : '이 길로 바꾸기');
+    sub.textContent = lane.x !== undefined
+      ? (i === cur ? '여기로 집합 중' : '여기로 모으기')
+      : lane.hold
+        ? (i === cur && game!.deployHeld > 0 ? `${game!.deployHeld}턴 모음` : '출정하지 않음')
+        : (i === cur ? '이 길로 출정' : '이 길로 바꾸기');
   });
 }
 
@@ -3726,25 +3879,71 @@ function tick(deltaMS: number): void {
       }
     }
     /*
-     * 마을 방어전: 시간을 버티는 것만으로는 이기지 못한다.
-     *  · 서쪽 끝에 닿은 주민은 탈출 성공 — 화면에서 지운다 (안 지우면 벽에 붙어 쌓인다)
-     *  · 죽은 주민을 센다. loseDeaths 명이면 그 자리에서 패배
-     *  · 집 네 채가 모두 무너져도 패배
+     * 마을 방어전 (6 「자정의 마을」).
+     *
+     * 시간을 버티는 것만으로는 이기지 못한다 — bossWave 턴에 나오는 쿠르가를
+     * 잡아야 끝난다. 매 턴 하는 일:
+     *   · 어느 숲길이 열리는가를 정해 적 출정 자리를 옮긴다 (한쪽 / 6의 배수면 양쪽)
+     *   · 두 번째 길이 열리기 직전 턴에 경고 대사를 띄운다
+     *   · finalWave 부터 양 진영 생산을 멈춘다 (남은 병력으로 보스를 끝낸다)
+     * 매 프레임 하는 일:
+     *   · 6시 탈출구에 닿은 주민을 「죽지 않고」 지운다 (시체 연출 없음)
+     *   · 죽은 주민을 세고, 집이 다 무너졌는지 본다
      */
     if (campaign.village && game && !game.over) {
       const vg = campaign.village;
-      const escX = vg.escapeXTile * FP;
+      const wave = game.waveIndex;
+
+      // ── 턴이 바뀌는 순간에만 하는 것들 ──
+      if (wave !== villageWave) {
+        villageWave = wave;
+        // 지금 정해 두는 자리는 「다음 출정」이 쓴다 = 화면에 wave + 1 턴으로 뜬다
+        applyVillageLanes(vg, wave + 1);
+        // 두 번째 길이 열리는 그 턴에 경고. 한 번만 띄운다.
+        if (wave === vg.secondLaneWave && vg.secondLaneDialogue && !villageWarned) {
+          villageWarned = true;
+          setCutscenePause(true);
+          void runDialogue(vg.secondLaneDialogue).then(() => setCutscenePause(false));
+        }
+        // 보스 등장
+        if (wave >= vg.bossWave && villageBossId < 0) {
+          const bx = Math.floor(vg.lanes[0]!.xTile * FP);
+          const by = laneCenterY(game.map, bx) + Math.floor(vg.lanes[0]!.yOffTile * FP);
+          villageBossId = spawnUnit(game, vg.bossDefId, 1, bx, by).id;
+          campaignAlertText = '⚔ 리치 쿠르가가 마을로 내려온다!';
+          campaignAlertUntil = performance.now() + 5000;
+          audio.play('cast_skill', { volume: 1 });
+        }
+        /*
+         * 마지막 턴부터는 양쪽 다 새 병력이 없다 — 남은 것으로 결판을 낸다.
+         * 인컴을 끊고 지갑을 비워 봇이 더 못 사게 한다 (사람도 마찬가지).
+         */
+        if (wave >= vg.finalWave) {
+          for (const p2 of game.players) {
+            p2.money = 0;
+            p2.incomeLevel = 0;
+          }
+        }
+      }
+
+      // ── 주민: 6시 탈출구에 닿으면 「대피 성공」 (죽는 게 아니다) ──
+      const fx = Math.floor(vg.fleeXTile * FP);
+      const fy = laneCenterY(game.map, fx) + Math.floor(vg.fleeYOffTile * FP);
+      const fr = vg.fleeRadiusTiles * FP;
       for (const e of game.entities) {
         if (!e.alive || !e.defId.startsWith('c_villager_')) continue;
         villageSeen.set(e.id, e.defId);
-        if (e.x <= escX) {
-          e.alive = false;          // 탈출 — 전투에서 빼고 화면에서도 사라진다
+        const dx = e.x - fx;
+        const dy = e.y - fy;
+        if (dx * dx + dy * dy <= fr * fr) {
+          renderer?.quietRemove(e.id);   // 시체 연출 없이 사라진다
+          e.alive = false;
           e.hp = 0;
           villageSeen.delete(e.id);
           villageEscaped++;
         }
       }
-      // 살아 있는 목록에서 사라진 id = 적에게 죽은 주민 (탈출은 위에서 이미 뺐다)
+      // 살아 있는 목록에서 사라진 id = 적에게 죽은 주민 (대피는 위에서 이미 뺐다)
       const aliveIds = new Set(game.entities.filter((e) => e.alive).map((e) => e.id));
       for (const id of [...villageSeen.keys()]) {
         if (!aliveIds.has(id)) {
@@ -3762,16 +3961,33 @@ function tick(deltaMS: number): void {
         campaignFinish(false, '마을이 전부 불탔다');
         return;
       }
-      const left = (campaign.surviveSec ?? 900) - Math.floor(game.tick / TICK_HZ);
-      if (left > 0 && performance.now() >= campaignAlertUntil) {
-        const turns = Math.ceil(left / 60);
+      // ── 승리: 보스가 나왔고, 그 보스를 쓰러뜨렸다 ──
+      if (villageBossId >= 0 && !game.entities.some((e) => e.alive && e.id === villageBossId)) {
+        campaignDone = true;   // 대사 도중 다른 판정이 끼어들지 않게 먼저 잠근다
+        setCutscenePause(true);
+        void runDialogue(vg.winDialogue ?? []).then(() => {
+          setCutscenePause(false);
+          campaignDone = false;
+          campaignFinish(true);
+        });
+        return;
+      }
+      if (performance.now() >= campaignAlertUntil) {
+        const boss = villageBossId >= 0 ? ' · ⚔ 쿠르가' : '';
+        const left = Math.max(0, vg.bossWave - wave);
         $('#campaign-goal').textContent =
-          `[6. ${campaign.title}] 남은 ${turns}턴 · 🏠 ${housesLeft}/4 · 🏃 대피 ${villageEscaped} · ☠ ${villageDeaths}/${vg.loseDeaths}`;
+          `[6. ${campaign.title}] ${left > 0 ? `쿠르가까지 ${left}턴` : '쿠르가를 쓰러뜨려라'}`
+          + ` · 🏠 ${housesLeft}/4 · 🏃 대피 ${villageEscaped} · ☠ ${villageDeaths}/${vg.loseDeaths}${boss}`;
       }
     }
     if (campaign.mission === 'survive' && campaign.surviveSec !== undefined) {
       const left = campaign.surviveSec - Math.floor(game.tick / TICK_HZ);
-      if (!game.over && left <= 0) {
+      /*
+       * 마을 방어전은 시간이 다 돼도 이기지 않는다 — 30턴은 「쿠르가가 나오는 때」일
+       * 뿐이고, 그를 쓰러뜨려야 끝난다. 이 판정을 막지 않으면 보스가 나오는 순간
+       * 승리 처리가 먼저 나가 버린다.
+       */
+      if (!game.over && left <= 0 && !campaign.village) {
         campaignFinish(true);
         return;
       }

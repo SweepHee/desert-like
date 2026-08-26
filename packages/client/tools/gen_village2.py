@@ -74,13 +74,22 @@ def main():
     rng = random.Random(606)
     plan = []   # (y_bottom, sprite, x, y, scale)
 
+    # 북쪽 두 진입로가 내려오는 목 — gen_village3 이 여기까지 길을 뚫으므로
+    # 나무를 심어 두면 넓힌 숲길 위에 나무가 얹힌다 (부대가 나무를 밟고 지난다).
+    LANE_FX = (0.215, 0.790)
+    LANE_R = 3.4 * 1.3 / 56 * W      # gen_village3 의 LANE_HALF_T 와 같은 값
+    LANE_DEPTH = int(H * 0.25)
+
+    def in_lane(x, y):
+        return y < LANE_DEPTH and any(abs(x - fx * W) < LANE_R for fx in LANE_FX)
+
     def scatter(idxs, count, lo, hi, only=None):
         tries = 0
         placed = 0
         while placed < count and tries < count * 60:
             tries += 1
             x, y = rng.randrange(W), rng.randrange(H)
-            if walk(x, y):
+            if walk(x, y) or in_lane(x, y):
                 continue
             if only and not only(x, y):
                 continue

@@ -127,17 +127,53 @@ export interface CampaignStage {
    * 죽으면 그 자리에서 패배 — 시간을 버티는 것만으로는 이기지 못한다.
    */
   readonly village?: {
-    /** 집 네 채 (부술 수 있는 실물). */
+    /** 집 네 채 (부술 수 있는 실물). 전부 무너지면 패배. */
     readonly houses: readonly { readonly defId: string; readonly xTile: number; readonly yOffTile: number }[];
     /** 이만큼 죽으면 패배. */
     readonly loseDeaths: number;
-    /** 주민이 이 x(타일) 아래로 가면 탈출 성공 — 화면에서 지운다. */
-    readonly escapeXTile: number;
+    /** 마을 한복판 — 적이 노리고 오는 자리이자 주민이 모이는 자리. */
+    readonly centerXTile: number;
+    readonly centerYOffTile: number;
+    /** 6시 탈출구. 주민이 이 반경 안에 닿으면 대피 성공 (사망 연출 없이 사라진다). */
+    readonly fleeXTile: number;
+    readonly fleeYOffTile: number;
+    readonly fleeRadiusTiles: number;
+    /** 적이 밀려드는 숲길 입구. [0] 은 처음부터, [1] 은 secondLaneWave 부터. */
+    readonly lanes: readonly { readonly xTile: number; readonly yOffTile: number; readonly label: string }[];
+    /** 두 번째 길이 열리는 턴 — 이 턴에 경고 대사가 뜨고 같은 턴에 양쪽에서 나온다. */
+    readonly secondLaneWave: number;
+    /** 이 턴부터는 번갈아가 없다 — 매 턴 양쪽에서 동시에 들이친다. */
+    readonly bothLanesWave: number;
+    /** 두 번째 길이 열린다고 알리는 대사. */
+    readonly secondLaneDialogue?: readonly DialogueLine[];
+    /** 마을 수비대 — 제자리를 지키고, 벗어나면 되돌아온다 (집합지 지정에 안 따라온다). */
+    readonly garrisons: readonly {
+      readonly defId: string; readonly count: number;
+      readonly xTile: number; readonly yOffTile: number;
+    }[];
+    /** 내 부대 집합지 후보 — 상단 칸에서 고른다 (14 출정 경로와 같은 UI). */
+    readonly rallyPoints: readonly {
+      readonly xTile: number; readonly yOffTile: number; readonly label: string;
+    }[];
+    /** 이 턴에 보스가 나온다. 시간을 버티는 것만으로는 이기지 못하고, 보스를 잡아야 한다. */
+    readonly bossWave: number;
+    readonly bossDefId: string;
+    /** 이 턴부터 양쪽 다 새 부대가 나오지 않는다 (남은 것으로 보스를 끝내는 구간). */
+    readonly finalWave: number;
+    /** 보스를 잡은 뒤 띄우는 마무리 대사. */
+    readonly winDialogue?: readonly DialogueLine[];
   };
   /** true = 양 팀 넥서스를 아예 두지 않는다 (마을 방어전). */
   readonly noNexus?: boolean;
   /** true = 수호탑·수호자 없이 넥서스전만 (탑 제거 + 넥서스 보호막 해제). */
   readonly noTowers?: boolean;
+  /**
+   * 양 진영 넥서스 방어력 (생략 시 기본 28).
+   *
+   * 기본값은 「기본 유닛 평타 = 1」이 되게 맞춘 값이라, 하늘로만 닿는 판에서는
+   * 공중 유닛으로 넥서스를 깰 수가 없다. 그런 판에서만 낮춘다.
+   */
+  readonly nexusArmor?: number;
   /** 인컴·테크 상한 (전원 공통 — 봇 포함). 생략 시 기본. */
   readonly incomeCap?: number;
   readonly techCap?: number;
@@ -393,6 +429,8 @@ export const SYLVARIN_CAMPAIGN: readonly CampaignStage[] = [
     id: 1, act: 1, title: '국경의 봉화', goal: '적 수호탑을 파괴하라 — 문지기가 깨어나면 철수한다',
     allowedUnits: U1, enemies: ['pandemonium'], allies: [], botDifficulty: 'easy',
     mission: 'tower', seed: seedOf(1), startMoney: 350, incomeCap: 3, techCap: 2,
+    // 1막 전체: 적 기지는 망자 석조 — 우리 기지(밝은 돌 + 청록 수정)와 한눈에 갈린다
+    enemySkin: 'bone',
     briefing: [
       { who: '', img: '/assets/cutscenes/cs11_raid.png',
         text: '실바린의 숲 — 세계수의 뿌리가 대지를 지탱하는, 300년간 전쟁을 모르던 땅.\n그 숲이, 봉화가 오르기도 전에 먼저 불탔다.' },
@@ -417,6 +455,7 @@ export const SYLVARIN_CAMPAIGN: readonly CampaignStage[] = [
     id: 2, act: 1, title: '재가 내리는 길', goal: '피난 행렬 호위 — 15분간 넥서스를 지켜라',
     allowedUnits: U2, enemies: ['pandemonium'], allies: [], botDifficulty: 'easy',
     mission: 'survive', surviveSec: 900, seed: seedOf(2), noTowers: true, incomeCap: 3, techCap: 2,
+    enemySkin: 'bone',
     spawns: [{ defId: 'c_ash_revenant', label: '재의 원귀', everySec: 150 }],
     briefing: [
       { who: '아린', text: '척후 다녀왔습니다. 남쪽 마을이 전부 비었어요 — 걷지 못하는 노목(老木)들은… 두고 왔대요.' },
@@ -433,6 +472,7 @@ export const SYLVARIN_CAMPAIGN: readonly CampaignStage[] = [
     id: 3, act: 1, title: '마멋 구릉', goal: '마멋 부족의 시험 — 15분간 버텨라',
     allowedUnits: U3, enemies: ['pandemonium'], allies: [], botDifficulty: 'easy',
     mission: 'survive', surviveSec: 900, seed: seedOf(3), noTowers: true, incomeCap: 3, techCap: 2,
+    enemySkin: 'bone',
     spawns: [
       { defId: 'c_ash_revenant', label: '재의 원귀', everySec: 180, count: 2 },
       { defId: 'c_bone_colossus', label: '뼈 거상', atSec: 720 },
@@ -450,6 +490,7 @@ export const SYLVARIN_CAMPAIGN: readonly CampaignStage[] = [
     id: 4, act: 1, title: '독이 스민 숲', goal: '적 넥서스를 파괴하라 — 역병 늪은 치유로만 버틴다',
     allowedUnits: U4, enemies: ['pandemonium'], allies: [], botDifficulty: 'easy',
     mission: 'destroy', seed: seedOf(4), noTowers: true, mapId: 'mire',
+    enemySkin: 'bone',
     // 1~3 은 incomeCap 3 / techCap 2 였는데 4 에서 통째로 빠져 있었다 —
     // 상한이 없으면 기본값이 테크 4 라, 이 판에서 봇이 갑자기 목없는 기사부터
     // 본드래곤까지 다 뽑았다. 한 칸씩만 올려 1막의 계단을 잇는다.
@@ -482,14 +523,39 @@ export const SYLVARIN_CAMPAIGN: readonly CampaignStage[] = [
     id: 5, act: 1, title: '올빼미 성채', goal: '적 넥서스를 파괴하라 — 산길은 멀고 하늘은 곧다',
     allowedUnits: U5, enemies: ['pandemonium'], allies: [], botDifficulty: 'easy',
     mission: 'destroy', seed: seedOf(5), noTowers: true, mapId: 'owlkeep',
+    // 넥서스는 언덕 위 — 지상 부대가 굽이길을 다 돌아야 닿는다. 하늘로도 깰 수
+    // 있어야 판이 성립하므로 방어력을 낮춘다 (기본 28 이면 공중 평타가 1로 잘린다)
+    nexusArmor: 6,
     /*
      * 첫 공중전 학습 스테이지 — 「하늘을 사야 하는 이유」를 지형이 설명한다.
-     * 굽이치는 산길은 지상으로 291타일이고 비행은 57타일이다 (5.1배).
+     * 굽이치는 산길은 지상으로 121타일이고 비행은 45타일이다 (2.7배). 거기에
+     * 진흙길·덩굴길이 지상만 붙잡으므로 체감 차이는 훨씬 크다.
      * 지상 부대는 첫 접촉까지 3분 가까이 걸리므로 초반의 판은 하늘에서 갈린다.
      */
     incomeCap: 4, techCap: 2,
     enemyPreferredUnits: ['p_wraith', 'p_banshee'],
-    spawns: [{ defId: 'c_dread_gargoyle', label: '공포의 가고일', everySec: 120 }],
+    spawns: [
+      { defId: 'c_dread_gargoyle', label: '공포의 가고일', everySec: 120 },
+      /*
+       * 절벽 기습 — 80초마다 우리 언덕 남쪽 벼랑을 기어올라 온다.
+       *
+       * 산길이 워낙 멀어 적 지상 부대는 도착할 때쯤 진흙·덩굴에 다 닳아 있었고,
+       * 넥서스에 흠집도 못 냈다. 그래서 「걸어오는 적」과 별개로 기지 문턱에서
+       * 시작하는 부대를 따로 붙인다 — 하늘로 밀어붙이는 동안에도 집을 비울 수 없다.
+       */
+      { defId: 'p_bone_thrower', label: '절벽에서 기어오른다! 해골 투척병·목없는 기사·리치!',
+        everySec: 80, count: 2, atXTile: 37.0, yOffTile: -19.5,
+        onFirstDialogue: [
+          { who: '아린', text: '대장! 뒤! 벼랑 아래에서… 손이 올라옵니다.' },
+          { who: '카엘', text: '기어올라 온다고? 저 절벽을?' },
+          { who: '티아', text: '죽은 것들이잖아요. 떨어져도 안 아파요.' },
+          { who: '카엘', text: '…집을 비우지 마라. 하늘은 하늘대로, 문턱은 문턱대로 지킨다.' },
+        ] },
+      { defId: 'p_headless_knight', label: '', quiet: true,
+        everySec: 80, count: 1, atXTile: 36.5, yOffTile: -18.0 },
+      { defId: 'p_lich', label: '', quiet: true,
+        everySec: 80, count: 1, atXTile: 36.5, yOffTile: -20.5 },
+    ],
     briefing: [
       { who: '아린', text: '…길이 없습니다. 저건 길이 아니라 미로예요.' },
       { who: '카엘', text: '걸어서 저 위까지 가면?' },
@@ -503,44 +569,109 @@ export const SYLVARIN_CAMPAIGN: readonly CampaignStage[] = [
     ],
   },
   {
-    id: 6, act: 1, title: '자정의 마을', goal: '주민이 다 빠져나갈 때까지 마을을 지켜라 — 15분',
+    id: 6, act: 1, title: '자정의 마을',
+    goal: '30턴을 버티고 쿠르가를 쓰러뜨려라 — 주민을 6시 길로 대피시켜라',
     allowedUnits: U5, enemies: ['pandemonium', 'pandemonium'], allies: [], botDifficulty: 'normal',
-    mission: 'survive', surviveSec: 900, seed: seedOf(6), noTowers: true,
+    // 30턴 = 1800초. 시간만 버텨서는 이기지 못한다 — village.bossWave 참고.
+    mission: 'survive', surviveSec: 1800, seed: seedOf(6), noTowers: true,
     mapId: 'village', noNexus: true,
     incomeCap: 5, techCap: 2,
-    // 넥서스가 없어 밀어붙일 목표도 없다 — 부대는 마을 언저리를 지킨다
-    holdLineXTile: 40,
+    /*
+     * 올빼미·거대 나비를 막 산 직후라 하늘이 너무 셌다 — 대공이 되는 해골
+     * 투척병(사거리 4.5, 지상·공중 겸용)과 리치(화염구)를 적 편성의 축으로 민다.
+     */
+    enemyPreferredUnits: ['p_bone_thrower', 'p_lich'],
+    /*
+     * 적은 두 숲길에서만 내려온다. enemyCamps 로 출정 자리를 길 입구에 고정해 두고,
+     * 「이번 턴에 어느 길이 열리는가」는 main.ts 가 매 턴 이 자리를 옮겨 정한다.
+     * (x/y 는 형식상 초기값 — 실제 값은 village.lanes 에서 온다)
+     *
+     * waveMoney: 4턴부터 매 턴 얹어 주는 자금. 15턴부터는 「인컴 두 배」에
+     * 해당하는 값으로 뛴다 (인컴 5단계 = 70/5초 = 840/턴).
+     * forcedGrowth 는 쓰지 않는다 — 편성(comp)은 매 턴 통째로 다시 나가므로
+     * 확정 편입은 턴이 갈수록 제곱으로 불어난다 (실측: 12분에 465기).
+     */
+    enemyCamps: [
+      { slot: 0, x: 44.2 * 1000, y: -28 * 1000,
+        waveMoney: [{ fromWave: 4, amount: 150 }, { fromWave: 15, amount: 850 }] },
+      { slot: 1, x: 12.0 * 1000, y: -28 * 1000,
+        waveMoney: [{ fromWave: 4, amount: 150 }, { fromWave: 15, amount: 850 }] },
+    ],
     village: {
-      // 완성.png 에서 잰 자리 (11시 / 1시 / 7시 / 5시)
       houses: [
-        { defId: 'c_village_a', xTile: 22.8, yOffTile: -2.8 },
-        { defId: 'c_village_b', xTile: 34.0, yOffTile: -3.6 },
-        { defId: 'c_village_c', xTile: 21.8, yOffTile: 8.2 },
-        { defId: 'c_village_d', xTile: 36.6, yOffTile: 9.0 },
+        { defId: 'c_village_a', xTile: 22.8, yOffTile: 6.2 },
+        { defId: 'c_village_b', xTile: 34.0, yOffTile: 5.4 },
+        { defId: 'c_village_c', xTile: 21.8, yOffTile: 17.2 },
+        { defId: 'c_village_d', xTile: 36.6, yOffTile: 18.0 },
       ],
       loseDeaths: 10,
-      // 서쪽 길은 x 2 아래로 통행칸이 1~5개까지 좁아진다. 여기를 탈출선으로 잡으면
-      // 느린 노인이 끝내 통과하지 못하고 벽에 붙어 남는다 (실측) — 4 로 넉넉히 둔다.
-      escapeXTile: 4,
+      centerXTile: 30.2, centerYOffTile: 13.7,
+      // 6시 길 — 마스크상 남쪽으로 열린 유일한 출구
+      fleeXTile: 35.5, fleeYOffTile: 28.0, fleeRadiusTiles: 2.5,
+      lanes: [
+        { xTile: 44.2, yOffTile: -28, label: '1시 숲길' },
+        { xTile: 12.0, yOffTile: -28, label: '11시 숲길' },
+      ],
+      secondLaneWave: 6,
+      bothLanesWave: 15,
+      secondLaneDialogue: [
+        { who: '아린', text: '대장! 11시 쪽 숲에서도 불빛이 올라옵니다 — 지금! 한 갈래가 아니었어요.' },
+        { who: '카엘', text: '…양쪽이라. 두 입구를 다 막을 병력은 없습니다.' },
+        { who: '엘로윈', text: '막지 마라. 늦추기만 해라. 행렬이 먼저다.' },
+      ],
+      /*
+       * 수비대·집합지는 「마을 입구」 — 숲길이 빈터로 들어오는 목이다.
+       * 집(11시 x22.8 / 1시 x34.0) 사이가 아니라 그 바깥이어야 길을 막는 그림이 된다.
+       */
+      garrisons: [
+        { defId: 's_treekeeper', count: 2, xTile: 14.0, yOffTile: -1.5 },
+        { defId: 's_elf_archer', count: 3, xTile: 14.0, yOffTile: -0.3 },
+        { defId: 's_treekeeper', count: 2, xTile: 39.5, yOffTile: -1.0 },
+        { defId: 's_elf_archer', count: 3, xTile: 39.5, yOffTile: 0.2 },
+      ],
+      rallyPoints: [
+        { xTile: 39.5, yOffTile: -1.0, label: '1시 입구' },
+        { xTile: 14.0, yOffTile: -1.5, label: '11시 입구' },
+        { xTile: 30.2, yOffTile: 13.7, label: '마을 광장' },
+        { xTile: 34.5, yOffTile: 24.0, label: '6시 길목' },
+      ],
+      bossWave: 30,
+      bossDefId: 'c_kurga',
+      finalWave: 31,
+      winDialogue: [
+        { who: '카엘', text: '…쓰러졌습니다. 쿠르가가.' },
+        { who: '티아', text: '행렬은요? 마지막 한 사람까지 6시 길로 내려갔어요. 아무도 안 남았어요.' },
+        { who: '엘로윈', text: '그럼 됐다. 마을은 두고 간다 — 우리도 물러난다.' },
+        { who: '카엘', text: '…집이 아직 서 있는데요.' },
+        { who: '엘로윈', text: '집은 다시 짓는다. 사람은 못 짓는다. 가자.' },
+      ],
     },
     spawns: [
-      // 적은 북쪽 두 숲길로 밀려든다 (완성.png 의 불타는 모서리)
-      { defId: 'c_ash_revenant', label: '⬉ 재의 원귀', everySec: 90, atXTile: 12, yOffTile: -16 },
-      { defId: 'c_ash_revenant', label: '⬈ 재의 원귀', everySec: 90, atXTile: 44, yOffTile: -16 },
-      { defId: 'c_kurga', label: '⚔ 보스: 리치 쿠르가', atSec: 480, atXTile: 46, yOffTile: -14 },
-      { defId: 'c_bone_colossus', label: '뼈 거상', atSec: 660, everySec: 200, atXTile: 12, yOffTile: -16 },
-      { defId: 'c_villager_adult_m', label: '', everySec: 60, friendly: true, atXTile: 30, yOffTile: 2, quiet: true },
-      { defId: 'c_villager_adult_f', label: '', everySec: 60, friendly: true, atXTile: 30, yOffTile: 4, quiet: true },
-      { defId: 'c_villager_child_m', label: '', everySec: 60, friendly: true, atXTile: 30, yOffTile: 3, quiet: true },
-      { defId: 'c_villager_elder_f', label: '', everySec: 60, friendly: true, atXTile: 30, yOffTile: 5, quiet: true },
-      { defId: 'c_villager_child_f', label: '', everySec: 60, friendly: true, atXTile: 30, yOffTile: 6, quiet: true },
+      /*
+       * 숲지기 카엘 — 판이 열릴 때부터 마을에 서 있다. 상점 「영웅」 탭은
+       * 13 클리어 전까지 잠겨 있으므로(heroPick 아님) 자동으로 나선다.
+       * 쓰러져도 부활 시간을 지켜 다시 온다. 이끌고 오는 부대는 없다.
+       */
+      { defId: 'c_kael', label: '🛡 숲지기 카엘', atSec: 1, friendly: true,
+        concurrentCap: 1, respawnAfterDeathSec: 110, atXTile: 30.2, yOffTile: 13.7 },
+      { defId: 'c_villager_adult_m', label: '', everySec: 60, count: 2, friendly: true,
+        atXTile: 30.2, yOffTile: 12.5, quiet: true, untilSec: 1800 },
+      { defId: 'c_villager_adult_f', label: '', everySec: 60, count: 2, friendly: true,
+        atXTile: 30.2, yOffTile: 14.0, quiet: true, untilSec: 1800 },
+      { defId: 'c_villager_child_m', label: '', everySec: 60, count: 2, friendly: true,
+        atXTile: 30.2, yOffTile: 13.0, quiet: true, untilSec: 1800 },
+      { defId: 'c_villager_elder_f', label: '', everySec: 60, count: 2, friendly: true,
+        atXTile: 30.2, yOffTile: 15.0, quiet: true, untilSec: 1800 },
+      { defId: 'c_villager_child_f', label: '', everySec: 60, count: 2, friendly: true,
+        atXTile: 30.2, yOffTile: 13.8, quiet: true, untilSec: 1800 },
     ],
     briefing: [
       { who: '엘로윈', text: '카엘. 이 마을은 지킬 수 없다. 지켜야 하는 건 마을이 아니라 마을 사람이다.' },
       { who: '카엘', text: '…집을 버리라는 말씀입니까.' },
       { who: '엘로윈', text: '집이 무너지는 데는 시간이 걸린다. 그 시간을 전부 행렬에 써라.' },
       { who: '쿠르가', text: '타라, 타라, 푸른 것들아! 발타르 님의 겨울에 봄은 오지 않는다!', side: 'right' },
-      { who: '티아', text: '서쪽 길이 아직 열려 있어요. 한 번에 다섯씩 내보낼게요. 열 명을 잃으면… 거기서 끝이에요.' },
+      { who: '티아', text: '한 턴에 열 명씩 광장에 모아 6시 길로 내려보낼게요. 열 명을 잃으면… 거기서 끝이에요.' },
+      { who: '아린', text: '적은 1시 숲길로 옵니다. 마을 수비대가 두 입구를 지키고 있어요 — 그 애들은 자리를 안 뜹니다.' },
     ],
     outro: [
       { who: '카엘', text: '…마을이 탑니다. 제가 지휘했는데.' },

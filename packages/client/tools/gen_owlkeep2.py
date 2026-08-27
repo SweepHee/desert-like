@@ -145,6 +145,68 @@ def bfs_path(grid, a, b):
     return out
 
 
+MIN_NECK = 10                    # 주 통행로 최소 폭 (칸 — CPT 4 이면 2.5타일)
+
+
+def widen_neck(grid, path, min_cells=MIN_NECK):
+    """
+    주 통행로에서 「부대가 못 지나가는 목」만 골라 넓힌다.
+
+    작가가 그린 계단은 1타일 폭이라 그림으로는 멋있지만, 부대가 한 줄로만
+    내려갈 수 있어 스무 기가 언덕 턱에 뭉쳐 얻어맞기만 했다 (실측 폭 1.0타일).
+    그렇다고 전체를 부풀리면 절벽이 뭉개지므로, 경로를 따라가며 폭을 재서
+    모자란 자리만 좌우로 대칭으로 연다 — 넓은 구간은 손대지 않는다.
+
+    반환: (넓힌 격자, 손댄 칸 수)
+    """
+    if not path:
+        return grid, 0
+    out = [row[:] for row in grid]
+    touched = 0
+    for i, (r, c) in enumerate(path):
+        # 경로의 진행 방향 → 그 수직 방향으로 폭을 잰다
+        pr, pc = path[max(0, i - 2)]
+        nr, nc = path[min(len(path) - 1, i + 2)]
+        dr, dc = nr - pr, nc - pc
+        # 세로로 가면 가로로, 가로로 가면 세로로 재고 연다
+        ur, uc = (0, 1) if abs(dr) >= abs(dc) else (1, 0)
+        span = [(r, c)]
+        for sgn in (1, -1):
+            k = 1
+            while True:
+                rr, cc = r + ur * k * sgn, c + uc * k * sgn
+                if not (0 <= rr < ROWS and 0 <= cc < COLS) or not out[rr][cc]:
+                    break
+                span.append((rr, cc))
+                k += 1
+        if len(span) >= min_cells:
+            continue
+        # 모자란 만큼 좌우 번갈아 뚫는다 (한쪽으로만 밀면 길이 벽에 붙는다)
+        need = min_cells - len(span)
+        reach = [1, 1]
+        while need > 0:
+            grew = False
+            for si, sgn in enumerate((1, -1)):
+                if need <= 0:
+                    break
+                while True:
+                    rr = r + ur * reach[si] * sgn
+                    cc = c + uc * reach[si] * sgn
+                    reach[si] += 1
+                    if not (0 <= rr < ROWS and 0 <= cc < COLS):
+                        break
+                    if out[rr][cc]:
+                        continue          # 이미 열린 칸은 세지 않는다
+                    out[rr][cc] = True
+                    touched += 1
+                    need -= 1
+                    grew = True
+                    break
+            if not grew:
+                break                     # 양쪽 다 맵 밖 — 더 넓힐 수 없다
+    return out, touched
+
+
 def tighten(full, seeds, rounds):
     """
     넓은 구간은 깎고(가장자리 돌무더기 제거), 좁은 목은 원래 폭으로 되살린다.
@@ -206,6 +268,10 @@ def main():
     # 길 가장자리(돌무더기)를 깎아 낸다. 다만 계단처럼 좁은 목은 깎으면 끊기므로,
     # 원래 마스크에서 두 언덕을 잇는 최단 경로를 다시 새겨 넣어 통행을 보장한다.
     grid = tighten(grid, seeds, ERODE)
+    # 계단처럼 부대가 못 지나가는 목만 골라 넓힌다 (그림은 그대로 두고 통행만)
+    path = bfs_path(grid, seeds[0], seeds[1])
+    grid, widened = widen_neck(grid, path)
+    print('좁은 목 넓히기: %d칸 (%.1f타일^2) 추가' % (widened, widened / (CPT * CPT)))
     data = ''.join('.' if grid[r][c] else '#' for r in range(ROWS) for c in range(COLS))
     walkable = data.count('.')
     print('마스크 %dx%d (행=진행축) 통행 %d칸 (%.1f%%)'

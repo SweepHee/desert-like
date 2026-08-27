@@ -2258,6 +2258,7 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
     if (a?.kind === 'airTaunt' || a?.kind === 'ram') return 'cast_roar';
     if (a?.kind === 'wardShield' || a?.kind === 'regenAura' || a?.kind === 'selfShield') return 'cast_bark';
     if (a?.kind === 'diveStrike' || a?.kind === 'debuffZone') return 'cast_moonveil';
+    if (a?.kind === 'leap') return 'cast_leap';
     if (a?.kind === 'levitate') return 'cast_gravity';
     if (casterId === 'c_kael'
       && (a?.kind === 'taunt' || a?.kind === 'invuln' || a?.kind === 'reflect')) return 'cast_bulwark';
@@ -2914,6 +2915,19 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
             ring(70, 0xffd06a, 150);
             // 떠나온 자리(vfx 에 남은 복귀 좌표)에서 지금 위치까지 선을 긋는다
             ramTrails.push({ x0: sx(e.returnX), y0: sy(e.returnY), x1: sx(e.x), y1: sy(e.y), start: now });
+          } else if (castKind === 'leap') {         // 도약 강습 — 뛰어온 자국 + 착지 파문
+            ring(Math.max(R, 30), 0xffe9b0);
+            ring(Math.max(R, 30) * 0.62, 0xffffff, 80);
+            /*
+             * 심이 유닛을 착지 지점으로 이미 옮겨 놨으므로, 직전 프레임 좌표가
+             * 곧 「뛰기 전 자리」다 (prevPos 는 프레임 끝에서 갱신된다).
+             * 그 사이를 속도선으로 이어야 「뛰었다」가 보인다 — 이게 없으면
+             * 유닛이 그냥 순간이동한 것처럼 보인다.
+             */
+            const from = prevPos.get(e.id);
+            if (from && (from.x !== e.x || from.y !== e.y)) {
+              ramTrails.push({ x0: sx(from.x), y0: sy(from.y), x1: sx(e.x), y1: sy(e.y), start: now });
+            }
           } else if (castKind === 'threadStorm') {  // 실의 폭풍 — 은빛 실 그물
             ring(Math.max(R, 60), 0xdfe4f0);
             ring(Math.max(R, 60) * 0.72, 0xb0b8d0, 120);
@@ -2971,9 +2985,15 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
         // 지상 전용 strike(와이번)에 더해, 나는 유닛의 strike 도 포함한다 —
         // 숲올빼미 「급강하」는 대공도 되는 탓에 targets 가 'ground' 가 아니라
         // 전용 연출을 못 받아, 링 하나에 평타 모션만 나오고 있었다.
-        const isDive = castKind === 'strike' && (castSkill?.targets === 'ground' || d.flying);
+        /*
+         * 「도약 강습」(고우토): 심이 유닛을 착지 지점으로 이미 옮겨 놨다.
+         * 그래서 목표까지 날아가는 오프셋은 주지 않고, 제자리에서 솟구쳤다
+         * 꽂히는 동작 + 흙먼지만 쓴다 — 뛰어온 자국은 아래 속도선이 그린다.
+         */
+        const isLeapSlam = castKind === 'leap' && !!castSkill?.damage;
+        const isDive = isLeapSlam || (castKind === 'strike' && (castSkill?.targets === 'ground' || d.flying));
         // 맹금이 덮치는 급강하는 흙먼지가 아니라 깃털이 터진다 (공중 목표도 있으니)
-        const featherDive = isDive && d.flying && castSkill?.targets !== 'ground';
+        const featherDive = isDive && !isLeapSlam && d.flying && castSkill?.targets !== 'ground';
         if (isDive) {
           vfx.diveStart = now;
           vfx.diveUntil = now + (featherDive ? DIVE_MS * 1.6 : DIVE_MS);
@@ -3014,7 +3034,9 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
           vfx.aimUntil = now + (strikeTarget ? 400 : 600);
         }
         // 땅을 찍는 내리꽂기는 지진음, 맹금의 급강하는 날갯짓·울음소리
-        sfx(featherDive ? 'cast_dive' : isDive ? 'cast_quake' : castSfxOf(castSkill, e.defId), cx, isDive ? 1 : 0.85);
+        sfx(featherDive ? 'cast_dive'
+          : isLeapSlam ? 'cast_leap'
+          : isDive ? 'cast_quake' : castSfxOf(castSkill, e.defId), cx, isDive ? 1 : 0.85);
       }
       vfx.lastSkillCd = skillCdSum;
       vfx.lastSkillCds = [...e.skillCds];

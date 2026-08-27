@@ -2448,22 +2448,41 @@ export function stepCombat(g: Game): void {
             spendSkill(e, i, a);
             break;
           }
-          case 'leap': { // 「관짝 강습」(관짝지기) 후방 힐러·원거리에게 도약 — 도약 중 무적
+          case 'leap': { // 적에게 뛰어든다 — 도약 중 무적. damage 가 있으면 착지 지점에 꽂는다
             const range5 = a.castRange ?? tiles(5);
             const pick = (filter: (v: Entity) => boolean): Entity | undefined =>
               nearestFoeWithin(g, e, d, range5, (v) =>
                 g.tick >= v.invulnUntil && def(v).speed > 0 && filter(v));
-            // 우선순위: 지원가(힐러·버프·오라) > 원거리(사거리 2타일 이상) > 아무 적.
-            // 부대를 떠받치는 유닛을 먼저 끊는 것이 이 스킬의 존재 이유다.
-            const jumpTo = pick((v) => def(v).tags.includes('support'))
-              ?? pick((v) => (def(v).weapon?.range ?? 0) >= tiles(2))
-              ?? pick(() => true);
+            /*
+             * 조준 방식은 스킬이 정한다.
+             *  · backline (관짝 강습) — 지원가 > 원거리 > 아무 적. 부대를 떠받치는
+             *    유닛을 먼저 끊는 것이 그 스킬의 존재 이유다.
+             *  · nearest (고우토 도약 강습) — 가장 가까운 적. 45원짜리 기본 근접이
+             *    적 후열 힐러를 골라 무는 건 값에 비해 과하다. 거리 좁히기로만 둔다.
+             */
+            const jumpTo = a.leapAim === 'nearest'
+              ? pick(() => true)
+              : pick((v) => def(v).tags.includes('support'))
+                ?? pick((v) => (def(v).weapon?.range ?? 0) >= tiles(2))
+                ?? pick(() => true);
             if (jumpTo) {
               const jd = def(jumpTo);
               e.x = clamp(jumpTo.x - (jd.radius + d.radius), 0, g.map.length);
               e.y = clampLaneY(g.map, e.x, jumpTo.y);
               e.invulnUntil = g.tick + 12; // 0.6초 — 도약 중 무적
               e.targetId = jumpTo.id;
+              // 착지 피해 — splash 가 있으면 착지 지점 둘레를 통째로 친다
+              if (a.damage) {
+                if (a.splash) {
+                  const r = a.splash;
+                  for (const v of g.entities) {
+                    if (!v.alive || v.team === e.team || !canHit(g, d, v)) continue;
+                    if (dist2(jumpTo.x, jumpTo.y, v.x, v.y) <= r * r) applyStrike(g, e, a, v);
+                  }
+                } else {
+                  applyStrike(g, e, a, jumpTo);
+                }
+              }
               spendSkill(e, i, a);
             }
             break;

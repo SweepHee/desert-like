@@ -46,6 +46,8 @@ const SFX: Record<string, readonly string[]> = {
   cast_fire: ['/assets/sfx/cast_fire1.mp3'],
   cast_ice: ['/assets/sfx/cast_ice1.mp3'],
   cast_quake: ['/assets/sfx/cast_quake1.mp3'],
+  // 도약 강습 — 뛰어오르는 바람소리 + 흙바닥에 꽂히는 둔탁한 착지
+  cast_leap: ['/assets/sfx/cast_leap1.mp3'],
   cast_gravity: ['/assets/sfx/cast_gravity1.mp3'],
   cast_dark: ['/assets/sfx/cast_dark1.mp3'],
   cast_bell: ['/assets/sfx/cast_bell1.mp3'],

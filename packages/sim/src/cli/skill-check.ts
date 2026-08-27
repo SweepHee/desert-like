@@ -7,7 +7,7 @@
 import { createGame, spawnUnit } from '../game.ts';
 import { stepCombat } from '../battle.ts';
 import { tiles, seconds, TICK_HZ } from '../math.ts';
-import { DEFS, MAPS, unitsOfRace, flowFieldOf, maskStepsOf, isWalkable, maskIndexOf } from '../data.ts';
+import { DEFS, MAPS, applyBoons, unitsOfRace, flowFieldOf, maskStepsOf, isWalkable, maskIndexOf } from '../data.ts';
 import type { Entity, Game, RaceId, TeamId } from '../types.ts';
 
 const races: RaceId[] = ['sylvarin', 'pandemonium', 'marionetta', 'sylvarin', 'pandemonium', 'marionetta'];
@@ -1001,7 +1001,7 @@ function unlockSage(g: Game, sage: Entity): void {
 
 {
   // 캠페인 유닛 강화(BOONS): 스탯·패시브·액티브 부여가 정의에 반영되는지
-  const { applyBoons, effectiveDef: eff9, DEFS: D2 } = await import('../data.ts');
+  const { effectiveDef: eff9, DEFS: D2 } = await import('../data.ts');
   const base = D2.s_elf_archer!;
   const st = applyBoons(base, ['b_elf_volley']);
   ok(st.weapon!.cooldown < base.weapon!.cooldown && st.weapon!.range > base.weapon!.range, 'BOON 스탯형: 엘프 공속·사거리 즉시 적용');
@@ -1229,6 +1229,44 @@ function unlockSage(g: Game, sage: Entity): void {
   const before = v.hp;
   for (let t = 0; t < seconds(4); t++) { g.tick++; stepCombat(g); }
   ok(v.hp < before, `역병 늪: 장판 밖에서도 계속 닳는다 (${before} -> ${v.hp})`);
+}
+
+{
+  /*
+   * 「도약 강습」(고우토 강화 b_gouto_leap) — 정말 뛰어드는가.
+   *
+   * 예전엔 kind: 'strike' 라 제자리에서 평타 한 대가 광역으로 바뀔 뿐이었다.
+   * 설명은 「뛰어들어 착지 지점에」인데 아무도 안 뛰어서 「발동을 안 하는 것
+   * 같다」는 말이 나왔다. 지금은 kind: 'leap' 으로 실제로 자리를 옮긴다.
+   */
+  const a = applyBoons(DEFS['s_gouto']!, ['b_gouto_leap']).actives?.[0];
+  ok(a?.kind === 'leap', `도약 강습: leap 스킬이다 (실제 ${a?.kind})`);
+  ok(a?.castRange === tiles(4.5), `도약 강습: 사거리 4.5 (실제 ${(a?.castRange ?? 0) / 1000})`);
+  ok(a?.damage === 22, `도약 강습: 착지 피해 22 (실제 ${a?.damage})`);
+  ok(a?.leapAim === 'nearest', '도약 강습: 가장 가까운 적을 문다 (후열 저격 아님)');
+
+  const g = newArena();
+  const mid = tiles(30);
+  const me = spawnUnit(g, 's_gouto', 0, mid, 0, applyBoons(DEFS['s_gouto']!, ['b_gouto_leap']));
+  me.owner = 0;
+  // 4타일 밖 — 평타 사거리(0.4)로는 절대 못 닿는 거리에 둘을 붙여 세운다
+  const t0 = spawnUnit(g, 'p_deadman', 1, mid + tiles(4), 0);
+  const t1 = spawnUnit(g, 'p_deadman', 1, mid + tiles(4) + 400, 400);
+  t0.hp = 100000; t1.hp = 100000;
+  const hp1 = t1.hp;
+  const x0 = me.x;
+  let jumped = false;
+  for (let t = 0; t < seconds(3) && !jumped; t++) {
+    g.tick++;
+    me.hp = 100000;
+    stepCombat(g);
+    if (me.skillCds[0]! > 0) jumped = true;
+  }
+  ok(jumped, '도약 강습: 4타일 밖 적에게 발동한다');
+  const moved = (me.x - x0) / 1000;
+  ok(moved > 2, `도약 강습: 실제로 자리를 옮긴다 (${moved.toFixed(1)}타일)`);
+  ok(me.invulnUntil > g.tick, '도약 강습: 도약 중 무적');
+  ok(hp1 - t1.hp > 0, `도약 강습: 착지 지점 광역이 옆 적에게도 들어간다 (${hp1 - t1.hp})`);
 }
 
 {

@@ -277,6 +277,12 @@ export interface ActiveSkill {
   readonly zoneDps?: number;
   /** 차지를 연달아 쓸 때의 최소 간격 (틱). 생략 시 3초. */
   readonly chargeGap?: number;
+  /**
+   * leap: 누구에게 뛰어드는가.
+   *  · 'backline' (기본) — 지원가 > 원거리 > 아무 적. 「관짝 강습」처럼 뒤를 끊는 스킬.
+   *  · 'nearest'         — 가장 가까운 적. 기본 근접 유닛의 거리 좁히기용.
+   */
+  readonly leapAim?: 'backline' | 'nearest';
   /** freeze: 이 태그들은 빙결 면역에서 제외한다 (얼려버린다). */
   readonly freezeAlsoTags?: readonly Tag[];
   /** 「화상」 — 맞은 적이 이 시간 동안 초당 dps 만큼 탄다 (독과 별개로 누적). */

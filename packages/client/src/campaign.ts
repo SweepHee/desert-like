@@ -398,7 +398,7 @@ const U1 = ['s_gouto', 's_elf_archer'];
 const U2 = U1;
 const U3 = [...U2, 's_marmot'];
 const U4 = [...U3, 's_druid', 's_mushroom_bomber'];
-// 덩굴 사냥꾼은 4(독이 스민 숲) 클리어 보상 — 브리아의 정원을 지나며 배운 잠행이다
+// 덩굴 사냥꾼은 4(독이 스민 숲) 클리어 보상 — 늪 건너편에 갇혀 있던 에메랄드 숲 사람들이 합류한다
 const U5 = [...U4, 's_vine_hunter', 's_owl', 's_butterfly'];
 const U8 = [...U5, 's_thorn_witch'];
 const U11 = [...U8, 's_treekeeper', 's_wyvern', 's_unicorn', 's_fairy'];
@@ -458,9 +458,10 @@ export const SYLVARIN_CAMPAIGN: readonly CampaignStage[] = [
     ],
   },
   {
-    id: 2, act: 1, title: '재가 내리는 길', goal: '피난 행렬 호위 — 15분간 넥서스를 지켜라',
+    id: 2, act: 1, title: '재가 내리는 길', goal: '피난 행렬 호위 — 10분간 넥서스를 지켜라',
     allowedUnits: U2, enemies: ['pandemonium'], allies: [], botDifficulty: 'easy',
-    mission: 'survive', surviveSec: 900, seed: seedOf(2), noTowers: true, incomeCap: 3, techCap: 2,
+    // 15분은 살 유닛이 둘뿐인 두 번째 판에서 너무 길었다 — 뒤 5분은 같은 싸움의 반복이다
+    mission: 'survive', surviveSec: 600, seed: seedOf(2), noTowers: true, incomeCap: 3, techCap: 2,
     enemySkin: 'bone',
     spawns: [{ defId: 'c_ash_revenant', label: '재의 원귀', everySec: 150 }],
     briefing: [
@@ -475,9 +476,10 @@ export const SYLVARIN_CAMPAIGN: readonly CampaignStage[] = [
     ],
   },
   {
-    id: 3, act: 1, title: '마멋 구릉', goal: '마멋 부족의 시험 — 15분간 버텨라',
+    id: 3, act: 1, title: '마멋 구릉', goal: '마멋 부족의 시험 — 12분간 버텨라',
     allowedUnits: U3, enemies: ['pandemonium'], allies: [], botDifficulty: 'easy',
-    mission: 'survive', surviveSec: 900, seed: seedOf(3), noTowers: true, incomeCap: 3, techCap: 2,
+    // 2(10분)에서 한 단 올린 값. 15분은 유닛 세 종으로 버티기엔 뒤가 늘어졌다
+    mission: 'survive', surviveSec: 720, seed: seedOf(3), noTowers: true, incomeCap: 3, techCap: 2,
     enemySkin: 'bone',
     spawns: [
       { defId: 'c_ash_revenant', label: '재의 원귀', everySec: 180, count: 2 },
@@ -519,10 +521,13 @@ export const SYLVARIN_CAMPAIGN: readonly CampaignStage[] = [
       { who: '카엘', text: '…지금 숲이 불타는데 통행료?' },
       { who: '브리아', text: '불탄 건 저쪽이고 여긴 썩었어. 늪물은 한 번 묻으면 씻어도 안 빠져. 경고는 했다?', side: 'right' },
       { who: '티아', text: '…대장, 저 물 초록색이에요. 저건 물이 아니에요.' },
+      { who: '아린', text: '독은 늪을 나와도 안 풀립니다. 다만 치유를 한 번 받으면 씻기고, 그 뒤 7초는 다시 안 붙어요.' },
+      { who: '카엘', text: '…그 7초 안에 늪을 건너라는 소리군. 드루이드를 뒤에 붙여라.' },
     ],
     outro: [
       { who: '티아', text: '저 마녀, 말은 저래도… 독에 당한 애들 해독초를 두고 갔어요.' },
-      { who: '아린', text: '늪가를 지나며 애들이 덩굴 타는 법을 익혔습니다. 다음 판부터 덩굴 사냥꾼을 붙일 수 있어요. (덩굴 사냥꾼 해금)' },
+      { who: '아린', text: '대장, 늪 건너편에서 사람이 나왔습니다. 에메랄드 숲의 덩굴 사냥꾼들이에요 — 길이 끊겨 여태 갇혀 있었답니다.' },
+      { who: '카엘', text: '이 숲의 뒷길을 전부 아는 사람들이다. 데려간다. (덩굴 사냥꾼 편대 합류!)' },
     ],
   },
   {
@@ -557,11 +562,13 @@ export const SYLVARIN_CAMPAIGN: readonly CampaignStage[] = [
         { fromWave: 4, units: ['p_hound', 'p_bone_thrower', 'p_wraith', 'p_headless_knight'] },
       ],
       /*
-       * 4턴 망령은 확정 편입으로 못 박는다 — 돈과 테크에 맡기면 봇이 테크 2를
-       * 늦게 찍어 5~6턴에야 첫 망령이 떴다 (실측). 편성은 매 턴 통째로 다시
-       * 나가므로 이 한 줄이 「턴이 갈수록 두꺼워지는 대공」이 된다.
+       * 확정 편입(forcedGrowth)은 쓰지 않는다.
+       *
+       * 4턴 망령을 못 박아 봤는데, 편성은 매 턴 통째로 다시 나가므로 턴 수만큼
+       * 쌓여서(4턴 1기 → 8턴 6기…) 2분마다 오는 가고일과 겹쳐 감당이 안 됐다.
+       * 망령은 enemyPreferredUnits 가중(x8)만으로도 봇이 알아서 계속 산다 —
+       * 첫 마리가 5~6턴으로 한 턴 늦어지는 대신 물량이 완만해진다.
        */
-      forcedGrowth: [{ fromWave: 4, units: ['p_wraith'], perWave: 1 }],
     }],
     spawns: [
       { defId: 'c_dread_gargoyle', label: '공포의 가고일', everySec: 120 },

@@ -1233,6 +1233,44 @@ function unlockSage(g: Game, sage: Entity): void {
 
 {
   /*
+   * 「중독 방지막」 — 치유를 받으면 독이 씻기고 7초간 다시 안 걸린다.
+   *
+   * 이게 없으면 늪 위에서는 치유가 무의미하다: 씻어낸 다음 틱에 그대로 다시
+   * 걸린다. 4스테이지가 「힐러를 사야 하는 판」으로 성립하는 근거라서 잠근다.
+   */
+  const g = newArena();
+  const mid = tiles(30);
+  spawnUnit(g, 'c_rotting_corpse', 1, mid, 0);
+  const v = spawnUnit(g, 's_gouto', 0, mid - tiles(3), 0);
+  for (let t = 0; t < seconds(12) && g.tick >= v.dotUntil; t++) { g.tick++; stepCombat(g); }
+  ok(g.tick < v.dotUntil, '중독 방지막: (준비) 먼저 독에 걸린다');
+
+  // 드루이드를 옆에 세운다 — 치유가 닿는 순간 독이 씻겨야 한다
+  v.hp = Math.floor(v.hp / 2);
+  spawnUnit(g, 's_druid', 0, v.x, v.y + tiles(1));
+  let cleaned = -1;
+  for (let t = 0; t < seconds(6) && cleaned < 0; t++) {
+    g.tick++;
+    stepCombat(g);
+    if (g.tick >= v.dotUntil) cleaned = g.tick;
+  }
+  ok(cleaned > 0, '중독 방지막: 치유를 받으면 독이 씻긴다');
+  ok(v.poisonWardUntil > g.tick, '중독 방지막: 치유와 함께 방지막이 붙는다');
+  const ward = (v.poisonWardUntil - cleaned) / TICK_HZ;
+  ok(ward > 6.5 && ward <= 7.05, `중독 방지막: 7초 (실제 ${ward.toFixed(1)}초)`);
+
+  // 방지막이 붙은 채로 늪 위에 계속 서 있어도 다시 안 걸린다
+  let reInfected = false;
+  for (let t = 0; t < seconds(4); t++) {
+    g.tick++;
+    stepCombat(g);
+    if (g.tick < v.dotUntil) reInfected = true;
+  }
+  ok(!reInfected, '중독 방지막: 늪 위에 서 있어도 7초간 다시 안 걸린다');
+}
+
+{
+  /*
    * 「올빼미 성채」(5스테이지) 지형 계약 — 절벽·언덕·계단 판.
    *
    * 이 판의 근거가 전부 지형에 있다. 마스크는 작가 지형에서 굽는 것이라

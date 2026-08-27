@@ -2437,7 +2437,7 @@ reg(D({
   speed: tilesPerSecond(1.1), radius: tiles(0.75), acquireRange: tiles(6),
   weapon: { damage: 28, cooldown: seconds(1.5), range: tiles(0.9), targets: 'ground' },
   actives: [{
-    name: '역병 늪', desc: '넓은 독 장판 — 밟은 적은 16초간 초당 6 독 피해 (장판을 벗어나도 유지)',
+    name: '역병 늪', desc: '넓은 독 장판 — 밟은 적은 16초간 초당 6 독 피해 (장판을 벗어나도 유지). 치유를 받으면 씻기고 7초간 다시 안 걸린다',
     kind: 'zone', cooldown: seconds(6), castRange: tiles(4.5), zoneAtTarget: true, targets: 'ground',
     zone: { kind: 'venom', radius: tiles(3.5), ticks: seconds(8) },
   }],

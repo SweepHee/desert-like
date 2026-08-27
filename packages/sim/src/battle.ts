@@ -10,7 +10,7 @@ import {
   GUARDIAN_OF, DEFS, MAP, ZONE_DEFS, FOREST_BUFFS, WEAKEN_PCT, CHILL_PCT, SLEEP_BREAK_HITS,
   FREEZE_IMMUNE_TAGS, FX_ZONE_TICKS, TIER_RANK, CHARM_MIN_RANK, effectiveDef, laneCenterY, clampLaneY, isWalkable, flowStep, flowStepTo,
 } from './data.ts';
-import { dist2, idiv, isqrt, clamp, tiles, TICK_HZ } from './math.ts';
+import { dist2, idiv, isqrt, clamp, seconds, tiles, TICK_HZ } from './math.ts';
 import { nextChance, nextInt } from './rng.ts';
 import { isCombatTag } from './types.ts';
 import type { ActiveSkill, CombatTeam, Entity, EntityDef, Game, TeamId } from './types.ts';
@@ -135,6 +135,28 @@ function hasDebuff(g: Game, e: Entity): boolean {
     || g.tick < e.frozenUntil || g.tick < e.groundedUntil
     || g.tick < e.chilledUntil || g.tick < e.fearedUntil
     || g.tick < e.seducedUntil || g.tick < e.burnUntil || g.tick < e.chokedUntil;
+}
+
+/**
+ * 「중독 방지막」 지속 시간 — 치유를 받은 뒤 이만큼 독에 다시 안 걸린다.
+ *
+ * 4 「독이 스민 숲」의 역병 늪은 밟는 동안 매 틱 독을 새로 얹는다. 치유가
+ * 독을 씻기만 하면 다음 틱에 그대로 다시 걸려서 힐러를 사도 소용이 없었다.
+ * 「치유 = 잠깐의 면역」이라야 늪을 건너는 그림이 나온다.
+ */
+const POISON_WARD = seconds(7);
+
+/** 치유를 받았다 — 독을 씻어내고 잠시 다시 안 걸리게 한다. */
+function wardPoison(g: Game, e: Entity): void {
+  e.dotUntil = 0;
+  e.dotDps = 0;
+  const until = g.tick + POISON_WARD;
+  if (until > e.poisonWardUntil) e.poisonWardUntil = until;
+}
+
+/** 지금 독에 다시 걸릴 수 없는가 (치유 직후). */
+function poisonWarded(g: Game, e: Entity): boolean {
+  return g.tick < e.poisonWardUntil;
 }
 
 /** 걸려 있는 해로운 상태를 전부 지운다 (버프는 유지). */
@@ -929,7 +951,8 @@ function applyDamage(g: Game, attacker: Entity, attackerDef: EntityDef, victim: 
   }
 
   // 지속피해 (독/화상). 갱신 시 dps 는 더 센 쪽 유지.
-  if (w.dotDps && w.dotTicks) {
+  // 치유 직후(방지막)에는 아예 안 걸린다.
+  if (w.dotDps && w.dotTicks && !poisonWarded(g, victim)) {
     const apply = w.dotChance === undefined || nextChance(g.rng, w.dotChance);
     if (apply) {
       const until = g.tick + w.dotTicks;
@@ -1029,6 +1052,7 @@ function spawnBattleEntity(g: Game, defId: string, team: CombatTeam, owner: numb
     homeY: -1,
     dotUntil: 0,
     dotDps: 0,
+    poisonWardUntil: 0,
     rootedUntil: 0,
     stunnedUntil: 0,
     skillCds: d.actives?.map(() => 0) ?? [],
@@ -1390,7 +1414,7 @@ export function stepCombat(g: Game): void {
            * 이건 유닛에 상태이상으로 얹히므로 나와도 계속 닳는다 — 물러서기가
            * 답이 아니라 치유가 답이 되게 하는 장치. 갱신은 더 센 쪽·더 긴 쪽.
            */
-          if (zd.poison && !blocksStatus(g, e)) {
+          if (zd.poison && !blocksStatus(g, e) && !poisonWarded(g, e)) {
             const until = g.tick + zd.poison.ticks;
             if (until > e.dotUntil) e.dotUntil = until;
             if (zd.poison.dps > e.dotDps) e.dotDps = zd.poison.dps;
@@ -1423,6 +1447,7 @@ export function stepCombat(g: Game): void {
             e.hp += zd.healBioPerSec;
             if (e.hp > max) e.hp = max;
           }
+          wardPoison(g, e); // 체력이 꽉 차 있어도 「치유를 받은」 것으로 친다
         }
       }
     }
@@ -3051,6 +3076,7 @@ export function stepCombat(g: Game): void {
         : d.heal.amount;
       const max = def(ally).maxHp;
       if (ally.hp > max) ally.hp = max;
+      wardPoison(g, ally);
       healedAny = true;
     }
     // 전원 상한에 걸렸으면 쿨 소모 없이 다음 틱에 재판정

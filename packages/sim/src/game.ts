@@ -43,6 +43,7 @@ function spawnEntity(g: Game, defId: string, team: CombatTeam, owner: number, x:
     homeY: -1,
     dotUntil: 0,
     dotDps: 0,
+    poisonWardUntil: 0,
     rootedUntil: 0,
     stunnedUntil: 0,
     skillCds: (ov ?? d).actives?.map(() => 0) ?? [],

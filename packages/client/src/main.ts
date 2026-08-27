@@ -43,7 +43,8 @@ import { iconUrl } from './sprites.ts';
 import { connect, serverUrl, type Net, type NetMsg } from './net.ts';
 import {
   authAvailable, isLoggedIn, isTester, profile, logout, prepareLogin, startLogin,
-  fetchSave, pushSave, markSynced, alreadySynced, type SaveData,
+  fetchSave, pushSave, markSynced, alreadySynced, accountUid, saveOwner, setSaveOwner,
+  type SaveData,
 } from './auth.ts';
 
 const RACES: RaceId[] = ['sylvarin', 'pandemonium', 'marionetta'];
@@ -4625,43 +4626,78 @@ function refreshAuthUi(): void {
 /** 이번 세션에서 "나중에"를 눌렀는가 — 눌렀으면 다시 묻지 않는다 (무한 반복 방지). */
 let syncDeferred = false;
 
+const EMPTY_SAVE: SaveData = { cleared: 0, perks: {}, boons: {}, updatedAt: 0 };
+
 function maybeSync(serverSave: SaveData | null): Promise<void> {
   return new Promise((resolve) => {
     if (!isLoggedIn() || syncDeferred) { resolve(); return; }
     const local = localSave();
     const remote = serverSave;
+    const me = accountUid();
+    const owner = saveOwner();
+    /*
+     * 이 기기 기록이 「다른 계정 것」이면 묻지 않고 계정 기록으로 갈아 끼운다.
+     *
+     * 예전엔 주인이 누구든 상관없이, 새로 로그인한 계정이 비어 있으면 그대로
+     * 올려 버렸다 — 계정을 바꿔 로그인한 순간 앞 계정의 진행이 새 계정에
+     * 통째로 복사됐다. 물어보는 것도 답이 아니다: 「이 기기 기록」이 애초에
+     * 내 것이 아니므로 올릴 선택지 자체가 있으면 안 된다.
+     */
+    if (me && owner && owner !== me) {
+      applySave(remote ?? EMPTY_SAVE);
+      setSaveOwner(me);
+      markSynced();
+      campaignAlertText = `☁ ${profile()?.name ?? '계정'} 의 진행 상황을 불러왔습니다`;
+      campaignAlertUntil = performance.now() + 5000;
+      resolve();
+      return;
+    }
     const sameProgress = remote !== null
       && remote.cleared === local.cleared
       && JSON.stringify(remote.perks) === JSON.stringify(local.perks)
       && JSON.stringify(remote.boons) === JSON.stringify(local.boons);
-    if (sameProgress) { markSynced(); resolve(); return; }
-    // 계정이 비어 있고 로컬만 있으면 묻지 않고 그대로 올린다 (첫 로그인)
-    if (!remote || (remote.cleared === 0 && Object.keys(remote.perks).length === 0)) {
+    if (sameProgress) { setSaveOwner(me); markSynced(); resolve(); return; }
+    /*
+     * 묻지 않고 올려도 되는 경우는 둘뿐이다.
+     *   · 이 기기 기록이 내 것이라고 표식이 말해 준다
+     *   · 올릴 게 아예 없다 (빈 기록이라 덮어써도 잃을 게 없다)
+     * 표식이 없는 기기(이 기능이 생기기 전부터 쓰던 기기)에서 남의 기록을
+     * 들고 새 계정에 로그인하는 경우를 이 둘로는 가려낼 수 없으므로, 나머지는
+     * 전부 물어본다. 예전엔 「계정이 비었으면 무조건 올린다」였고 그게 남의
+     * 진행을 새 계정에 통째로 복사한 원인이다.
+     */
+    const remoteEmpty = !remote || (remote.cleared === 0 && Object.keys(remote.perks).length === 0);
+    const mine = !!me && owner === me;
+    const trivial = local.cleared === 0 && Object.keys(local.boons).length === 0;
+    if (remoteEmpty && (mine || trivial)) {
       pushSave(local);
+      setSaveOwner(me);
       markSynced();
       resolve();
       return;
     }
     const modal = $('#sync-modal');
     const boonCount = (b: Record<string, string | string[]>): number => Object.keys(b).length;
+    const whose = owner && owner === me ? '이 기기' : '이 기기(로그인 전 기록)';
     $('#sync-desc').textContent =
-      `이 기기와 계정의 진행 상황이 다릅니다.
+      `${profile()?.name ?? '계정'} 님 — 이 기기와 계정의 진행 상황이 다릅니다.
 
 `
-      + `💻 이 기기 — ${local.cleared}스테이지 클리어 · 강화 ${boonCount(local.boons)}종
+      + `💻 ${whose} — ${local.cleared}스테이지 클리어 · 강화 ${boonCount(local.boons)}종
 `
-      + `☁ 계정 — ${remote.cleared}스테이지 클리어 · 강화 ${boonCount(remote.boons)}종
+      + `☁ 계정 — ${remote?.cleared ?? 0}스테이지 클리어 · 강화 ${boonCount(remote?.boons ?? {})}종
 
 `
       + `어느 쪽을 기준으로 맞출까요? (선택한 쪽으로 덮어씁니다)`;
     modal.classList.remove('hidden');
     const done = (): void => {
       modal.classList.add('hidden');
+      setSaveOwner(me);
       markSynced();
       resolve();
     };
     ($('#sync-pull') as HTMLButtonElement).onclick = () => {
-      applySave(remote);
+      applySave(remote ?? EMPTY_SAVE);
       done();
     };
     ($('#sync-push') as HTMLButtonElement).onclick = () => {
@@ -4683,9 +4719,17 @@ function initAuth(): void {
     refreshAuthUi();
     void maybeSync(serverSave);
   });
-  // 이미 로그인된 채 접속: 서버에서 테스터 표식을 최신화한다
+  // 이미 로그인된 채 접속: 서버에서 테스터 표식·uid 를 최신화한다
   // (화이트리스트 등록 전에 로그인했던 계정도 새로고침만으로 3막이 열리게)
-  if (isLoggedIn()) void fetchSave().then(() => refreshAuthUi());
+  if (isLoggedIn()) {
+    void fetchSave().then(() => {
+      refreshAuthUi();
+      // 주인 표식이 생기기 전부터 쓰던 기기: 지금 로그인한 계정 것으로 본다.
+      // (예전엔 「이 기기 기록 = 지금 로그인한 사람 것」이 암묵 전제였다)
+      const me = accountUid();
+      if (me && !saveOwner()) setSaveOwner(me);
+    });
+  }
   ($('#btn-logout') as HTMLButtonElement).onclick = () => {
     logout();
     refreshAuthUi();

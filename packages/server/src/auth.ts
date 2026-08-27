@@ -273,8 +273,8 @@ function readBody(req: IncomingMessage): Promise<string> {
 /**
  * /api/* 요청 처리. 처리했으면 true.
  * 엔드포인트:
- *   POST /api/auth/google  { idToken }        → { token, name, picture, save }
- *   GET  /api/save         (Bearer)           → { save }
+ *   POST /api/auth/google  { idToken }        → { token, uid, name, picture, save }
+ *   GET  /api/save         (Bearer)           → { save, uid }
  *   POST /api/save         (Bearer) { save }  → { ok }
  *   POST /api/auth/logout  (Bearer)           → { ok }
  */
@@ -317,14 +317,16 @@ export async function handleApi(req: IncomingMessage, res: ServerResponse): Prom
     const token = randomBytes(24).toString('hex');
     store.sessions[token] = profile.sub;
     persist();
-    json(res, 200, { token, name: acc.name, picture: acc.picture, tester: isTester(acc.email), save: acc.save });
+    // uid(구글 sub)를 함께 준다 — 클라이언트가 「이 기기 기록이 누구 것인가」를
+    // 표시해 두고, 계정을 바꿔 로그인했을 때 남의 기록을 올려 버리지 않게 한다.
+    json(res, 200, { token, uid: acc.sub, name: acc.name, picture: acc.picture, tester: isTester(acc.email), save: acc.save });
     return true;
   }
 
   if (url === '/api/save' && req.method === 'GET') {
     const acc = sessionOf(req);
     if (!acc) { json(res, 401, { error: 'unauthorized' }); return true; }
-    json(res, 200, { save: acc.save, name: acc.name, picture: acc.picture, tester: isTester(acc.email) });
+    json(res, 200, { save: acc.save, uid: acc.sub, name: acc.name, picture: acc.picture, tester: isTester(acc.email) });
     return true;
   }
 

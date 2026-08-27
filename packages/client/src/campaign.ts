@@ -566,28 +566,38 @@ export const SYLVARIN_CAMPAIGN: readonly CampaignStage[] = [
     spawns: [
       { defId: 'c_dread_gargoyle', label: '공포의 가고일', everySec: 120 },
       /*
-       * 절벽 기습 — 70초마다 「기지 앞 진흙탕」(terrain mud[0], 16.5/-14.1) 옆
-       * 벼랑을 기어올라 온다.
+       * 절벽 기습 — 60초마다 「기지 앞 진흙탕」(terrain mud[0], 16.5/-14.1) 옆
+       * 벼랑을 기어올라 온다. 주기는 출정 간격(60초)과 같다 — 어긋나 있으면
+       * 내 부대가 이미 지나간 뒤에 올라와 아무도 안 마주친다.
        *
        * 산길이 워낙 멀어 걸어오는 적은 도착할 때쯤 진흙·덩굴에 다 닳아 있었고
        * 넥서스에 흠집도 못 냈다. 처음엔 언덕 뒤에 세웠는데 그러면 우리 부대가
        * 이미 출정한 뒤라 아무도 안 마주쳤다 — 출정로 위, 첫 굽이에 세운다.
        *
-       * countAdd: 등장할 때마다 불어난다. 1회 2/5/5(12기) → 2회 4/8/10(22기)
-       * → 3회 6/11/15(32기) … 오래 끌수록 감당이 안 되게.
+       * countAdd: 등장할 때마다 한 기씩 불어난다.
+       *   1회 사냥개 5 · 투척병 5 (10기)
+       *   2회 6 · 6 … 5회 9 · 9
+       *   6회부터 목없는 기사가 합류해 역시 한 기씩 는다 (6회 1 · 10 · 10)
+       * 처음부터 기사를 세우면 초반 부대가 그냥 녹아서, 앞 다섯 판은 잡졸로만
+       * 두들기고 판이 길어질수록 앞열이 두꺼워지게 했다.
        */
-      { defId: 'p_bone_thrower', label: '절벽에서 기어오른다! 목없는 기사·해골 투척병·시체 사냥개!',
-        everySec: 70, count: 5, countAdd: 3, atXTile: 15.5, yOffTile: -15.0,
+      { defId: 'p_bone_thrower', label: '절벽에서 기어오른다! 시체 사냥개·해골 투척병!',
+        everySec: 60, count: 5, countAdd: 1, atXTile: 15.5, yOffTile: -15.0,
         onFirstDialogue: [
           { who: '아린', text: '대장! 첫 굽이 진흙탕입니다. 벼랑 아래에서… 손이 올라옵니다.' },
           { who: '카엘', text: '기어올라 온다고? 저 절벽을?' },
           { who: '티아', text: '죽은 것들이잖아요. 떨어져도 안 아파요.' },
           { who: '카엘', text: '…나가는 길목이 그대로 싸움터다. 하늘만 보고 있으면 발밑이 끊긴다.' },
         ] },
-      { defId: 'p_headless_knight', label: '', quiet: true,
-        everySec: 70, count: 2, countAdd: 2, atXTile: 16.5, yOffTile: -13.0 },
       { defId: 'p_hound', label: '', quiet: true,
-        everySec: 70, count: 5, countAdd: 5, atXTile: 17.5, yOffTile: -14.5 },
+        everySec: 60, count: 5, countAdd: 1, atXTile: 17.5, yOffTile: -14.5 },
+      // 목없는 기사는 6회차(6분)부터. fromSec 이 첫 등장 시각이 된다.
+      { defId: 'p_headless_knight', label: '', quiet: true,
+        fromSec: 360, everySec: 60, count: 1, countAdd: 1, atXTile: 16.5, yOffTile: -13.0,
+        onFirstDialogue: [
+          { who: '아린', text: '…이번엔 다릅니다. 갑옷 끄는 소리예요.' },
+          { who: '카엘', text: '기사까지 올려 보냈군. 앞열을 두껍게 세워라.' },
+        ] },
     ],
     briefing: [
       { who: '아린', text: '…길이 없습니다. 저건 길이 아니라 미로예요.' },
@@ -1515,28 +1525,49 @@ export function setProgressListener(fn: () => void): void {
   onProgressChanged = fn;
 }
 
+/** 영웅 강화를 perks 에 실어 보낼 때 쓰는 접두사. */
+const HERO_PREFIX = 'hero:';
+
 /** 현재 로컬 진행 상황 스냅샷 (클라우드 세이브와 같은 모양). */
 export function localSave(): { cleared: number; perks: Record<string, number>; boons: Record<string, string[]>; updatedAt: number } {
-  // 서버는 cleared/perks/boons 만 저장한다 — 세계수 경험치는 perks 에 편승시킨다.
-  // (perkAlloc 은 PERKS 목록에 있는 id 만 통과시키므로 되읽을 때 자동으로 걸러진다)
+  /*
+   * 서버는 cleared/perks/boons 만 저장한다 — 세계수 경험치와 영웅 강화는
+   * perks 에 편승시킨다 (perkAlloc 은 PERKS 목록에 있는 id 만 통과시키므로
+   * 되읽을 때 자동으로 걸러진다).
+   *
+   * 영웅 강화가 빠져 있으면 계정 기록을 내려받아도 이 기기에 남아 있던 앞
+   * 계정의 영웅 강화가 그대로 살아남는다 — 계정을 갈아도 안 지워지던 원인.
+   */
+  const hero: Record<string, number> = {};
+  for (const [k, v] of Object.entries(heroAlloc())) hero[HERO_PREFIX + k] = v;
   return {
     cleared: campaignCleared(),
-    perks: { ...perkAlloc(), _treeXp: treeXpTotal() },
+    perks: { ...perkAlloc(), ...hero, _treeXp: treeXpTotal() },
     boons: boonChoices(),
     updatedAt: Date.now(),
   };
 }
 
-/** 클라우드에서 받은 진행 상황을 로컬에 통째로 덮어쓴다 (동기화). */
+/**
+ * 클라우드에서 받은 진행 상황을 로컬에 통째로 덮어쓴다 (동기화).
+ *
+ * 「통째로」가 중요하다 — 예전엔 영웅 강화(camp_hero_upgrades)를 건드리지
+ * 않아서, 다른 계정 기록을 내려받아도 앞 계정의 영웅 강화가 남아 섞였다.
+ */
 // boons 는 예전 저장본(문자열 하나)일 수도 있다 — 읽는 쪽(boonChoices)이 감싸 준다
 export function applySave(save: { cleared: number; perks: Record<string, number>; boons: Record<string, string | string[]> }): void {
-  const tx = save.perks['_treeXp'];
-  if (typeof tx === 'number' && Number.isFinite(tx) && tx >= 0) {
-    localStorage.setItem(TREE_KEY, String(Math.floor(tx)));
-  }
+  const perks = save.perks ?? {};
+  const tx = perks['_treeXp'];
+  localStorage.setItem(TREE_KEY,
+    typeof tx === 'number' && Number.isFinite(tx) && tx >= 0 ? String(Math.floor(tx)) : '0');
   localStorage.setItem(SAVE_KEY, String(Math.max(0, Math.floor(save.cleared))));
-  localStorage.setItem(PERK_KEY, JSON.stringify(save.perks ?? {}));
+  localStorage.setItem(PERK_KEY, JSON.stringify(perks));
   localStorage.setItem(BOON_KEY, JSON.stringify(save.boons ?? {}));
+  const hero: Record<string, number> = {};
+  for (const [k, v] of Object.entries(perks)) {
+    if (k.startsWith(HERO_PREFIX) && typeof v === 'number' && v > 0) hero[k.slice(HERO_PREFIX.length)] = v;
+  }
+  localStorage.setItem(HERO_KEY, JSON.stringify(hero));
 }
 
 const SAVE_KEY = 'campaign_sylvarin_cleared';

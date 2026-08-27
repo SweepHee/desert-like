@@ -17,6 +17,8 @@ export interface SaveData {
 }
 
 export interface Profile {
+  /** 구글 계정 고유 id (서버가 준다). 예전 서버는 안 줄 수 있어 선택. */
+  uid?: string;
   name: string;
   picture: string;
   /** 미공개 콘텐츠(3막) 테스터인가 — 서버의 이메일 화이트리스트가 정한다. */
@@ -27,6 +29,14 @@ const LS_TOKEN = 'dl_auth_token';
 const LS_PROFILE = 'dl_auth_profile';
 /** 이 계정과 이미 동기화를 끝냈는지 (스테이지 진입 때마다 묻지 않도록). */
 const LS_SYNCED = 'dl_auth_synced';
+/**
+ * 이 기기에 저장된 진행 상황이 「어느 계정 것인가」.
+ *
+ * localStorage 는 기기 단위라 계정을 바꿔 로그인해도 앞 계정의 진행이 그대로
+ * 남아 있다. 표식이 없던 시절에는 새 계정이 비어 있으면 묻지도 않고 그걸
+ * 그대로 올려 버려서, 남의 기록이 새 계정에 통째로 복사됐다.
+ */
+const LS_SAVE_OWNER = 'dl_save_owner';
 
 // trim 필수 — 환경변수를 붙여넣을 때 끝에 개행이 딸려 오면 그대로 구워져서
 // 구글이 client_id 를 '...com%0A' 로 받고 400(invalid_request)을 돌려준다
@@ -61,6 +71,23 @@ export function isLoggedIn(): boolean {
 /** 미공개 콘텐츠(3막) 접근 가능 계정인가. */
 export function isTester(): boolean {
   return profile()?.tester === true;
+}
+
+/** 지금 로그인한 계정의 고유 id (모르면 null). */
+export function accountUid(): string | null {
+  return profile()?.uid ?? null;
+}
+
+/** 이 기기 진행 상황의 주인 계정 id (로그인 전 기록이면 null). */
+export function saveOwner(): string | null {
+  try { return localStorage.getItem(LS_SAVE_OWNER); } catch { return null; }
+}
+
+export function setSaveOwner(uid: string | null): void {
+  try {
+    if (uid) localStorage.setItem(LS_SAVE_OWNER, uid);
+    else localStorage.removeItem(LS_SAVE_OWNER);
+  } catch { /* 무시 */ }
 }
 
 export function markSynced(): void {
@@ -167,11 +194,11 @@ async function exchange(accessToken: string, onDone: (s: SaveData) => void): Pro
       throw new Error(`auth ${res.status}${why ? ` (${why})` : ''}`);
     }
     const data = (await res.json()) as {
-      token: string; name: string; picture: string; tester?: boolean; save: SaveData;
+      token: string; uid?: string; name: string; picture: string; tester?: boolean; save: SaveData;
     };
     localStorage.setItem(LS_TOKEN, data.token);
     localStorage.setItem(LS_PROFILE, JSON.stringify({
-      name: data.name, picture: data.picture, tester: data.tester === true,
+      uid: data.uid, name: data.name, picture: data.picture, tester: data.tester === true,
     }));
     localStorage.removeItem(LS_SYNCED); // 새 로그인 → 동기화 다시 묻는다
     onDone(data.save);
@@ -189,11 +216,13 @@ export async function fetchSave(): Promise<SaveData | null> {
     const res = await fetch(`${apiBase()}/api/save`, { headers: { authorization: `Bearer ${t}` } });
     if (res.status === 401) { logout(); return null; } // 세션 만료
     if (!res.ok) return null;
-    const data = (await res.json()) as { save: SaveData; tester?: boolean };
+    const data = (await res.json()) as { save: SaveData; uid?: string; tester?: boolean };
     const pr = profile();
-    if (pr && pr.tester !== (data.tester === true)) {
-      // 화이트리스트 변경이 다음 접속에 반영되도록 프로필을 최신화
-      localStorage.setItem(LS_PROFILE, JSON.stringify({ ...pr, tester: data.tester === true }));
+    if (pr && (pr.tester !== (data.tester === true) || (data.uid && pr.uid !== data.uid))) {
+      // 화이트리스트 변경·uid 를 다음 접속에 반영하도록 프로필을 최신화
+      localStorage.setItem(LS_PROFILE, JSON.stringify({
+        ...pr, uid: data.uid ?? pr.uid, tester: data.tester === true,
+      }));
     }
     return data.save;
   } catch { return null; }

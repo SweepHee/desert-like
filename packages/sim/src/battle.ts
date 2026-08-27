@@ -513,6 +513,39 @@ function nudgeOntoPath(g: Game, e: Entity): void {
   else e.y = cy;
 }
 
+/**
+ * 집결 자리 — 반경 안에서 유닛마다 정해지는 고정 위치 (id 로 결정, 난수 없음).
+ *
+ * 전원이 한 점을 향하면 서로 밀며 자리다툼만 했고, 반경에 들어서자마자 멈추게
+ * 하니 이번엔 들어온 쪽 가장자리에만 뭉쳤다 — 앞줄 원거리만 쏘고 뒤에 낀 근접은
+ * 아무것도 못 했다. 원 안을 고르게 나눠 서면 둘 다 안 생긴다.
+ *
+ * 12방향 x 4겹 = 48자리. 겹보다 유닛이 많으면 자리가 겹치는데, 그건 겹침 해소가
+ * 밀어내 준다 (한 점에 몰릴 때와 달리 뭉치는 지점이 흩어져 있어 금방 풀린다).
+ */
+const RALLY_DIRS: readonly (readonly [number, number])[] = [
+  [1000, 0], [866, 500], [500, 866], [0, 1000], [-500, 866], [-866, 500],
+  [-1000, 0], [-866, -500], [-500, -866], [0, -1000], [500, -866], [866, -500],
+];
+/** 겹의 반지름 (반경 대비 천분율). 한복판은 비워 둔다 — 거기 몰리면 원점과 같아진다. */
+const RALLY_RINGS: readonly number[] = [220, 500, 750, 950];
+/** 제 자리에 「섰다」고 보는 거리. */
+const RALLY_HOLD = tiles(0.45);
+
+function rallySlot(id: number, r: number): { dx: number; dy: number } {
+  const n = RALLY_DIRS.length;
+  const total = n * RALLY_RINGS.length;
+  const idx = ((id % total) + total) % total;
+  const ri = (idx / n) | 0;
+  const ring = RALLY_RINGS[ri]!;
+  // 겹마다 각을 반 칸씩 어긋내 방사형으로 줄이 서지 않게 한다
+  const dir = RALLY_DIRS[(idx % n + ri) % n]!;
+  return {
+    dx: idiv(dir[0] * idiv(r * ring, 1000), 1000),
+    dy: idiv(dir[1] * idiv(r * ring, 1000), 1000),
+  };
+}
+
 function moveToward(
   g: Game, e: Entity, d: EntityDef, tx: number, ty: number, slowed: boolean,
   /** 추가 이속 보정(%) — 고립 도주처럼 이 이동에만 붙는 값. */
@@ -1872,14 +1905,21 @@ export function stepCombat(g: Game): void {
       const rx = g.rallyX;
       const ry = g.rallyY;
       /*
-       * 집결 반경 안이면 멈춘다.
+       * 집결 반경 안에 들어오면 제 자리(rallySlot)로 가서 선다.
        *
-       * 한 점을 향해 계속 걸으면 스무 기가 같은 칸을 밀며 자리다툼만 한다 —
-       * 모이려고 애쓰는 그림만 나오고 진형이 안 잡혔다. 여기서 멈추면
-       * 겹침 해소(separate)가 알아서 반경 안에 고르게 펴 준다.
+       * 반경에 닿자마자 멈추면 들어온 쪽 가장자리에 통째로 뭉쳐서, 앞줄
+       * 원거리만 쏘고 뒤에 낀 근접은 아무것도 못 했다.
        */
       const rr = g.rallyR > 0 ? g.rallyR : tiles(1.2);
-      if (dist2(e.x, e.y, rx, ry) <= rr * rr) continue;
+      if (dist2(e.x, e.y, rx, ry) <= rr * rr) {
+        const slot = rallySlot(e.id, rr);
+        const sx2 = rx + slot.dx;
+        const sy2 = ry + slot.dy;
+        if (dist2(e.x, e.y, sx2, sy2) > RALLY_HOLD * RALLY_HOLD) {
+          moveToward(g, e, d, sx2, sy2, slowed);
+        }
+        continue;
+      }
       if (d.flying) {
         moveToward(g, e, d, rx, ry, slowed);
         continue;

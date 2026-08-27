@@ -668,12 +668,26 @@ export const SYLVARIN_CAMPAIGN: readonly CampaignStage[] = [
      * 해당하는 값으로 뛴다 (인컴 5단계 = 70/5초 = 840/턴).
      * forcedGrowth 는 쓰지 않는다 — 편성(comp)은 매 턴 통째로 다시 나가므로
      * 확정 편입은 턴이 갈수록 제곱으로 불어난다 (실측: 12분에 465기).
+     *
+     * phases: 1~7턴은 1티어만. 리치가 처음부터 몰려오면 집 넷을 지킬 방법이
+     * 없었다 (광역 지옥불 + 화염구가 수비대를 통째로 지운다). 2티어는 8턴부터
+     * 열어, 앞 일곱 턴은 잡졸을 받아내며 진형과 집합지를 익히는 구간으로 둔다.
      */
     enemyCamps: [
       { slot: 0, x: 47.5 * 1000, y: -18.5 * 1000,
-        waveMoney: [{ fromWave: 4, amount: 150 }, { fromWave: 15, amount: 850 }] },
+        waveMoney: [{ fromWave: 4, amount: 150 }, { fromWave: 15, amount: 850 }],
+        phases: [
+          { fromWave: 1, units: ['p_deadman', 'p_skeleton', 'p_hound', 'p_bone_thrower'] },
+          { fromWave: 8, units: ['p_deadman', 'p_skeleton', 'p_hound', 'p_bone_thrower',
+            'p_lich', 'p_headless_knight', 'p_summoner', 'p_wraith'] },
+        ] },
       { slot: 1, x: 10.0 * 1000, y: -18.5 * 1000,
-        waveMoney: [{ fromWave: 4, amount: 150 }, { fromWave: 15, amount: 850 }] },
+        waveMoney: [{ fromWave: 4, amount: 150 }, { fromWave: 15, amount: 850 }],
+        phases: [
+          { fromWave: 1, units: ['p_deadman', 'p_skeleton', 'p_hound', 'p_bone_thrower'] },
+          { fromWave: 8, units: ['p_deadman', 'p_skeleton', 'p_hound', 'p_bone_thrower',
+            'p_lich', 'p_headless_knight', 'p_summoner', 'p_wraith'] },
+        ] },
     ],
     village: {
       /*
@@ -714,9 +728,14 @@ export const SYLVARIN_CAMPAIGN: readonly CampaignStage[] = [
         { defId: 's_treekeeper', count: 2, xTile: 43.5, yOffTile: -10.0 },
         { defId: 's_elf_archer', count: 3, xTile: 43.0, yOffTile: -8.8 },
       ],
+      /*
+       * 집합지는 수비대보다 한 발 뒤 — 마을 쪽이다. 숲길 목에 바짝 붙여 놨더니
+       * 부대가 마을을 등지고 너무 앞에 나가 있어서, 반대쪽이 열리는 턴에
+       * 되돌아오지 못했다. (반경 4타일 안 통행 가능 96%)
+       */
       rallyPoints: [
-        { xTile: 43.5, yOffTile: -10.0, label: '1시 입구' },
-        { xTile: 13.0, yOffTile: -10.0, label: '11시 입구' },
+        { xTile: 38.5, yOffTile: -5.0, label: '1시 입구' },
+        { xTile: 18.0, yOffTile: -5.0, label: '11시 입구' },
         { xTile: 29.8, yOffTile: 3.0, label: '마을 광장' },
         { xTile: 36.0, yOffTile: 15.0, label: '6시 길목' },
       ],

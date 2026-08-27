@@ -2145,6 +2145,14 @@ async function startCampaignStage(st: CampaignStage): Promise<void> {
     }
     applyVillageLanes(vg, 1); // 첫 출정은 1턴
     applyVillageWarnings(vg, 1);
+    /*
+     * 상단 집합지 칸을 다시 그린다.
+     *
+     * 판을 세울 때 syncLaneBtn 은 이 블록보다 먼저 한 번 돈다. 그때는 아직
+     * rallyX 가 0 이라 「어느 칸이 켜져 있는가」가 -1 이 되어, 기본 집합지인
+     * 1시 입구에 불이 안 들어온 채로 시작했다 (부대는 그리로 가는데도).
+     */
+    syncLaneBtn();
   }
   if (st.obstacles && game) {
     // 불타는 숲 장애물: 무적·부동 — 아무도 조준하지 않지만 지상 유닛의 길을 막는다

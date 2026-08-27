@@ -3733,8 +3733,10 @@ function tick(deltaMS: number): void {
           continue;
         }
       }
-      // countAdd: 등장할 때마다 물량이 불어난다 (버틸수록 거세지는 기습)
-      const n = (rule.count ?? 1) + (rule.countAdd ?? 0) * campaignSpawnFires[i]!;
+      // countAdd: 등장할 때마다 물량이 불어난다 (버틸수록 거세지는 기습).
+      // countMax 가 있으면 거기서 멈춘다 — 끝없이 불어나면 후반이 감당이 안 된다.
+      const grown = (rule.count ?? 1) + (rule.countAdd ?? 0) * campaignSpawnFires[i]!;
+      const n = rule.countMax !== undefined ? Math.min(rule.countMax, grown) : grown;
       campaignSpawnFires[i] = campaignSpawnFires[i]! + 1;
       campaignSpawnedTotal[i] = campaignSpawnedTotal[i]! + n;
       const sx0 = rule.atXTile !== undefined ? Math.floor(rule.atXTile * FP) : game.map.spawnX[1];

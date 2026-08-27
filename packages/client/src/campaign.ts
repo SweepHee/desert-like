@@ -256,10 +256,11 @@ export interface CampaignStage {
     readonly count?: number;     // 기본 1
     /**
      * 등장할 때마다 count 가 이만큼 늘어난다 (2번째 등장 = count + countAdd).
-     * 「버틸수록 거세지는 기습」을 만든다 — 상한이 없으니 maxTotal 이나
-     * 클리어 시간과 함께 봐야 한다.
+     * 「버틸수록 거세지는 기습」을 만든다 — countMax 나 클리어 시간과 함께 봐야 한다.
      */
     readonly countAdd?: number;
+    /** countAdd 로 불어나는 한 번의 등장 수 상한 (여기서 멈춘다). */
+    readonly countMax?: number;
     /**
      * 이 규칙이 스폰할 총 마릿수 상한 (생략 = 무제한).
      * 반복 스폰은 상한이 없으면 후반에 무한 누적된다 — 승산이 사라진다(실측).
@@ -571,7 +572,9 @@ export const SYLVARIN_CAMPAIGN: readonly CampaignStage[] = [
        */
     }],
     spawns: [
-      { defId: 'c_dread_gargoyle', label: '공포의 가고일', everySec: 120 },
+      // 가고일은 10턴부터 (생체 특효 +25 라 숲올빼미·거대 나비가 4대에 떨어진다 —
+      // 하늘을 막 산 직후부터 나오면 공중을 사 볼 여지가 없다)
+      { defId: 'c_dread_gargoyle', label: '공포의 가고일', fromSec: 600, everySec: 120 },
       /*
        * 절벽 기습 — 60초마다 「기지 앞 진흙탕」(terrain mud[0], 16.5/-14.1) 옆
        * 벼랑을 기어올라 온다. 주기는 출정 간격(60초)과 같다 — 어긋나 있으면
@@ -582,10 +585,10 @@ export const SYLVARIN_CAMPAIGN: readonly CampaignStage[] = [
        * 이미 출정한 뒤라 아무도 안 마주쳤다 — 출정로 위, 첫 굽이에 세운다.
        *
        * countAdd: 등장할 때마다 한 기씩 불어난다.
-       *   1회 사냥개 5 · 투척병 5 (10기)
-       *   2회 6 · 6 … 5회 9 · 9
-       *   6회부터 목없는 기사가 합류해 역시 한 기씩 는다 (6회 1 · 10 · 10)
-       * 처음부터 기사를 세우면 초반 부대가 그냥 녹아서, 앞 다섯 판은 잡졸로만
+       *   1턴 사냥개 5 · 투척병 5 (10기)
+       *   2턴 6 · 6 … 7턴 11 · 11
+       *   8턴부터 목없는 기사가 합류해 역시 한 기씩 늘되 6기에서 멈춘다
+       * 처음부터 기사를 세우면 초반 부대가 그냥 녹아서, 앞 일곱 판은 잡졸로만
        * 두들기고 판이 길어질수록 앞열이 두꺼워지게 했다.
        */
       { defId: 'p_bone_thrower', label: '절벽에서 기어오른다! 시체 사냥개·해골 투척병!',
@@ -598,9 +601,10 @@ export const SYLVARIN_CAMPAIGN: readonly CampaignStage[] = [
         ] },
       { defId: 'p_hound', label: '', quiet: true,
         everySec: 60, count: 5, countAdd: 1, atXTile: 17.5, yOffTile: -14.5 },
-      // 목없는 기사는 6회차(6분)부터. fromSec 이 첫 등장 시각이 된다.
+      // 목없는 기사는 8턴(8분)부터, 최대 6기까지만 는다. 판금 420 에 참수까지
+      // 달려 있어 앞열이 두꺼워지는 속도가 체감상 너무 빨랐다.
       { defId: 'p_headless_knight', label: '', quiet: true,
-        fromSec: 360, everySec: 60, count: 1, countAdd: 1, atXTile: 16.5, yOffTile: -13.0,
+        fromSec: 480, everySec: 60, count: 1, countAdd: 1, countMax: 6, atXTile: 16.5, yOffTile: -13.0,
         onFirstDialogue: [
           { who: '아린', text: '…이번엔 다릅니다. 갑옷 끄는 소리예요.' },
           { who: '카엘', text: '기사까지 올려 보냈군. 앞열을 두껍게 세워라.' },

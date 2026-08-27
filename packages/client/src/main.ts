@@ -617,7 +617,7 @@ let campaignDenied: readonly string[] = [];
  *  · x 있음 = 집합지 (6 자정의 마을) — 나온 부대가 어디로 모일지를 고른다
  * 둘 다 같은 칸·같은 조작을 쓴다.
  */
-let campaignLanes: { y: number; label: string; hold?: boolean; x?: number }[] | null = null;
+let campaignLanes: { y: number; label: string; hold?: boolean; x?: number; r?: number }[] | null = null;
 /** true = 판이 열릴 때 「가운데 대기」로 시작한다 (14라운드). */
 let campaignStartHold = false;
 // ── 영웅 출정 (14라운드~) ──
@@ -790,6 +790,29 @@ function villageLanesFor(vg: NonNullable<CampaignStage['village']>, turn: number
  * turn 은 「이 자리에서 나올 부대가 화면에 몇 턴으로 뜨는가」다. 출정은 턴이
  * 넘어가는 그 틱에 일어나므로, 지금 waveIndex 가 N 이면 다음 출정은 N+1 턴이다.
  */
+/**
+ * 「다음 턴에 어느 숲길로 오는가」를 화면에 예고한다.
+ *
+ * 집합지를 고르는 게 이 판의 유일한 선택인데, 어느 쪽이 열리는지 모르면
+ * 매 턴이 도박이었다. 열릴 입구에서 마을 쪽으로 붉은 화살표를 흘려 준다.
+ */
+function applyVillageWarnings(vg: NonNullable<CampaignStage['village']>, turn: number): void {
+  if (!game || !renderer) return;
+  const cx = Math.floor(vg.centerXTile * FP);
+  const cy = laneCenterY(game.map, cx) + Math.floor(vg.centerYOffTile * FP);
+  renderer.setLaneWarnings(villageLanesFor(vg, turn).map((li) => {
+    const lane = vg.lanes[li]!;
+    const lx = Math.floor(lane.xTile * FP);
+    return {
+      x: lx,
+      y: laneCenterY(game!.map, lx) + Math.floor(lane.yOffTile * FP),
+      toX: cx,
+      toY: cy,
+      label: `⚠ ${lane.label}`,
+    };
+  }));
+}
+
 function applyVillageLanes(vg: NonNullable<CampaignStage['village']>, turn: number): void {
   if (!game) return;
   const open = villageLanesFor(vg, turn);
@@ -1991,6 +2014,7 @@ async function startCampaignStage(st: CampaignStage): Promise<void> {
     : st.village
       ? st.village.rallyPoints.map((r) => ({
         x: Math.round(r.xTile * FP), y: Math.round(r.yOffTile * FP), label: r.label,
+        r: Math.round((st.village!.rallyRadiusTiles ?? 1.2) * FP),
       }))
       : null;
   campaignStartHold = !!st.deployStartHold;
@@ -2076,6 +2100,8 @@ async function startCampaignStage(st: CampaignStage): Promise<void> {
   villageWave = -1;
   villageWarned = false;
   villageBossId = -1;
+  // 마을 방어전이 아니면 적 진입 예고는 지운다 (판을 옮겨도 남아 있으면 안 된다)
+  renderer?.setLaneWarnings(null);
   if (st.village && game) {
     const vg = st.village;
     const at = (xTile: number, yOff: number): { x: number; y: number } => {
@@ -2110,6 +2136,7 @@ async function startCampaignStage(st: CampaignStage): Promise<void> {
     game.fleeX = f.x;
     game.fleeY = f.y;
     // 내 부대 기본 집합지 = 1시 입구 (rallyPoints[0])
+    game.rallyR = Math.round((vg.rallyRadiusTiles ?? 1.2) * FP);
     const r0 = vg.rallyPoints[0];
     if (r0) {
       const q = at(r0.xTile, r0.yOffTile);
@@ -2117,6 +2144,7 @@ async function startCampaignStage(st: CampaignStage): Promise<void> {
       game.rallyY = q.y;
     }
     applyVillageLanes(vg, 1); // 첫 출정은 1턴
+    applyVillageWarnings(vg, 1);
   }
   if (st.obstacles && game) {
     // 불타는 숲 장애물: 무적·부동 — 아무도 조준하지 않지만 지상 유닛의 길을 막는다
@@ -3130,6 +3158,7 @@ function chooseLaneAt(idx: number): void {
     // 집합지: 부대가 모일 자리를 옮긴다 (이미 나와 있는 부대도 그리로 향한다)
     game.rallyX = lane.x;
     game.rallyY = laneCenterY(game.map, lane.x) + lane.y;
+    if (lane.r) game.rallyR = lane.r;
     audio.play('ui_click');
     showToast(`🚩 ${lane.label} 로 집합한다`);
     syncLaneBtn();
@@ -3920,6 +3949,7 @@ function tick(deltaMS: number): void {
         villageWave = wave;
         // 지금 정해 두는 자리는 「다음 출정」이 쓴다 = 화면에 wave + 1 턴으로 뜬다
         applyVillageLanes(vg, wave + 1);
+        applyVillageWarnings(vg, wave + 1);
         // 두 번째 길이 열리는 그 턴에 경고. 한 번만 띄운다.
         if (wave === vg.secondLaneWave && vg.secondLaneDialogue && !villageWarned) {
           villageWarned = true;

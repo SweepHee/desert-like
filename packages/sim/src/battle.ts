@@ -1871,6 +1871,15 @@ export function stepCombat(g: Game): void {
     if (g.rallyX > 0 && e.team === 0 && g.map.mask) {
       const rx = g.rallyX;
       const ry = g.rallyY;
+      /*
+       * 집결 반경 안이면 멈춘다.
+       *
+       * 한 점을 향해 계속 걸으면 스무 기가 같은 칸을 밀며 자리다툼만 한다 —
+       * 모이려고 애쓰는 그림만 나오고 진형이 안 잡혔다. 여기서 멈추면
+       * 겹침 해소(separate)가 알아서 반경 안에 고르게 펴 준다.
+       */
+      const rr = g.rallyR > 0 ? g.rallyR : tiles(1.2);
+      if (dist2(e.x, e.y, rx, ry) <= rr * rr) continue;
       if (d.flying) {
         moveToward(g, e, d, rx, ry, slowed);
         continue;

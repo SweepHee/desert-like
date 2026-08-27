@@ -1020,7 +1020,12 @@ export interface Renderer {
    * 「죽은 게 아니라 빠져나간 것」이라 쓰러지는 그림이 나오면 안 된다.
    */
   quietRemove(id: number): void;
-  setDeployLanes(lanes: { y: number; label: string; hold?: boolean; x?: number }[] | null, chosenIdx: number): void;
+  setDeployLanes(lanes: { y: number; label: string; hold?: boolean; x?: number; r?: number }[] | null, chosenIdx: number): void;
+  /**
+   * 「다음 턴에 적이 여기로 온다」 예고 표식 (마을 방어전).
+   * 숲길 입구에서 마을 쪽으로 흘러가는 붉은 화살표 + 맥동하는 고리.
+   */
+  setLaneWarnings(marks: { x: number; y: number; toX: number; toY: number; label: string }[] | null): void;
   /** 선택 표시 링을 그릴 유닛 id (null = 해제). */
   setSelected(id: number | null): void;
   /** 효과음 재생기 연결 (없으면 무음으로 동작). */
@@ -2193,7 +2198,10 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
   /** 「정각의 일격」 치명타 표시 — 떠올랐다 사라지는 텍스트 풀. */
   const critTexts: { t: Text; until: number; x: number; y: number; start: number }[] = [];
   /** 출정 레인 표시 (두 갈래 맵). */
-  let deployLanes: { y: number; label: string; hold?: boolean; x?: number }[] | null = null;
+  let deployLanes: { y: number; label: string; hold?: boolean; x?: number; r?: number }[] | null = null;
+  /** 적 진입 예고 (마을 방어전) — 숲길 입구에서 마을 쪽으로 흐르는 화살표. */
+  let laneWarns: { x: number; y: number; toX: number; toY: number; label: string }[] | null = null;
+  const warnLabels: Text[] = [];
   /** 레인 이름표 — 출정구 옆에 상시 떠 있어 「여길 눌러라」가 읽힌다. */
   const laneLabels: Text[] = [];
   let deployChosenIdx = -1;
@@ -4065,6 +4073,59 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
         fx.ellipse(b.x, b.y, b.r * 0.6, b.r * 0.3).stroke({ color: 0xdfe4f0, width: 1, alpha: fade * 0.5 });
       }
     }
+    /*
+     * ── 적 진입 예고 (마을 방어전) ──
+     * 「다음 턴에 어느 숲길로 오는가」를 미리 알려 준다. 숲길 입구에서 마을
+     * 쪽으로 붉은 화살표 세 개가 흘러가고, 입구에 맥동하는 고리가 남는다.
+     * 이게 없으면 부대를 어디로 모을지 고를 근거가 없어 매 턴 도박이 된다.
+     */
+    if (laneWarns) {
+      const beat = 0.5 + 0.5 * Math.sin(now * 0.006);
+      for (let i = 0; i < laneWarns.length; i++) {
+        const w = laneWarns[i]!;
+        const ax = sx(w.x);
+        const ay = sy(w.y);
+        const bx = sx(w.toX);
+        const by = sy(w.toY);
+        const dx = bx - ax;
+        const dy = by - ay;
+        const len = Math.hypot(dx, dy) || 1;
+        const ux = dx / len;
+        const uy = dy / len;
+        const vert = curMap.vertical;
+        // 입구 고리 — 바닥에 눕는 타원 (세로 맵은 축을 바꿔야 눕는다)
+        const R = 30 * (1 + beat * 0.12);
+        fx.ellipse(ax, ay, vert ? R * 0.55 : R, vert ? R : R * 0.55)
+          .fill({ color: 0xff5a3c, alpha: 0.10 + beat * 0.08 });
+        fx.ellipse(ax, ay, vert ? R * 0.55 : R, vert ? R : R * 0.55)
+          .stroke({ color: 0xff8a6a, width: 3, alpha: 0.5 + beat * 0.4 });
+        // 마을 쪽으로 흘러가는 화살촉 세 개
+        for (let k = 0; k < 3; k++) {
+          const t2 = ((now * 0.0009 + k * 0.33) % 1);
+          const px2 = ax + ux * (34 + t2 * 78);
+          const py2 = ay + uy * (34 + t2 * 78);
+          const al = (1 - Math.abs(t2 - 0.5) * 2) * 0.95;
+          const nx2 = -uy;
+          const ny2 = ux;
+          fx.poly([
+            px2 + ux * 13, py2 + uy * 13,
+            px2 - ux * 6 + nx2 * 9, py2 - uy * 6 + ny2 * 9,
+            px2 - ux * 2, py2 - uy * 2,
+            px2 - ux * 6 - nx2 * 9, py2 - uy * 6 - ny2 * 9,
+          ]).fill({ color: 0xff7a55, alpha: al });
+        }
+        const lbl = warnLabels[i];
+        if (lbl) {
+          lbl.visible = true;
+          lbl.x = ax;
+          lbl.y = ay - 26;
+          lbl.alpha = 0.75 + beat * 0.25;
+          if (vert) { lbl.rotation = Math.PI / 2; lbl.x = ax - 34; lbl.y = ay; }
+        }
+      }
+    } else {
+      for (const t of warnLabels) t.visible = false;
+    }
     // ── 출정 레인 표시 (두 갈래 맵): 고른 쪽에 불이 들어온다 ──
     if (deployLanes) {
       // 출정 표식: 굽은 길 위에 띠를 긋는 건 의미가 없다 (숲에 걸린다).
@@ -4081,7 +4142,9 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
         const chosen = li === deployChosenIdx;
         const gx = lane.x !== undefined ? sx(lane.x) : laneX0;
         const ly = sy(lane.x !== undefined ? laneCenterY(g.map, lane.x) + lane.y : lane.y);
-        const R = 34;
+        // 집합지는 「모였다」로 치는 실제 반경만큼 그린다 — 표식이 판정보다
+        // 작으면 부대가 원 밖에 서 있는 것처럼 보인다 (마을 방어전)
+        const R = lane.r ? (lane.r / FP) * TILE : 34;
         // 바닥에 눕는 원. 세로 맵은 월드가 90도 돌아 있어 축을 바꿔야 눕는다.
         const vertM = curMap.vertical;
         const grow = chosen ? 1 + pulse * 0.06 : 1;
@@ -4383,6 +4446,25 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
       return null;
     },
     quietRemove(id) { quietIds.add(id); },
+    setLaneWarnings(marks) {
+      laneWarns = marks;
+      while (warnLabels.length > (marks?.length ?? 0)) {
+        const t = warnLabels.pop();
+        if (t) { t.visible = false; t.destroy(); }
+      }
+      while (marks && warnLabels.length < marks.length) {
+        const t = new Text({
+          text: '',
+          style: { fontFamily: 'sans-serif', fontSize: 15, fontWeight: '700',
+            fill: 0xffb0a0, stroke: { color: 0x2a0d08, width: 4 }, align: 'center' },
+        });
+        t.anchor.set(0.5, 1);
+        t.zIndex = 9000;
+        units.addChild(t);
+        warnLabels.push(t);
+      }
+      for (let i = 0; i < (marks?.length ?? 0); i++) warnLabels[i]!.text = marks![i]!.label;
+    },
     setDeployLanes(lanes, chosenIdx) {
       deployLanes = lanes;
       deployChosenIdx = chosenIdx;

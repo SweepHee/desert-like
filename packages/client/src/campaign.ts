@@ -155,6 +155,13 @@ export interface CampaignStage {
     readonly rallyPoints: readonly {
       readonly xTile: number; readonly yOffTile: number; readonly label: string;
     }[];
+    /**
+     * 집합지에서 「모였다」로 치는 반경 (타일). 생략 시 1.2.
+     *
+     * 좁으면 부대가 한 칸을 밀며 자리다툼만 한다 — 마을처럼 스무 기 넘게
+     * 모이는 판은 넉넉해야 진형이 잡힌다. 바닥 표식도 이 크기로 그린다.
+     */
+    readonly rallyRadiusTiles?: number;
     /** 이 턴에 보스가 나온다. 시간을 버티는 것만으로는 이기지 못하고, 보스를 잡아야 한다. */
     readonly bossWave: number;
     readonly bossDefId: string;
@@ -545,22 +552,37 @@ export const SYLVARIN_CAMPAIGN: readonly CampaignStage[] = [
      * 지상 부대는 첫 접촉까지 3분 가까이 걸리므로 초반의 판은 하늘에서 갈린다.
      */
     incomeCap: 4, techCap: 2,
-    // 밴시는 테크 3이라 이 판(techCap 2)에서는 애초에 못 산다 — 망령만 민다
-    enemyPreferredUnits: ['p_wraith'],
+    /*
+     * 선호 유닛 = 봇의 구매 가중치 ×8. 가중치 자체는 유닛 값(cost)에 비례하므로
+     * 둘을 함께 올리면 220:190 ≈ 54:46 으로 거의 반반이 되고, 나머지 잡졸보다
+     * 압도적으로 자주 뽑힌다. (밴시는 테크 3이라 techCap 2 인 이 판에선 못 산다)
+     */
+    enemyPreferredUnits: ['p_wraith', 'p_headless_knight'],
+    /*
+     * 선호로 밀면 그 둘만 무한히 쌓인다 (실측 15턴에 기사 14기). 편성은 매 턴
+     * 통째로 다시 나가므로 상한이 없으면 후반이 통째로 그 둘 차지가 된다.
+     * 절벽 기습으로 오는 목없는 기사는 스크립트 스폰이라 이 상한과 무관하다
+     * (그쪽은 countMax 6 으로 따로 잠겨 있다).
+     */
+    enemyUnitCaps: { p_headless_knight: 10, p_wraith: 10 },
     /*
      * 적 생산 제한 (거점 phases).
      *   1~3턴 — 1티어만 (망자병·스켈레톤·시체 사냥개·해골 투척병)
-     *   4턴부터 — 시체 사냥개 / 해골 투척병 / 망령 / 목없는 기사, 이 넷만
+     *   4턴부터 — 시체 사냥개 / 해골 투척병 / 목없는 기사
+     *   9턴부터 — 위 셋 + 망령
      *
      * 하늘이 이 판의 답인데 적 공중이 거의 안 나와서 숲올빼미 한 무리로 그냥
-     * 밀렸다. 목록을 좁히고 망령을 선호로 걸어 대공을 상시로 만든다.
+     * 밀렸다. 그래서 목록을 좁혔는데, 이번엔 4턴부터 망령이 선호로 쏟아져
+     * 감당이 안 됐다 — 대공이 붙는 시점을 9턴으로 미룬다. 4~8턴은 목없는
+     * 기사가 앞열을 두껍게 하는 구간이고, 하늘은 그동안 값을 한다.
      * 좌표는 적 스폰 지점 그대로 (spawnPos[1]) — 출정 자리는 바뀌지 않는다.
      */
     enemyCamps: [{
       slot: 0, x: 62.5 * 1000, y: 16.2 * 1000,
       phases: [
         { fromWave: 1, units: ['p_deadman', 'p_skeleton', 'p_hound', 'p_bone_thrower'] },
-        { fromWave: 4, units: ['p_hound', 'p_bone_thrower', 'p_wraith', 'p_headless_knight'] },
+        { fromWave: 4, units: ['p_hound', 'p_bone_thrower', 'p_headless_knight'] },
+        { fromWave: 9, units: ['p_hound', 'p_bone_thrower', 'p_headless_knight', 'p_wraith'] },
       ],
       /*
        * 확정 편입(forcedGrowth)은 쓰지 않는다.
@@ -698,6 +720,7 @@ export const SYLVARIN_CAMPAIGN: readonly CampaignStage[] = [
         { xTile: 29.8, yOffTile: 3.0, label: '마을 광장' },
         { xTile: 36.0, yOffTile: 15.0, label: '6시 길목' },
       ],
+      rallyRadiusTiles: 4.0,
       bossWave: 30,
       bossDefId: 'c_kurga',
       finalWave: 31,

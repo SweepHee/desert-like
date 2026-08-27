@@ -718,15 +718,15 @@ export const SYLVARIN_CAMPAIGN: readonly CampaignStage[] = [
         { who: '엘로윈', text: '막지 마라. 늦추기만 해라. 행렬이 먼저다.' },
       ],
       /*
-       * 수비대·집합지는 「마을 입구」 — 숲길이 빈터로 들어오는 목이다 (y -10 줄:
-       * 11시는 x 12~21, 1시는 x 34.5~45 가 열려 있다). 집 사이가 아니라 그
-       * 바깥이어야 길을 막는 그림이 된다.
+       * 수비대는 집합지와 같은 자리에 선다 — 숲길 목에 바짝 붙여 놨더니
+       * 내 부대와 따로 놀아서, 수비대만 앞에서 얻어맞고 본대는 뒤에서 구경했다.
+       * 같은 자리에 두면 증원과 수비대가 한 덩어리로 싸운다.
        */
       garrisons: [
-        { defId: 's_treekeeper', count: 2, xTile: 13.0, yOffTile: -10.0 },
-        { defId: 's_elf_archer', count: 3, xTile: 13.5, yOffTile: -8.8 },
-        { defId: 's_treekeeper', count: 2, xTile: 43.5, yOffTile: -10.0 },
-        { defId: 's_elf_archer', count: 3, xTile: 43.0, yOffTile: -8.8 },
+        { defId: 's_treekeeper', count: 2, xTile: 17.8, yOffTile: -5.6 },
+        { defId: 's_elf_archer', count: 3, xTile: 17.8, yOffTile: -4.4 },
+        { defId: 's_treekeeper', count: 2, xTile: 38.3, yOffTile: -5.6 },
+        { defId: 's_elf_archer', count: 3, xTile: 38.3, yOffTile: -4.4 },
       ],
       /*
        * 집합지는 수비대보다 한 발 뒤 — 마을 쪽이다. 숲길 목에 바짝 붙여 놨더니

@@ -2136,7 +2136,6 @@ async function startCampaignStage(st: CampaignStage): Promise<void> {
     game.fleeX = f.x;
     game.fleeY = f.y;
     // 내 부대 기본 집합지 = 1시 입구 (rallyPoints[0])
-    game.rallyR = Math.round((vg.rallyRadiusTiles ?? 1.2) * FP);
     const r0 = vg.rallyPoints[0];
     if (r0) {
       const q = at(r0.xTile, r0.yOffTile);
@@ -3166,7 +3165,6 @@ function chooseLaneAt(idx: number): void {
     // 집합지: 부대가 모일 자리를 옮긴다 (이미 나와 있는 부대도 그리로 향한다)
     game.rallyX = lane.x;
     game.rallyY = laneCenterY(game.map, lane.x) + lane.y;
-    if (lane.r) game.rallyR = lane.r;
     audio.play('ui_click');
     showToast(`🚩 ${lane.label} 로 집합한다`);
     syncLaneBtn();

@@ -37,9 +37,14 @@ let curMap: MapDef = MAPS[DEFAULT_MAP]!;
  */
 const EDGE_MARGIN = tiles(3);
 
-/** 렌더 기준 맵 반높이 (시뮬 반높이 + 바깥 지형 여백). */
+/**
+ * 렌더 기준 맵 반높이 (시뮬 반높이 + 바깥 지형 여백).
+ *
+ * 배경 그림 한 장을 까는 맵(bgImage)은 여백이 필요 없다 — 그릴 바깥 지형이
+ * 애초에 없어서, 여백만큼 갈색 배경이 그대로 드러났다 (5·6라운드).
+ */
 function renderHalfH(m: MapDef = curMap): number {
-  return mapHalfH(m) + EDGE_MARGIN;
+  return mapHalfH(m) + (m.bgImage ? 0 : EDGE_MARGIN);
 }
 
 /** 시뮬 y 좌표(FP) → 월드 픽셀 y (미니맵 점프용). */
@@ -2363,10 +2368,23 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
     return [hi - visibleH(), hi];
   }
   function clampCam(): void {
-    const maxX = Math.max(0, scrollW() - visibleW());
-    camX = Math.min(Math.max(camX, 0), maxX);
-    const maxY = Math.max(0, scrollH() - visibleH());
-    camY = Math.min(Math.max(camY, 0), maxY);
+    /*
+     * 배경 그림 맵은 「그림이 있는 띠」 밖으로 못 나가게 막는다.
+     *
+     * sy() 가 위아래로 PAD_TOP·PAD_BOTTOM 만큼 띄워 놓기 때문에, 화면을 덮을
+     * 만큼 확대해도 카메라가 그 여백 쪽으로 밀리면 갈색 배경이 드러났다
+     * (5·6라운드에서 왼쪽에 34px 띠가 남았다). 그 축만 여백만큼 좁힌다 —
+     * 세로 맵은 컨테이너가 돌아 있어 그 축이 camX 다.
+     */
+    const pad = curMap.bgImage;
+    const lo0 = pad && curMap.vertical ? PAD_TOP : 0;
+    const hi0 = pad && curMap.vertical ? PAD_BOTTOM : 0;
+    const lo1 = pad && !curMap.vertical ? PAD_TOP : 0;
+    const hi1 = pad && !curMap.vertical ? PAD_BOTTOM : 0;
+    const maxX = Math.max(lo0, scrollW() - hi0 - visibleW());
+    camX = Math.min(Math.max(camX, lo0), maxX);
+    const maxY = Math.max(lo1, scrollH() - hi1 - visibleH());
+    camY = Math.min(Math.max(camY, lo1), maxY);
   }
   function applyCamera(): void {
     if (curMap.vertical) {
@@ -2379,14 +2397,17 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
       const fitW = app.screen.width / sw;
       const fit = Math.min(2.4, Math.max(0.35, Math.max(fitH, fitW * 0.9)));
       /*
-       * 축소 하한 = 「맵 전체가 딱 들어오는」 배율.
+       * 축소 하한 = 「화면을 맵이 덮는」 배율.
        *
-       * 이보다 더 줄이면 맵은 그대로 다 보이면서 둘레의 빈 배경만 넓어진다
-       * (세로로 긴 맵이라 좌우로 갈색 여백이 크게 남았다). 더 볼 것이 없으므로
-       * 여기서 막는다.
+       * 예전엔 「맵 전체가 들어오는」 배율까지 허용했는데, 맵과 화면의 비율이
+       * 다르면 남는 쪽에 갈색 배경이 그대로 드러났다. 여기서 막으면 맵 밖이
+       * 아예 안 보인다 — 전체 조망은 미니맵이 맡는다.
        */
-      const containZoom = Math.min(app.screen.height / sh, app.screen.width / sw);
-      zoom = Math.max(containZoom, fit * userZoom);
+      // 세로 맵은 축이 돌아 있다 — 그림이 실제로 덮는 길이는 sw(=worldH) 쪽에서
+      // 위아래 패딩을 뺀 값이다
+      const drawnW = curMap.bgImage ? sw - PAD_TOP - PAD_BOTTOM : sw;
+      const coverZoom = Math.max(app.screen.width / drawnW, app.screen.height / sh);
+      zoom = Math.max(coverZoom, fit * userZoom);
       clampCam();
       world.rotation = -Math.PI / 2;
       world.scale.set(zoom);
@@ -2399,7 +2420,11 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
     }
     world.rotation = 0;
     const fit = Math.min(2.4, Math.max(0.8, app.screen.height / worldH()));
-    zoom = fit * userZoom;
+    // 세로 맵과 같은 규칙 — 맵 밖(갈색 배경)이 드러나지 않는 선까지만 축소한다.
+    // 잿불 숲처럼 가로로 긴 맵은 원래 세로가 꽉 차 있어 이 값이 걸리지 않는다.
+    const drawnH = curMap.bgImage ? worldH() - PAD_TOP - PAD_BOTTOM : worldH();
+    const coverZoom = Math.max(app.screen.width / worldW(), app.screen.height / drawnH);
+    zoom = Math.max(coverZoom, fit * userZoom);
     clampCam();
     world.scale.set(zoom);
     world.x = worldW() * zoom <= app.screen.width

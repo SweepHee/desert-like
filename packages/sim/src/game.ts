@@ -171,7 +171,6 @@ export function createGame(cfg: GameConfig): Game {
     fleeX: 0,
     fleeY: 0,
     rallyY: 0,
-    rallyR: 0,
     enemyHoldLineX: 0,
     defendNexus: cfg.defendNexus ?? false,
     jointDeploy: cfg.jointDeploy ?? false,

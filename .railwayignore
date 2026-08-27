@@ -1,9 +1,24 @@
-# 서버 배포에 필요 없는 덩치들 — 매번 올리면 업로드가 타임아웃 난다.
-# (서버는 packages/server 만 실행한다. 워크스페이스 해석에 필요한 package.json 은 남긴다)
-packages/client/public/
-packages/client/src/
-packages/client/index.html
-packages/sim/src/cli/
-docs/
-*.png
-*.jpg
+# Railway 는 이 디렉터리를 통째로 올려 빌드한다 (GitHub 연동이 아니라 CLI 업로드).
+# 서버는 WebSocket 릴레이 + 로그인/세이브 API 뿐이라 게임 그림이 하나도 필요 없다.
+node_modules
+packages/*/node_modules
+packages/client/dist
+docs
+
+# 비밀 — .gitignore 와 별개로 여기에도 적어야 한다
+*google-login-keys*.json
+client_secret_*.json
+.env
+.env.*
+
+# 게임 그림·작업 원본 (49MB + 90MB) — 서버가 서빙하지 않는다
+packages/client/public
+/13round
+/13라운드타일셋폴더
+/14라운드
+/5라운드수정-폴더
+/6라운드지형자료
+/세계수의축복
+/암살자모델링후보
+/언덕표시스프라이트
+/*.png

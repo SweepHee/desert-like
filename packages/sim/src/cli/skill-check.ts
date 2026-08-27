@@ -1243,6 +1243,7 @@ function unlockSage(g: Game, sage: Entity): void {
   ok(a?.kind === 'leap', `도약 강습: leap 스킬이다 (실제 ${a?.kind})`);
   ok(a?.castRange === tiles(4.5), `도약 강습: 사거리 4.5 (실제 ${(a?.castRange ?? 0) / 1000})`);
   ok(a?.damage === 22, `도약 강습: 착지 피해 22 (실제 ${a?.damage})`);
+  ok(a?.cooldown === seconds(20), `도약 강습: 쿨 20초 (실제 ${(a?.cooldown ?? 0) / TICK_HZ}초)`);
   ok(a?.leapAim === 'nearest', '도약 강습: 가장 가까운 적을 문다 (후열 저격 아님)');
 
   const g = newArena();

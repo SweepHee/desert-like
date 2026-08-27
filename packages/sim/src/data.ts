@@ -2803,9 +2803,9 @@ export const BOONS: readonly UnitBoon[] = [
   { id: 'b_gouto_feral', unit: 's_gouto', kind: 'passive', name: '야성의 굶주림',
     desc: '공격력 +25%, 흡혈 20% — 테크 2 「야성의 굶주림」(250원) 구매 시 적용', mods: {} },
   { id: 'b_gouto_leap', unit: 's_gouto', kind: 'active', name: '도약 강습',
-    desc: '8초마다 4.5타일 안 적에게 뛰어들어 착지 지점 광역 22 (도약 중 무적)',
-    mods: { addActive: { name: '도약 강습', desc: '4.5타일 안 적에게 뛰어들어 착지 지점 광역 22', kind: 'leap',
-      cooldown: seconds(8), castRange: tiles(4.5), damage: 22, splash: tiles(1.1),
+    desc: '20초마다 4.5타일 안 적에게 뛰어들어 착지 지점 광역 22 (도약 중 무적)',
+    mods: { addActive: { name: '도약 강습', desc: '4.5타일 안 적에게 뛰어들어 착지 지점 광역 22 (쿨 20초)', kind: 'leap',
+      cooldown: seconds(20), castRange: tiles(4.5), damage: 22, splash: tiles(1.1),
       leapAim: 'nearest' } } },
 
   // 엘프 궁수 (60원 기본 원거리, 공격 10 / 사거리 5)

@@ -40,6 +40,8 @@ function spawnEntity(g: Game, defId: string, team: CombatTeam, owner: number, x:
     lastAttackerId: -1,
     slowedUntil: 0,
     homeX: -1,
+    goalX: -1,
+    goalY: -1,
     homeY: -1,
     dotUntil: 0,
     dotDps: 0,
@@ -621,6 +623,11 @@ function deployWave(g: Game, p: PlayerState): void {
     // 영웅 특성: 세계수의 축복 (사람 플레이어의 유닛만 강화)
     if (!p.isBot && g.heroPerks) ov = applyHeroPerks(ov ?? d, g.heroPerks);
     const ent = spawnEntity(g, d.id, p.team, p.idx, x, y, ov);
+    // 갈래별 목표: 이 거점에서 나왔으면 그 거점이 노리는 곳을 물려받는다
+    if (campHere?.goalX !== undefined && campHere.goalY !== undefined) {
+      ent.goalX = campHere.goalX;
+      ent.goalY = campHere.goalY;
+    }
     // 축복: 배치되는 순간부터 기본 보호막을 두른다 (시간제한 없음 — 깎이면 그걸로 끝)
     if (!p.isBot && g.heroPerks && (g.heroPerks.shieldAdd ?? 0) > 0) {
       ent.shieldHp = g.heroPerks.shieldAdd!;

@@ -820,9 +820,18 @@ function applyVillageLanes(vg: NonNullable<CampaignStage['village']>, turn: numb
     const lane = vg.lanes[open[camp.slot % open.length]!]!;
     const lx = Math.floor(lane.xTile * FP);
     const stack = open.length === 1 ? camp.slot * 3.2 : 0;
-    const c = camp as { x: number; y: number };
+    const c = camp as { x: number; y: number; goalX?: number | undefined; goalY?: number | undefined };
     c.x = lx;
     c.y = laneCenterY(game.map, lx) + Math.floor((lane.yOffTile + stack) * FP);
+    // 이 길로 나오는 부대가 노릴 곳 (출정하는 순간 유닛에 찍힌다)
+    if (lane.goalXTile !== undefined && lane.goalYOffTile !== undefined) {
+      const gx = Math.floor(lane.goalXTile * FP);
+      c.goalX = gx;
+      c.goalY = laneCenterY(game.map, gx) + Math.floor(lane.goalYOffTile * FP);
+    } else {
+      c.goalX = undefined;
+      c.goalY = undefined;
+    }
   }
 }
 let campaignWarcampId = -1;
@@ -3966,7 +3975,15 @@ function tick(deltaMS: number): void {
         if (wave >= vg.bossWave && villageBossId < 0) {
           const bx = Math.floor(vg.lanes[0]!.xTile * FP);
           const by = laneCenterY(game.map, bx) + Math.floor(vg.lanes[0]!.yOffTile * FP);
-          villageBossId = spawnUnit(game, vg.bossDefId, 1, bx, by).id;
+          const kurga = spawnUnit(game, vg.bossDefId, 1, bx, by);
+          // 쿠르가도 그 숲길이 노리는 곳으로 내려간다 (한복판에 눌러앉지 않는다)
+          const bl = vg.lanes[0]!;
+          if (bl.goalXTile !== undefined && bl.goalYOffTile !== undefined) {
+            const gx = Math.floor(bl.goalXTile * FP);
+            kurga.goalX = gx;
+            kurga.goalY = laneCenterY(game.map, gx) + Math.floor(bl.goalYOffTile * FP);
+          }
+          villageBossId = kurga.id;
           campaignAlertText = '⚔ 리치 쿠르가가 마을로 내려온다!';
           campaignAlertUntil = performance.now() + 5000;
           audio.play('cast_skill', { volume: 1 });

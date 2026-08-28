@@ -292,6 +292,41 @@ function findTarget(g: Game, e: Entity, d: EntityDef, skipStructures = false, ra
   return d.flying && bestAA !== -1 ? bestAA : best;
 }
 
+/**
+ * 집결 경계 — 「집결 지점 둘레」 안에 든 적.
+ *
+ * 집결 명령은 「여기 서 있어라」가 아니라 「여기를 지켜라」다. 표식 한가운데로
+ * 부대를 모으고 나니, 탐지 거리(대부분 5~6타일) 밖의 적은 아예 못 본 채 멀뚱히
+ * 서 있고 적이 코앞까지 걸어와야 싸움이 시작됐다. 집결 중인 부대는 표식에서
+ * RALLY_GUARD 안에 든 적이면 스스로 나가서 문다 — 잡고 나면 표식으로 돌아온다.
+ * 건물은 세지 않는다 (지키는 것이지 공성이 아니다).
+ */
+const RALLY_GUARD = tiles(9);
+
+/** 이 유닛이 플레이어의 집결 명령을 따르는가 (주둔·수비대·수호자는 제외). */
+function rallyBound(g: Game, e: Entity, d: EntityDef): boolean {
+  return g.rallyX > 0 && e.team === 0 && !!g.map.mask
+    && e.garrisonR <= 0 && e.homeX < 0 && !d.leashed && !d.flees;
+}
+
+function rallyGuardTarget(g: Game, e: Entity, d: EntityDef): number {
+  const gr2 = RALLY_GUARD * RALLY_GUARD;
+  let best = -1;
+  let bestD2 = -1;
+  for (const t of g.entities) {
+    if (!t.alive || t.team === e.team) continue;
+    if (def(t).tier === 'structure') continue;
+    if (!canHit(g, d, t) || isShielded(g, t)) continue;
+    if (dist2(t.x, t.y, g.rallyX, g.rallyY) > gr2) continue;
+    const d2 = dist2(e.x, e.y, t.x, t.y);
+    if (best === -1 || d2 < bestD2) {
+      best = t.id;
+      bestD2 = d2;
+    }
+  }
+  return best;
+}
+
 /** 혼란 상태: 탐지 거리 안 가장 가까운 "자기 편" (자신 제외, 무기로 때릴 수 있는 대상만). */
 function findConfusedTarget(g: Game, e: Entity, d: EntityDef): number {
   let best = -1;
@@ -1038,7 +1073,13 @@ function applyStrike(g: Game, attacker: Entity, a: ActiveSkill, victim: Entity):
 }
 
 /** 전투 중 유닛 생성 (수호자·소환수 공용). */
-function spawnBattleEntity(g: Game, defId: string, team: CombatTeam, owner: number, x: number, y: number, ov?: EntityDef): Entity {
+/**
+ * 전투 중 유닛 생성.
+ *
+ * from 을 주면 「갈래별 목표」(goalX/goalY)를 물려받는다 — 소환수가 소환한
+ * 놈과 다른 곳으로 걸어가 버리는 걸 막는다 (6 마을은 갈래마다 목표가 다르다).
+ */
+function spawnBattleEntity(g: Game, defId: string, team: CombatTeam, owner: number, x: number, y: number, ov?: EntityDef, from?: Entity): Entity {
   const d = ov ?? DEFS[defId]!;
   const e: Entity = {
     id: g.nextEntityId++,
@@ -1057,6 +1098,8 @@ function spawnBattleEntity(g: Game, defId: string, team: CombatTeam, owner: numb
     lastAttackerId: -1,
     slowedUntil: 0,
     homeX: -1,
+    goalX: -1,
+    goalY: -1,
     homeY: -1,
     dotUntil: 0,
     dotDps: 0,
@@ -1135,6 +1178,10 @@ function spawnBattleEntity(g: Game, defId: string, team: CombatTeam, owner: numb
     healsInWindow: 0,
     alive: true,
   };
+  if (from && from.goalX >= 0) {
+    e.goalX = from.goalX;
+    e.goalY = from.goalY;
+  }
   g.entities.push(e);
   return e;
 }
@@ -1282,7 +1329,7 @@ export function stepCombat(g: Game): void {
     for (let k = 0; k < 3; k++) {
       const ox = (k - 1) * 500;
       spawnBattleEntity(g, 'm_clockwork_soldier', e.team, e.owner,
-        clamp(e.x + ox, 0, g.map.length), clampLaneY(g.map, e.x + ox, e.y + 400));
+        clamp(e.x + ox, 0, g.map.length), clampLaneY(g.map, e.x + ox, e.y + 400), undefined, e);
     }
   }
   // 「실의 폭풍」: 예약 시각이 되면 그 자리에서 실이 터진다
@@ -1621,7 +1668,11 @@ export function stepCombat(g: Game): void {
       }
     }
 
-    if (!valid) e.targetId = findTarget(g, e, d);
+    if (!valid) {
+      e.targetId = findTarget(g, e, d);
+      // 집결 중이어도 표식 둘레에 든 적은 제 발로 나가서 문다 (집결 = 영역 방어)
+      if (e.targetId < 0 && rallyBound(g, e, d)) e.targetId = rallyGuardTarget(g, e, d);
+    }
   }
 
   // 2) 이동
@@ -1903,9 +1954,11 @@ export function stepCombat(g: Game): void {
      * 「맵 서쪽 끝」이 아니라 마을 한복판을 향해 온다. 도착하면 그 자리에서
      * 교전하며 눌러앉는다 (더 갈 곳이 없다).
      */
-    if (g.foeGoalX > 0 && e.team === 1) {
-      const gx = g.foeGoalX;
-      const gy = g.foeGoalY;
+    if ((g.foeGoalX > 0 || e.goalX >= 0) && e.team === 1) {
+      // 갈래별 목표가 찍혀 있으면 그쪽 — 6 「자정의 마을」은 1시/11시가
+      // 각각 다른 6시 길을 노린다 (한 점으로 모으면 아래 두 채를 영영 안 친다).
+      const gx = e.goalX >= 0 ? e.goalX : g.foeGoalX;
+      const gy = e.goalX >= 0 ? e.goalY : g.foeGoalY;
       if (d.flying || !g.map.mask) {
         moveToward(g, e, d, gx, gy, slowed);
       } else {
@@ -2267,7 +2320,7 @@ export function stepCombat(g: Game): void {
                 const ang = k - (n - 1) / 2;
                 const sx2 = clamp(e.x + Math.round(ang) * 300, 0, g.map.length);
                 const sy2 = clampLaneY(g.map, sx2, e.y + (k % 2 === 0 ? 500 : -500) * (k + 1));
-                spawnBattleEntity(g, pick, e.team, e.owner, sx2, sy2, ov);
+                spawnBattleEntity(g, pick, e.team, e.owner, sx2, sy2, ov, e);
               }
               spendSkill(e, i, a);
             }
@@ -2461,7 +2514,7 @@ export function stepCombat(g: Game): void {
               oldMare.alive = false; // 조용히 흩어진다 (사망 이벤트·보상 없음)
             }
             const mare = spawnBattleEntity(g, 'p_dream_mare', e.team, e.owner,
-              clamp(e.x + 400, 0, g.map.length), clampLaneY(g.map, e.x, e.y + 400));
+              clamp(e.x + 400, 0, g.map.length), clampLaneY(g.map, e.x, e.y + 400), undefined, e);
             e.mareId = mare.id;
             spendSkill(e, i, a);
             break;
@@ -2519,7 +2572,7 @@ export function stepCombat(g: Game): void {
                   const ov = e.owner >= 0 ? effectiveDef(row.id, g.players[e.owner]!.upgrades) : undefined;
                   const sx2 = clamp(e.x + ((k % 5) - 2) * 500, 0, g.map.length);
                   const sy2 = clampLaneY(g.map, sx2, e.y + (Math.floor(k / 5) - 2) * 500);
-                  spawnBattleEntity(g, row.id, e.team, e.owner, sx2, sy2, ov);
+                  spawnBattleEntity(g, row.id, e.team, e.owner, sx2, sy2, ov, e);
                   k++;
                 }
               }
@@ -2668,7 +2721,7 @@ export function stepCombat(g: Game): void {
               const ox = ((ang % 4) - 2) * 420;
               const oy = (idiv(ang, 4) - 2) * 420;
               spawnBattleEntity(g, a.summonId ?? 'm_nutcracker', e.team, e.owner,
-                clamp(aim.x + ox, 0, g.map.length), clampLaneY(g.map, aim.x + ox, aim.y + oy));
+                clamp(aim.x + ox, 0, g.map.length), clampLaneY(g.map, aim.x + ox, aim.y + oy), undefined, e);
             }
             spendSkill(e, i, a);
             break;
@@ -2868,7 +2921,7 @@ export function stepCombat(g: Game): void {
               const copy = spawnBattleEntity(g, src.defId, e.team, e.owner,
                 clamp(src.x + (k - 2) * 300, 0, g.map.length),
                 clampLaneY(g.map, src.x, src.y + ((k % 2 === 0) ? 400 : -400)),
-                src.defOv);
+                src.defOv, e);
               copy.hp = def(copy).maxHp;   // 온전한 몸, 쿨다운 없는 새 유닛
             }
             spendSkill(e, i, a);
@@ -3155,7 +3208,7 @@ export function stepCombat(g: Game): void {
       if (g.tick < bg.hatchTick) { still.push(bg); continue; }
       grave.alive = false;
       grave.hp = 0;
-      const born = spawnBattleEntity(g, 'p_bone_dragon', bg.team, bg.owner, grave.x, grave.y);
+      const born = spawnBattleEntity(g, 'p_bone_dragon', bg.team, bg.owner, grave.x, grave.y, undefined, grave);
       born.hp = def(born).maxHp;                    // 온전한 몸으로
       born.graveReadyTick = g.tick + BONE_GRAVE_COOLDOWN; // 60초는 다시 무덤이 못 된다
       g.events.push({ tick: g.tick, kind: 'boneRevive', x: born.x, y: born.y });
@@ -3191,7 +3244,7 @@ export function stepCombat(g: Game): void {
     // 본드래곤 「뼈 무덤」: 쓰러진 자리에 무덤을 남긴다.
     // 되살아난 직후 60초 동안은 그냥 죽는다 (graveReadyTick).
     if (e.defId === 'p_bone_dragon' && g.tick >= e.graveReadyTick) {
-      const grave = spawnBattleEntity(g, 'c_bone_grave', e.team, e.owner, e.x, e.y);
+      const grave = spawnBattleEntity(g, 'c_bone_grave', e.team, e.owner, e.x, e.y, undefined, e);
       g.boneGraves.push({
         graveId: grave.id,
         hatchTick: g.tick + BONE_GRAVE_TICKS,

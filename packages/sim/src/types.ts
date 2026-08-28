@@ -504,6 +504,14 @@ export interface Entity {
    */
   homeX: number;
   homeY: number;
+  /**
+   * 이 유닛만의 목표 지점 (FP). -1 이면 없음 — 판 전체의 foeGoal 을 쓴다.
+   *
+   * 6 「자정의 마을」처럼 갈래마다 노리는 곳이 다른 판에서, 어느 길로 왔느냐에
+   * 따라 향하는 곳을 달리한다. 거점(EnemyCamp)의 goal 이 출정하는 순간 찍힌다.
+   */
+  goalX: number;
+  goalY: number;
   /** 지속피해: 이 틱까지 dotDps(초당) 피해. */
   dotUntil: number;
   dotDps: number;
@@ -701,6 +709,13 @@ export interface EnemyCamp {
   /** 출정 좌표 (FP). 생략 시 기본 스폰 지점. */
   readonly x?: number;
   readonly y?: number;
+  /**
+   * 이 거점에서 나온 부대가 노릴 지점 (FP). 생략하면 판 전체의 foeGoal.
+   * 출정하는 순간 유닛에 찍히므로, 거점의 갈래가 턴마다 바뀌어도
+   * 이미 나온 부대는 원래 향하던 곳을 계속 노린다.
+   */
+  readonly goalX?: number;
+  readonly goalY?: number;
   /** 시작 인컴 단계 (0 = 기본). */
   readonly startIncome?: number;
   /**

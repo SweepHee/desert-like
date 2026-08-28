@@ -139,7 +139,17 @@ export interface CampaignStage {
     readonly fleeYOffTile: number;
     readonly fleeRadiusTiles: number;
     /** 적이 밀려드는 숲길 입구. [0] 은 처음부터, [1] 은 secondLaneWave 부터. */
-    readonly lanes: readonly { readonly xTile: number; readonly yOffTile: number; readonly label: string }[];
+    readonly lanes: readonly {
+      readonly xTile: number; readonly yOffTile: number; readonly label: string;
+      /**
+       * 이 길로 온 적이 노릴 지점. 생략하면 마을 한복판.
+       *
+       * 6시 길이 두 갈래(서 x17~18 / 동 x34~37)라 한 점으로 모으면 아래 두 채
+       * 중 한 채는 경로에서 12타일 넘게 떨어져 영영 안 맞는다. 갈래마다 다른
+       * 6시 길을 물려 마을 전체가 위협받게 한다.
+       */
+      readonly goalXTile?: number; readonly goalYOffTile?: number;
+    }[];
     /** 두 번째 길이 열리는 턴 — 이 턴에 경고 대사가 뜨고 같은 턴에 양쪽에서 나온다. */
     readonly secondLaneWave: number;
     /** 이 턴부터는 번갈아가 없다 — 매 턴 양쪽에서 동시에 들이친다. */
@@ -707,8 +717,10 @@ export const SYLVARIN_CAMPAIGN: readonly CampaignStage[] = [
       // 6시 길 — 남쪽으로 열린 두 갈래 중 깊은 쪽 (x 34.5~37.5)
       fleeXTile: 36.0, fleeYOffTile: 18.5, fleeRadiusTiles: 2.5,
       lanes: [
-        { xTile: 47.5, yOffTile: -18.5, label: '1시 숲길' },
-        { xTile: 10.0, yOffTile: -18.5, label: '11시 숲길' },
+        // 실측 경로: 1시 → 집합지 1시입구 1.3 · 집B 2.8 · 집D 0.7 · 6시길목 0.5
+        { xTile: 47.5, yOffTile: -18.5, label: '1시 숲길', goalXTile: 36.0, goalYOffTile: 15.0 },
+        // 실측 경로: 11시 → 집합지 11시입구 1.3 · 집A 3.8 · 집C 3.1
+        { xTile: 10.0, yOffTile: -18.5, label: '11시 숲길', goalXTile: 18.0, goalYOffTile: 16.5 },
       ],
       secondLaneWave: 6,
       bothLanesWave: 15,

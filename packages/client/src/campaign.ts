@@ -1651,12 +1651,14 @@ export const SYLVARIN_CAMPAIGN: readonly CampaignStage[] = [
     mission: 'destroy', seed: seedOf(15), mapId: 'goldmine',
     noTowers: true,
     /*
-     * 넥서스를 아예 걷어낸다.
-     * 양쪽 요새는 배경 그림에 이미 구워져 있는데 시뮬 넥서스까지 세우면 그 위에
-     * 초록 하트가 겹쳐 뜬다. 게다가 이 판의 승패는 금으로만 나므로 넥서스는
-     * 목표도 아니다 — 건물은 그림으로 두고 엔티티는 없앤다.
+     * 적 넥서스만 걷어낸다.
+     *
+     * 카르자 요새는 배경 그림이고 우리는 그걸 칠 수 없다 (holdLine 너머다).
+     * 반대로 **우리 요새는 부술 수 있어야 한다** — 갱을 다 빼앗기면 카르자가
+     * 기지까지 밀고 들어와 판이 끝나야 하기 때문이다. 그래서 아군 넥서스는
+     * 남겨 두고, 그림은 배경에서 빼 nexus_goldkeep 스킨으로 세운다.
      */
-    noNexus: true,
+    noEnemyNexus: true,
     startMoney: 500,
     goldRace: {
       target: 20000,

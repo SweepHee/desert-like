@@ -217,6 +217,8 @@ export const ASSET_UNITS: Record<string, string | string[]> = {
   c_sage_watchtower: '/assets/units/c_sage_watchtower.png',
   c_sage_watchtower_s: '/assets/units/c_sage_watchtower_s.png',
   // 실바린 야영지 넥서스 (캠페인 14) — 큰 엘프 천막
+  // 15 금광 고원: 아군 요새 (배경에 굽지 않고 넥서스로 세운다 — 부술 수 있어야 한다)
+  nexus_goldkeep: '/assets/units/nexus_goldkeep.png',
   nexus_elfcamp: '/assets/units/nexus_elfcamp.png',
   // 적 주둔지 (캠페인 14) — 부술 수 있는 거점 건물
   // 네 변형이 id 로 배정돼 거점마다 조금씩 다르게 보인다
@@ -2972,7 +2974,10 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
         // 예외: 둥지 맵의 아군 넥서스는 「둥지」 그림 (지켜야 할 대상이 한눈에 보이게)
         const autoSkin = curMap?.id === 'toybox' ? 'toy' : null;
         const skin = enemySkin ?? autoSkin;
-        const toyKey = curMap?.id === 'owlkeep' && e.defId === 'nexus'
+        const toyKey = curMap?.id === 'goldmine' && e.defId === 'nexus'
+          // 금광 고원: 우리 요새만 세운다 (적 요새는 배경 그림이고 못 친다)
+          ? 'nexus_goldkeep'
+          : curMap?.id === 'owlkeep' && e.defId === 'nexus'
           // 올빼미 성채: 우리는 올빼미 둥지, 적은 뼈 야영지
           ? (e.team === 0 ? 'nexus_owlnest' : 'nexus_bonecamp')
           : curMap?.id === 'nest' && e.team === 0 && e.defId === 'nexus'

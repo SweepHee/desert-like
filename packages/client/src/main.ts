@@ -665,6 +665,10 @@ let goldOwner: number[] = [];
 let goldHold: number[] = [];
 /** 갱에 배치된 광부 엔티티 id. */
 let goldMiners: number[][] = [];
+/** 갱마다 결계를 세운 카르자 주술사 id (-1 = 이미 끊겼다). */
+let goldWardId: number[] = [];
+/** 다음 광부를 내보낼 시각(초) — 죽자마자 갱에서 튀어나오지 않게 한다. */
+let goldMinerNext: number[] = [];
 /** 모은 금 (우리 / 카르자). 이 판의 승패는 이 둘로만 난다. */
 let goldAlly = 0;
 let goldFoe = 0;
@@ -2231,6 +2235,8 @@ async function startCampaignStage(st: CampaignStage): Promise<void> {
   goldOwner = [];
   goldHold = [];
   goldMiners = [];
+  goldWardId = [];
+  goldMinerNext = [];
   goldAlly = 0;
   goldFoe = 0;
   goldLastTick = 0;
@@ -2314,6 +2320,8 @@ async function startCampaignStage(st: CampaignStage): Promise<void> {
     goldOwner = gr.mines.map(() => 1);
     goldHold = gr.mines.map(() => 0);
     goldMiners = gr.mines.map(() => []);
+    goldWardId = gr.mines.map(() => -1);
+    goldMinerNext = gr.mines.map(() => 0);
     gr.mines.forEach((m, i) => {
       const c = at(m.xTile, m.yOffTile);
       // 주둔군: 갱을 떠나지 않는다 (garrisonR). 밀어내야 점령이 시작된다.
@@ -2324,6 +2332,15 @@ async function startCampaignStage(st: CampaignStage): Promise<void> {
           const q = at(m.xTile + (k % 4 - 1.5) * 0.7, m.yOffTile + (Math.floor(k / 4) - 0.5) * 0.7);
           spawnGarrison(game!, row.defId, 1, q.x, q.y, Math.floor(gr.radiusTiles * FP));
         }
+      }
+      /*
+       * 결계 주술사 — 갱마다 하나. 이 자가 서 있는 동안 갱 안의 카르자는
+       * 갱 밖에서 오는 공격에 닿지 않는다. 근접을 들여보내 이 자를 끊어야
+       * 갱이 열린다 (원거리로 밖에서 갉는 길을 막는다).
+       */
+      {
+        const w = spawnGarrison(game!, 'k_shaman', 1, c.x, c.y, Math.floor(gr.radiusTiles * FP));
+        goldWardId[i] = w.id;
       }
       // 카르자 광부 — 이미 캐고 있다
       spawnGoldMiners(i, 1);
@@ -2464,26 +2481,32 @@ function goldMineAt(i: number): { x: number; y: number } | null {
 }
 
 /**
- * 갱에 광부를 세운다.
+ * 갱으로 광부를 내보낸다.
  *
- * homeX/homeY 를 박아 그 자리를 지키게 한다 — 진군도 안 하고, 집합 명령도 안 따른다.
- * 무기가 없어 스스로 아무것도 못 하므로, 적이 들어오면 그냥 죽는다.
+ * **제 진영에서 걸어 나간다** — 갱에서 그냥 튀어나오면 죽여도 죽여도 그 자리에
+ * 다시 서서 원거리 부대가 영영 진군을 못 했다. homeX/homeY 를 갱에 박아 두면
+ * 그리로 걸어가 자리를 잡고, 밀려나도 되돌아온다.
+ * 무기가 없어 스스로 아무것도 못 하므로 적이 들어오면 그냥 죽는다.
  */
 function spawnGoldMiners(i: number, team: 0 | 1): void {
   const gr = campaign?.goldRace;
   const c = goldMineAt(i);
   if (!gr || !game || !c) return;
   const ids = goldMiners[i] ?? (goldMiners[i] = []);
-  for (let k = ids.length; k < gr.workersPerMine; k++) {
-    const defId = gr.workerDefIds[k % gr.workerDefIds.length]!;
-    // 갱 앞마당에 조금씩 흩어 세운다 (겹쳐 서면 한 방에 같이 죽는다)
-    const ox = ((k % 3) - 1) * Math.floor(0.8 * FP);
-    const oy = (Math.floor(k / 3) - 0.5) * Math.floor(0.8 * FP);
-    const e = spawnUnit(game, defId, team, c.x + ox, c.y + oy);
-    e.homeX = e.x;
-    e.homeY = e.y;
-    ids.push(e.id);
-  }
+  const need = gr.workersPerMine - ids.length;
+  if (need <= 0) return;
+  // 한 번에 하나씩만 내보낸다 — 줄지어 걸어오는 그림이 된다
+  const now = campNowSec();
+  if (now < (goldMinerNext[i] ?? 0)) return;
+  goldMinerNext[i] = now + 8;
+  const defId = gr.workerDefIds[ids.length % gr.workerDefIds.length]!;
+  const from = game.map.spawnX[team];
+  const k = ids.length;
+  const e = spawnUnit(game, defId, team, from, laneCenterY(game.map, from));
+  // 갱 앞마당에 조금씩 흩어 자리를 준다 (겹쳐 서면 한 방에 같이 죽는다)
+  e.homeX = c.x + ((k % 3) - 1) * Math.floor(0.8 * FP);
+  e.homeY = c.y + (Math.floor(k / 3) - 0.5) * Math.floor(0.8 * FP);
+  ids.push(e.id);
 }
 
 /** 갱에 남은 광부를 정리하고(죽은 것 제거) 모자라면 다시 채운다. */
@@ -2558,6 +2581,74 @@ function tickGoldRace(): void {
       }
     }
     syncGoldMiners(i);
+  }
+
+  /*
+   * ── 주술 결계 ──
+   *
+   * 갱마다 선 카르자 주술사가 살아 있는 동안, 그 갱 안의 카르자는 갱 밖에서
+   * 오는 공격에 닿지 않는다. 주술사를 끊어야 갱이 열린다.
+   */
+  for (let i = 0; i < gr.mines.length; i++) {
+    const wid = goldWardId[i] ?? -1;
+    if (wid < 0) continue;
+    const w = game.entities.find((q) => q.id === wid);
+    if (!w || !w.alive) {
+      goldWardId[i] = -1;
+      showToast(`✨ ${gr.mines[i]!.label}의 결계가 풀렸다 — 이제 원거리도 닿는다`);
+      audio.play('cast_bless', { volume: 0.95 });
+      continue;
+    }
+    const c = goldMineAt(i);
+    if (!c) continue;
+    const wr = Math.floor(gr.radiusTiles * FP);
+    const wr2 = wr * wr;
+    for (const e of game.entities) {
+      if (!e.alive || e.team !== 1) continue;
+      const dx = e.x - c.x;
+      const dy = e.y - c.y;
+      if (dx * dx + dy * dy > wr2) continue;
+      e.wardUntil = game.tick + 40;   // 2초 — 매 틱 갱신되므로 나가면 곧 풀린다
+      e.wardX = c.x;
+      e.wardY = c.y;
+      e.wardR = wr;
+    }
+  }
+
+  /*
+   * ── 카르자의 목표 ──
+   *
+   * 적은 우리 기지로만 달려오면 안 된다. 빼앗긴 갱이 있으면 그걸 되찾으러 가고,
+   * 갱을 전부 쥐고 있을 때만 우리 요새로 밀고 온다.
+   * (유닛마다 goalX/goalY 를 찍는다 — 마을 방어전에서 쓰던 그 자리다)
+   */
+  {
+    let gx = -1;
+    let gy = -1;
+    let bestD = -1;
+    const foeBase = game.map.nexusX[1];
+    for (let i = 0; i < gr.mines.length; i++) {
+      if (goldOwner[i] !== 0) continue;
+      const c = goldMineAt(i);
+      if (!c) continue;
+      // 저희 진영에서 가까운 갱부터 되찾으러 간다
+      const dd = Math.abs(c.x - foeBase);
+      if (bestD < 0 || dd < bestD) { bestD = dd; gx = c.x; gy = c.y; }
+    }
+    if (gx < 0) {
+      // 갱을 전부 쥐었다 — 이제 우리 요새를 친다
+      const bx = game.map.nexusX[0];
+      gx = bx;
+      gy = laneCenterY(game.map, bx);
+    }
+    game.foeGoalX = gx;
+    game.foeGoalY = gy;
+    for (const e of game.entities) {
+      if (!e.alive || e.team !== 1) continue;
+      if (e.garrisonR > 0 || e.homeX >= 0) continue;   // 주둔군·광부는 제자리
+      e.goalX = gx;
+      e.goalY = gy;
+    }
   }
 
   // ── 5초마다 정산 ──
@@ -3536,7 +3627,8 @@ function updateSpeedButtons(): void {
 function currentLaneIdx(): number {
   if (!game || !campaignLanes) return -1;
   if (campaignLanes[0]?.x !== undefined) {
-    return campaignLanes.findIndex((l) => l.x === game!.rallyX);
+    // x 만 보면 안 된다 — 사잇길과 북중 갱은 x 가 같아서 앞의 칸이 잡혔다
+    return campaignLanes.findIndex((l) => l.x === game!.rallyX && l.y === game!.rallyY - laneCenterY(game!.map, l.x));
   }
   if (campaignHold) return campaignLanes.findIndex((l) => l.hold);
   return campaignLanes.findIndex((l) => !l.hold && l.y === game!.deployLaneY);

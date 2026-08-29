@@ -62,6 +62,21 @@ function isShielded(g: Game, t: Entity): boolean {
   return t.defId === 'nexus' && !g.guardianDown[t.team as TeamId];
 }
 
+/**
+ * 주술 결계 — 결계 원 밖에 선 자는 이 유닛을 노릴 수 없다.
+ *
+ * 기준은 「공격자가 원 안에 있느냐」다: 갱 안으로 들어가면 원거리도 때릴 수 있고,
+ * 밖에서는 사거리가 아무리 길어도 닿지 않는다. 결계를 세운 주술사가 죽으면
+ * 캠페인 레이어가 wardUntil 을 지워 한 번에 풀린다.
+ * (15 「에메랄드 숲의 값」 — 갱을 밖에서 갉지 못하게 해 근접을 들여보내게 만든다)
+ *
+ * 결정론: 정수 거리 비교뿐이다.
+ */
+function wardBlocks(g: Game, attacker: Entity, t: Entity): boolean {
+  if (g.tick >= t.wardUntil || t.wardR <= 0) return false;
+  return dist2(attacker.x, attacker.y, t.wardX, t.wardY) > t.wardR * t.wardR;
+}
+
 /** 수호자(중간보스)는 모든 상태이상에 면역이다. */
 function isStatusImmune(e: Entity): boolean {
   const d = def(e);
@@ -263,7 +278,7 @@ function findTarget(g: Game, e: Entity, d: EntityDef, skipStructures = false, ra
     if (cdx > coarse || cdx < -coarse) continue;
     const cdy = t.y - origin.y;
     if (cdy > coarse || cdy < -coarse) continue;
-    if (!canHit(g, d, t) || isShielded(g, t)) continue;
+    if (!canHit(g, d, t) || isShielded(g, t) || wardBlocks(g, e, t)) continue;
     const td = def(t);
     if (skipStructures && td.tier === 'structure') continue;
     const reach = acquire + d.radius + td.radius;
@@ -316,7 +331,7 @@ function rallyGuardTarget(g: Game, e: Entity, d: EntityDef): number {
   for (const t of g.entities) {
     if (!t.alive || t.team === e.team) continue;
     if (def(t).tier === 'structure') continue;
-    if (!canHit(g, d, t) || isShielded(g, t)) continue;
+    if (!canHit(g, d, t) || isShielded(g, t) || wardBlocks(g, e, t)) continue;
     if (dist2(t.x, t.y, g.rallyX, g.rallyY) > gr2) continue;
     const d2 = dist2(e.x, e.y, t.x, t.y);
     if (best === -1 || d2 < bestD2) {
@@ -333,7 +348,7 @@ function findConfusedTarget(g: Game, e: Entity, d: EntityDef): number {
   let bestD2 = -1;
   for (const t of g.entities) {
     if (!t.alive || t.team !== e.team || t.id === e.id) continue;
-    if (!canHit(g, d, t) || isShielded(g, t)) continue;
+    if (!canHit(g, d, t) || isShielded(g, t) || wardBlocks(g, e, t)) continue;
     const td = def(t);
     const reach = d.acquireRange + d.radius + td.radius;
     const d2 = dist2(e.x, e.y, t.x, t.y);
@@ -887,6 +902,12 @@ function applyDamage(g: Game, attacker: Entity, attackerDef: EntityDef, victim: 
     victim.lastAttackerId = attacker.id;
     return;
   }
+  /*
+   * 주술 결계: 결계 밖에서 날아온 것은 닿지 않는다.
+   * 조준에서 이미 걸러지지만, 광역은 조준과 무관하게 번지므로 여기서도 막는다 —
+   * 안 그러면 갱 밖에서 광역만 던져 결계를 우회할 수 있다.
+   */
+  if (wardBlocks(g, attacker, victim)) return;
   const w = attackerDef.weapon!;
   const vd = def(victim);
   // 은신 중에는 어떤 평타도 맞지 않는다 (이미 날아온 투사체 포함)
@@ -1171,6 +1192,10 @@ function spawnBattleEntity(g: Game, defId: string, team: CombatTeam, owner: numb
     armorBuffImmuneUntil: 0,
     regenPerSec: 0,
     regenUntil: 0,
+    wardUntil: 0,
+    wardX: 0,
+    wardY: 0,
+    wardR: 0,
     lastStandUntil: 0,
     lastStandPct: 0,
     lastStandHealPct: 0,
@@ -1820,15 +1845,28 @@ export function stepCombat(g: Game): void {
       const reach = rangeOf(g, e, d) + d.radius + td.radius;
       if (dist2(e.x, e.y, target.x, target.y) <= reach * reach) continue; // 사거리 안 — 제자리에서 쏜다
       /*
+       * 집결 중에는 표식 둘레 밖의 적을 쫓아가지 않는다.
+       *
+       * 「여기로 모여」는 「여기를 지켜라」다. 그런데 사거리가 긴 유닛(에버그린 11타일)이
+       * 지나가다 엉뚱한 곳의 적을 물면 그 자리에 멈춰 서서 부대 전체가 목적지에
+       * 영영 못 갔다 (15 금광 고원에서 다른 갱의 일꾼을 물고 굳었다).
+       * 표식에서 먼 것은 쳐다보지 말고 가던 길을 간다.
+       */
+      if (rallyBound(g, e, d)
+        && dist2(target.x, target.y, g.rallyX, g.rallyY) > RALLY_GUARD * RALLY_GUARD) {
+        e.targetId = -1;
+      } else {
+      /*
        * 마스크 지형에서는 「보이는 적」이 「갈 수 있는 적」이 아니다.
        * 13 「세계수 뿌리 탈환」의 x17 개울(폭 1타일, 건널 곳은 남쪽 다리 하나)
        * 건너편 적이 사거리 밖에서 보이면, 부대가 물가로 직진해 줄줄이 굳었다.
        * 사이가 막혔으면 추격을 접고 아래 진군(흐름장)에 맡긴다 — 다리를 건너
        * 다시 보이면 그때 문다.
        */
-      if (!blockedByTerrain(g, d) || walkLineClear(g.map, e.x, e.y, target.x, target.y)) {
-        moveToward(g, e, d, target.x, target.y, slowed);
-        continue;
+        if (!blockedByTerrain(g, d) || walkLineClear(g.map, e.x, e.y, target.x, target.y)) {
+          moveToward(g, e, d, target.x, target.y, slowed);
+          continue;
+        }
       }
     }
 

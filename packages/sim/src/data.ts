@@ -236,6 +236,12 @@ export const MAPS: Record<string, MapDef> = {
     nexusX: [tiles(4.7), tiles(50.9)],
     towerX: [tiles(14), tiles(42)],
     spawnX: [tiles(10), tiles(46)],   // 둘 다 통행 칸 위 (실측)
+    /*
+     * 출정 자리를 좌표로 못박는다.
+     * 이 판은 집합지를 갱으로 옮겨 다니는데, 그때마다 부대가 갱에서 나오는 것처럼
+     * 보이면 안 된다 — 생산은 언제나 요새 앞이고, 거기서 갱까지 걸어가야 한다.
+     */
+    spawnPos: [[tiles(10), 0], [tiles(46), 0]],
   },
   village: {
     id: 'village',

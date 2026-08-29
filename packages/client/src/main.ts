@@ -4358,6 +4358,8 @@ function tick(deltaMS: number): void {
           x: c?.x ?? 0, y: c?.y ?? 0,
           owner: goldOwner[i] ?? -1,
           hold: (goldHold[i] ?? 0) / need,
+          // 결계 주술사가 살아 있으면 그 반경(타일)을 넘긴다 — 0 이면 결계 없음
+          ward: (goldWardId[i] ?? -1) >= 0 ? gr.radiusTiles : 0,
         };
       }));
     } else {

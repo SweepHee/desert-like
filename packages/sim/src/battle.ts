@@ -1636,7 +1636,10 @@ export function stepCombat(g: Game): void {
     let valid = false;
     // cur.team 체크: 혼란 중 조준했던 "자기 편"이 회복 후에도 타겟으로 남아
     // 유닛이 아군만 영원히 따라다니는 바보 상태를 막는다
-    if (cur && cur.alive && cur.team !== e.team && canHit(g, d, cur)) {
+    if (cur && cur.alive && cur.team !== e.team && canHit(g, d, cur)
+      // 결계 밖으로 나갔으면 물고 있던 것도 놓는다 — 안 그러면 계속 쏘면서
+      // 피해는 0 이라 「때리는데 안 죽는」 그림이 된다 (15 금광 고원)
+      && !wardBlocks(g, e, cur)) {
       const origin = acquireOrigin(e, d);
       const cd = def(cur);
       // 이미 문 대상은 탐지 거리의 1.3배까지 따라간다 (수호자는 앵커 기준 유지).

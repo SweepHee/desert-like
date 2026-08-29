@@ -1119,7 +1119,7 @@ export interface Renderer {
    * owner: 0 우리(청록) / 1 카르자(붉은) / -1 중립. hold 는 점령 진행(0~1),
    * 부호로 어느 쪽이 밀고 있는지 나타낸다.
    */
-  setGoldMines(mines: { x: number; y: number; owner: number; hold: number }[] | null): void;
+  setGoldMines(mines: { x: number; y: number; owner: number; hold: number; ward: number }[] | null): void;
   /** 선택 표시 링을 그릴 유닛 id (null = 해제). */
   setSelected(id: number | null): void;
   /** 효과음 재생기 연결 (없으면 무음으로 동작). */
@@ -1473,7 +1473,7 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
     await loadTex('/assets/tiles/gm_flag_ally.png'),
     await loadTex('/assets/tiles/gm_flag_foe.png'),
   ];
-  let goldMines: { x: number; y: number; owner: number; hold: number }[] | null = null;
+  let goldMines: { x: number; y: number; owner: number; hold: number; ward: number }[] | null = null;
   const goldFlagSp: Sprite[] = [];
   const meteorTex = await loadTex('/assets/fx/fx_meteor_large.png');
   const meteorZoneTex = await loadTex('/assets/fx/zone_meteor.png');
@@ -4164,6 +4164,27 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
           sp.y = curMap.vertical ? py : py - 26;
         } else {
           sp.visible = false;
+        }
+        /*
+         * 주술 결계 — 갱을 덮은 청록 돔.
+         *
+         * 이게 서 있는 동안 갱 밖에서 오는 공격은 닿지 않는다. 「왜 때리는데 안
+         * 죽지」가 되지 않도록, 결계가 있다는 것과 그 경계가 어디인지를 그림으로
+         * 못박는다 — 안으로 들어가야 싸울 수 있다는 뜻이다.
+         */
+        if (m.ward > 0) {
+          const wr = TILE * m.ward;
+          const wh = curMap.vertical ? wr : wr * 0.55;
+          const puls = 0.5 + 0.3 * Math.sin(now * 0.004 + i);
+          fx.ellipse(px, py, wr, wh).fill({ color: 0x5fc9b0, alpha: 0.07 + puls * 0.04 });
+          fx.ellipse(px, py, wr, wh)
+            .stroke({ color: 0x7fe8d0, width: 2, alpha: 0.45 + puls * 0.35 });
+          // 경계를 도는 룬 알갱이 — 어디까지가 결계인지 눈으로 잡힌다
+          for (let k = 0; k < 14; k++) {
+            const a2 = now * 0.0009 + (k / 14) * Math.PI * 2;
+            fx.circle(px + Math.cos(a2) * wr, py + Math.sin(a2) * wh, 2.4)
+              .fill({ color: 0xbdfaea, alpha: 0.5 + puls * 0.4 });
+          }
         }
         // 점령 진행 고리 — 미는 쪽 색으로 차오른다
         if (m.hold !== 0) {

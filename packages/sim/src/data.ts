@@ -2232,7 +2232,7 @@ reg(D({
   cost: 0, supply: 0, maxHp: 20000, armor: 15, tags: ['plate', 'massive', 'undead'], flying: true,
   regenPerSec: 15,
   immovable: true, // 덩치로 버틴다 — 밀어내도 자리를 내주지 않는다
-  speed: tilesPerSecond(0.65), radius: tiles(0.75), acquireRange: tiles(6),
+  speed: tilesPerSecond(0.3), radius: tiles(0.75), acquireRange: tiles(6),
   weapon: { damage: 60, cooldown: seconds(1.3), range: tiles(1.4), targets: 'both', splash: tiles(1.1) },
   actives: [{
     name: '지상 불태우기', desc: '지상의 적 무리 아래에 반경 4타일 불길을 남긴다',

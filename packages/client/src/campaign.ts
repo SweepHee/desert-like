@@ -397,12 +397,15 @@ export const PORTRAITS: Record<string, string> = {
   '오웬': '/assets/portraits/hollow.png',
   '사도': '/assets/portraits/apostle.png',
   '실피': '/assets/portraits/silphy.png',
+  // 15 신규 화자 — 전용 포트레이트가 나오기 전까지는 유닛 아이콘을 쓴다
+  '하르간': '/assets/units/k_grandshaman_icon.png',
   '마멋 족장': '/assets/units/s_marmot_icon.png',
   '광대 인형': '/assets/units/m_clown_doll_icon.png',
 };
 
 /** 적/중립 진영 화자 — 대화창에서 오른쪽에 선다. */
-const RIGHT_SIDE = new Set(['쿠르가', '마몬', '발타르', '슬리피 할로우', '앨리스', '광대 인형', '마멋 족장']);
+const RIGHT_SIDE = new Set(['쿠르가', '마몬', '발타르', '슬리피 할로우', '앨리스', '광대 인형', '마멋 족장',
+  '하르간', '이르사']);
 export function speakerSide(who: string): 'left' | 'right' {
   return RIGHT_SIDE.has(who) ? 'right' : 'left';
 }
@@ -1586,10 +1589,164 @@ export const SYLVARIN_CAMPAIGN: readonly CampaignStage[] = [
     ],
   },
   {
-    id: 15, act: 3, title: '발타르의 성 — 망자의 만찬', goal: '방공망을 뚫고 오웬의 머리를 탈환하라 (넥서스 파괴)',
+    id: 15, act: 3, title: '에메랄드 숲의 값', goal: '카르자의 채굴 캠프 여섯을 걷어내고 금광 고원에서 몰아내라',
+    allowedUnits: U14, botDifficulty: 'normal',
+    // 카르자는 한 덩어리가 아니라 갱마다 흩어져 있다 — 본진 + 채굴 캠프 여섯.
+    enemies: ['karja', 'karja', 'karja', 'karja', 'karja', 'karja', 'karja'],
+    allies: [],
+    mission: 'destroy', seed: seedOf(15), mapId: 'goldmine',
+    noTowers: true, // 고원엔 수호탑이 없다 — 갱과 진영이 전부다
+    /*
+     * 이 판에 나올 수 있는 카르자. 최상급(모래 거인)·최종(대주술사)은 목록에서
+     * 빼 두고 「출현!」으로만 부른다 — 봇 경제로 굴러가면 후반에 벽이 된다.
+     */
+    enemyAllowedUnits: [
+      'k_scimitar', 'k_hunter', 'k_wolf', 'k_wolfrider', 'k_apprentice',
+      'k_tribal', 'k_shaman', 'k_spiritcaller', 'k_highlander', 'k_falconer',
+      'k_eagle', 'k_beeswarm', 'k_sandwraith',
+    ],
+    enemyStartTech: 3,
+    // 카르자의 값어치는 「발」에 있다 — 늑대·기수가 앞서 달려와 뒤를 문다
+    enemyPreferredUnits: ['k_wolf', 'k_wolfrider', 'k_scimitar'],
+    enemyUnitMinWave: {
+      k_apprentice: 3, k_tribal: 4,
+      k_shaman: 6, k_falconer: 6,       // 6턴: 토템과 매 — 여기서 성격이 바뀐다
+      k_eagle: 8, k_beeswarm: 8,
+      k_spiritcaller: 10, k_sandwraith: 11,
+      k_highlander: 13,                  // 13턴: 대돌격이 전선을 갈아엎기 시작
+    },
+    enemyUnitCaps: {
+      // 잡졸은 갱마다 쏟아지므로 본진 생산은 조여 둔다
+      k_scimitar: 14, k_hunter: 10, k_wolf: 16,
+      k_wolfrider: 8, k_tribal: 6, k_apprentice: 6,
+      k_shaman: 3, k_spiritcaller: 2, k_falconer: 4,
+      k_eagle: 6, k_beeswarm: 5, k_sandwraith: 4, k_highlander: 4,
+    },
+    deadlineWave: 40,
+    enemyCamps: [
+      {
+        // ── 카르자 진영 (오른쪽 끝, 붉은 천막) — 유일하게 스스로 생산한다
+        slot: 0, label: '카르자 진영', x: 49 * FP, y: -3.4 * FP,
+        startIncome: 5, startMoney: 400, spendAll: true,
+        phases: [
+          { fromWave: 1, units: ['k_scimitar', 'k_wolf', 'k_hunter'] },
+          { fromWave: 4, units: ['k_scimitar', 'k_wolf', 'k_hunter', 'k_wolfrider', 'k_apprentice'], preferred: ['k_wolfrider'] },
+          { fromWave: 8, units: ['k_wolfrider', 'k_tribal', 'k_shaman', 'k_falconer', 'k_eagle'], preferred: ['k_eagle', 'k_shaman'] },
+          { fromWave: 13, units: ['k_highlander', 'k_eagle', 'k_sandwraith', 'k_spiritcaller', 'k_beeswarm'], preferred: ['k_highlander'] },
+        ],
+        forcedGrowth: [
+          { fromWave: 13, units: ['k_highlander', 'k_eagle', 'k_sandwraith'], perWave: 2 },
+        ],
+      },
+      // ── 채굴 캠프 여섯. 인컴 0 — 스스로 크지 않고 정해진 증원만 게워 낸다.
+      //    좌표는 gen_goldmine.py 가 잰 갱구 자리 그대로다.
+      {
+        slot: 1, label: '1시 갱', x: 16.8 * FP, y: -12.0 * FP, nexusDefId: 'c_demon_camp',
+        startIncome: 0, incomeCap: 0, startMoney: 0,
+        phases: [{ fromWave: 1, units: ['k_wolf'] }],
+      },
+      {
+        slot: 2, label: '12시 갱', x: 28.8 * FP, y: -6.5 * FP, nexusDefId: 'c_demon_camp',
+        startIncome: 0, incomeCap: 0, startMoney: 0,
+        phases: [{ fromWave: 1, units: ['k_scimitar'] }],
+      },
+      {
+        slot: 3, label: '11시 갱', x: 40.0 * FP, y: -12.4 * FP, nexusDefId: 'c_demon_camp',
+        startIncome: 0, incomeCap: 0, startMoney: 0,
+        phases: [{ fromWave: 1, units: ['k_hunter'] }],
+      },
+      {
+        slot: 4, label: '7시 갱', x: 15.7 * FP, y: 8.4 * FP, nexusDefId: 'c_demon_camp',
+        startIncome: 0, incomeCap: 0, startMoney: 0,
+        phases: [{ fromWave: 1, units: ['k_wolf'] }],
+      },
+      {
+        slot: 5, label: '6시 갱', x: 28.0 * FP, y: 4.4 * FP, nexusDefId: 'c_demon_camp',
+        startIncome: 0, incomeCap: 0, startMoney: 0,
+        phases: [{ fromWave: 1, units: ['k_scimitar'] }],
+      },
+      {
+        slot: 6, label: '5시 갱', x: 41.7 * FP, y: 7.6 * FP, nexusDefId: 'c_demon_camp',
+        startIncome: 0, incomeCap: 0, startMoney: 0,
+        phases: [{ fromWave: 1, units: ['k_hunter'] }],
+      },
+    ],
+    spawns: [
+      // ── 영웅: 상점 「영웅」 탭에서 직접 부른다 ──
+      { defId: 'c_kael', label: '🛡 숲지기 카엘 참전!', heroPick: true, everySec: 110,
+        concurrentCap: 1, respawnAfterDeathSec: 110, atXTile: 7, friendly: true },
+      { defId: 'c_elowyn', label: '🧙 현자 엘로윈 참전!', heroPick: true, everySec: 240,
+        concurrentCap: 1, respawnAfterDeathSec: 240, atXTile: 7, friendly: true },
+      { defId: 'c_evergreen', label: '🏹 신궁 에버그린 참전!', heroPick: true, everySec: 170,
+        concurrentCap: 1, respawnAfterDeathSec: 170, atXTile: 7, friendly: true },
+      // ── 갱 증원: 80초마다. 갱이 무너지면 그쪽은 영구히 끊긴다 ──
+      { defId: 'k_wolf', label: '1시 갱 사냥무리', count: 3, everySec: 80,
+        atXTile: 16.8, yOffTile: -12.0, whileCampSlot: 1 },
+      { defId: 'k_scimitar', label: '12시 갱 수비대', count: 3, everySec: 80,
+        atXTile: 28.8, yOffTile: -6.5, whileCampSlot: 2 },
+      { defId: 'k_hunter', label: '11시 갱 사수', count: 3, everySec: 80,
+        atXTile: 40.0, yOffTile: -12.4, whileCampSlot: 3 },
+      { defId: 'k_wolf', label: '7시 갱 사냥무리', count: 3, everySec: 80,
+        atXTile: 15.7, yOffTile: 8.4, whileCampSlot: 4 },
+      { defId: 'k_scimitar', label: '6시 갱 수비대', count: 3, everySec: 80,
+        atXTile: 28.0, yOffTile: 4.4, whileCampSlot: 5 },
+      { defId: 'k_hunter', label: '5시 갱 사수', count: 3, everySec: 80,
+        atXTile: 41.7, yOffTile: 7.6, whileCampSlot: 6 },
+      // ── 갱이 무너지면 그 자리에서 모래 망령이 일어선다 (주술로 묻어 둔 파수) ──
+      { defId: 'k_sandwraith', label: '🏜 모래 망령', onCampDown: 1, atXTile: 16.8, yOffTile: -12.0 },
+      { defId: 'k_sandwraith', label: '🏜 모래 망령', onCampDown: 3, atXTile: 40.0, yOffTile: -12.4 },
+      { defId: 'k_sandwraith', label: '🏜 모래 망령', onCampDown: 6, atXTile: 41.7, yOffTile: 7.6 },
+      // ── 후반 손님: 목록에 없는 끝판급은 여기서만 나온다 ──
+      { defId: 'k_sandgiant', label: '🗿 모래 거인', atSec: 780, everySec: 210, concurrentCap: 2 },
+      { defId: 'k_grandshaman', label: '👑 천막의 대주술사 하르간!', atSec: 1080, everySec: 300, concurrentCap: 1 },
+    ],
+    cutscenes: [
+      {
+        // 대주술사가 직접 나서는 순간 — 판의 성격이 바뀐다
+        atSec: 1080,
+        lines: [
+          { who: '', text: '고원 전체에서 북소리가 한 번에 멎었다. 천막들이 열리고, 모래가 스스로 일어선다.' },
+          { who: '하르간', text: '충분히 봐줬다. 이 땅은 값으로 사는 게 아니야 — 뼈를 묻어야 갖는 거지.' },
+          { who: '카엘', text: '…부족장이 직접 나왔습니다.' },
+          { who: '엘로윈', text: '조상의 혼을 부른다. 저 노인이 서 있는 동안엔 카르자가 두 배로 강해진다 — 먼저 끊어라.' },
+        ],
+      },
+    ],
+    briefing: [
+      { who: '', text: '세계수의 줄기를 되찾았지만, 발타르의 주둔지 정문은 열리지 않았다.\n주술로 봉인된 문 앞에서 사흘을 보냈고, 그 사흘 동안 뿌리는 다시 마르기 시작했다.' },
+      { who: '카엘', text: '정면은 안 됩니다. 문을 두드릴 때마다 우리 쪽이 더 줄어요.' },
+      { who: '엘로윈', text: '문은 두드리는 게 아니라 열고 들어가는 거다. …에메랄드 숲으로 가자.' },
+      { who: '티아', text: '에메랄드 숲이요? 거긴 엘프인데 실바린이 아니라고… 300년 동안 한 번도 안 도왔다면서요.' },
+      { who: '엘로윈', text: '돕지 않았지. 대신 값을 받으면 움직인다. 그들은 자물쇠를 여는 일에 관해서는 대륙 최고다.' },
+      { who: '이르사', text: '(나무 그늘에서) 오랜만이군, 현자. 여전히 공짜로 남의 칼을 빌리려 드는가?' },
+      { who: '카엘', text: '…언제부터 거기 계셨습니까.' },
+      { who: '이르사', text: '너희가 숲에 들어선 순간부터. 값은 금이다 — 고원의 금. 그것도 우리가 쓰는 것으로.' },
+      { who: '브리아', text: '고원의 금? 그거 지금 카르자가 앉아서 캐고 있는데.' },
+      { who: '이르사', text: '알고 있다. 그러니 값인 거지. 쉬웠으면 벌써 우리가 캤을 테니.' },
+      { who: '', text: '고원의 능선은 좁고 굽어 있었다. 바위 사이로 난 길마다 채굴 캠프가 앉아 있고,\n그 너머 붉은 천막에서 북소리가 들려왔다.' },
+      { who: '하르간', text: '숲 것들이 고원까지 올라왔군. 여긴 우리가 백 년을 걸어 찾은 땅이다. 돌아가라.' },
+      { who: '엘로윈', text: '우리도 물러설 곳이 없소. 뒤에 숲이 마르고 있어서.' },
+      { who: '하르간', text: '…그럼 서로 물러설 수 없겠구나. 늑대를 풀어라.' },
+      { who: '아린', text: '적이 빨라요! 늑대가 먼저 붙고 기수가 뒤를 파고들어요 — 후열부터 지켜야 해요.' },
+      { who: '엘로윈', text: '갱을 하나씩 걷어내라. 캠프가 무너지면 그쪽 증원이 끊긴다. 여섯을 다 끊고 천막을 밀어내라.' },
+    ],
+    outro: [
+      { who: '하르간', text: '(무릎을 꿇으며) …북이 멎었군. 백 년을 걸어와서, 또 걸어 나가야 하나.' },
+      { who: '카엘', text: '금만 가져가겠습니다. 갱은 두고 갑니다 — 당신들이 다시 캐면 됩니다.' },
+      { who: '하르간', text: '…뭐?' },
+      { who: '카엘', text: '우리가 싸우는 상대는 당신이 아니라 겨울입니다. 겨울이 여기까지 오면, 이 금도 언 땅 밑에 묻힙니다.' },
+      { who: '하르간', text: '(오래 침묵한다) …이름이 뭐냐, 숲의 아이.' },
+      { who: '카엘', text: '카엘입니다.' },
+      { who: '하르간', text: '기억해 두마. 카르자는 빚을 잊지 않는다 — 갚을 때가 오면 북을 울리지.' },
+      { who: '이르사', text: '(광석을 손에 굴리며) 값은 받았다. 문 하나. 그 이상은 묻지 마라.' },
+      { who: '엘로윈', text: '그거면 충분하오.' },
+    ],
+  },
+  {
+    id: 16, act: 3, title: '발타르의 성 — 망자의 만찬', goal: '방공망을 뚫고 오웬의 머리를 탈환하라 (넥서스 파괴)',
     allowedUnits: U14, enemies: ['pandemonium', 'pandemonium'], allies: ['marionetta'], botDifficulty: 'normal',
     allyNote: '🤝 앨리스의 군단이 성문을 함께 두드린다!',
-    mission: 'destroy', seed: seedOf(15),
+    mission: 'destroy', seed: seedOf(16),
     enemyPreferredUnits: ['p_wraith', 'p_banshee', 'p_demilich'],
     spawns: [{ defId: 'c_dread_gargoyle', label: '공포의 가고일', everySec: 120, count: 2 }],
     briefing: [
@@ -1601,10 +1758,10 @@ export const SYLVARIN_CAMPAIGN: readonly CampaignStage[] = [
     ],
   },
   {
-    id: 16, act: 3, title: '시간이 멈춘 평원', goal: '슬리피 할로우와 대치 — 15분간 협공을 버텨라',
+    id: 17, act: 3, title: '시간이 멈춘 평원', goal: '슬리피 할로우와 대치 — 15분간 협공을 버텨라',
     allowedUnits: U14, enemies: ['pandemonium', 'pandemonium', 'pandemonium'], allies: ['sylvarin', 'marionetta'], botDifficulty: 'normal',
     allyNote: '🤝 숲과 인형, 두 군세가 함께 버틴다!',
-    mission: 'survive', surviveSec: 900, seed: seedOf(16),
+    mission: 'survive', surviveSec: 900, seed: seedOf(17),
     warcamp: { everySec: 90, units: ['p_skeleton', 'p_skeleton', 'p_hound', 'p_bone_thrower'] },
     spawns: [
       { defId: 'c_bone_colossus', label: '뼈 거상', everySec: 120 },
@@ -1620,10 +1777,10 @@ export const SYLVARIN_CAMPAIGN: readonly CampaignStage[] = [
     ],
   },
   {
-    id: 17, act: 3, title: '현자의 참회', goal: '엘로윈의 의식을 지켜라 — 15분간 총공세를 버텨라',
+    id: 18, act: 3, title: '현자의 참회', goal: '엘로윈의 의식을 지켜라 — 15분간 총공세를 버텨라',
     allowedUnits: U17, enemies: ['pandemonium', 'pandemonium', 'marionetta'], allies: ['sylvarin', 'sylvarin'], botDifficulty: 'hard',
     allyNote: '🤝 실바린 전군이 의식을 지킨다!',
-    mission: 'survive', surviveSec: 900, seed: seedOf(17),
+    mission: 'survive', surviveSec: 900, seed: seedOf(18),
     spawns: [
       { defId: 'c_bone_colossus', label: '뼈 거상', everySec: 90 },
       { defId: 'c_ash_revenant', label: '재의 원귀', everySec: 120, count: 2 },
@@ -1638,10 +1795,10 @@ export const SYLVARIN_CAMPAIGN: readonly CampaignStage[] = [
     ],
   },
   {
-    id: 18, act: 3, title: '자정의 결전', goal: '최종전 — 자정이 오기 전에 (12분) 발타르의 넥서스를 파괴하라!',
+    id: 19, act: 3, title: '자정의 결전', goal: '최종전 — 자정이 오기 전에 (12분) 발타르의 넥서스를 파괴하라!',
     allowedUnits: U17, enemies: ['pandemonium', 'pandemonium', 'pandemonium'], allies: ['sylvarin', 'marionetta'], botDifficulty: 'hard',
     allyNote: '🤝 세 종족의 연합군이 자정에 맞선다!',
-    mission: 'destroy', seed: seedOf(18),
+    mission: 'destroy', seed: seedOf(19),
     spawns: [
       { defId: 'c_balthar', label: '👑 최종 보스: 데미리치 발타르', atSec: 180 },
       { defId: 'c_bone_colossus', label: '뼈 거상', everySec: 120 },
@@ -1910,7 +2067,7 @@ export const BOON_UNLOCKS: Record<number, readonly string[]> = {
   // 3막: 그 판에서 처음 쓰게 될 유닛의 강화를 한 발 앞서 준다
   13: ['s_treekeeper', 's_marksman'],
   14: ['s_treant', 's_apostle'],
-  17: ['s_sage'],
+  18: ['s_sage'],
 };
 
 /** 2막을 끝내면 유닛마다 강화를 둘까지 고를 수 있다. */

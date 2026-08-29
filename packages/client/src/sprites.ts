@@ -25,6 +25,8 @@ const RACE_PAL: Record<string, Palette> = {
   sylvarin: { a: '#4e9a4e', A: '#33673a', b: '#c9e08a', s: '#e8c9a0' },
   pandemonium: { a: '#5a4a72', A: '#38304a', b: '#7fe89a', s: '#cfd6dd' },
   marionetta: { a: '#c96a8e', A: '#8a4560', b: '#e8c559', s: '#f0e0d0' },
+  // 카르자 — 모래·황토 로브에 주술의 청록. 사막이 아니라 「고원 유목」의 색.
+  karja: { a: '#c9a05a', A: '#8a6635', b: '#5fc9b0', s: '#e8d5b0' },
   none: { a: '#8a8a8a', A: '#5e5e5e', b: '#d0d0d0' },
 };
 
@@ -240,6 +242,25 @@ const SHAPES: Record<string, string[]> = {
  * 픽셀랩 에셋이 도착하기 전까지의 플레이스홀더 매핑 — 실루엣은 역할만 얼추 맞춘 것.
  */
 const LOOK: Record<string, { shape: string; pal: string; accent?: string }> = {
+  // 🏜️ 카르자 (캠페인 전용) — 픽셀 아트가 붙기 전까지 쓰는 폴백
+  k_scimitar: { shape: 'soldier', pal: 'karja', accent: '#e8d5b0' },
+  k_hunter: { shape: 'archer', pal: 'karja' },
+  k_wolf: { shape: 'rider', pal: 'karja', accent: '#8a6635' },
+  k_wolfrider: { shape: 'rider', pal: 'karja', accent: '#c9a05a' },
+  k_apprentice: { shape: 'shaman', pal: 'karja', accent: '#5fc9b0' },
+  k_tribal: { shape: 'brute', pal: 'karja', accent: '#8a6635' },
+  k_shaman: { shape: 'priest', pal: 'karja', accent: '#5fc9b0' },
+  k_spiritcaller: { shape: 'mage', pal: 'karja', accent: '#9fe8dc' },
+  k_highlander: { shape: 'rider', pal: 'karja', accent: '#e8d5b0' },
+  k_sandgiant: { shape: 'golem', pal: 'karja', accent: '#c9a05a' },
+  k_falconer: { shape: 'archer', pal: 'karja', accent: '#8a6635' },
+  k_eagle: { shape: 'flyer', pal: 'karja', accent: '#5a4a3a' },
+  k_beeswarm: { shape: 'flyer', pal: 'karja', accent: '#e8c559' },
+  k_sandwraith: { shape: 'hollow', pal: 'karja', accent: '#c9a05a' },
+  k_grandshaman: { shape: 'mage', pal: 'karja', accent: '#5fc9b0' },
+  k_totem: { shape: 'tower', pal: 'karja', accent: '#5fc9b0' },
+  k_falcon: { shape: 'flyer', pal: 'karja', accent: '#c9a05a' },
+  k_spirit: { shape: 'flyer', pal: 'karja', accent: '#9fe8dc' },
   // 🌲 실바린 (v0.2)
   s_gouto: { shape: 'soldier', pal: 'sylvarin', accent: '#f0e6d0' },
   s_elf_archer: { shape: 'archer', pal: 'sylvarin' },

@@ -100,7 +100,7 @@ export function duel(a: Record<string, number>, b: Record<string, number>, s: nu
 }
 
 function printStats(): void {
-  for (const race of ['sylvarin', 'pandemonium', 'marionetta'] as RaceId[]) {
+  for (const race of ['sylvarin', 'pandemonium', 'marionetta', 'karja'] as RaceId[]) {
     console.log(`\n═══ ${RACE_NAMES[race]} ═══`);
     console.log('유닛              티어      비용   HP/원   DPS   DPS/100원  방어  사거리');
     for (const d of unitsOfRace(race)) {

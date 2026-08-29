@@ -74,6 +74,25 @@ export function worldH(): number {
  * (예: 엘프 궁수는 생산 시 여/남 50:50 — docs/races/sylvarin.md)
  */
 export const ASSET_UNITS: Record<string, string | string[]> = {
+  // 🏜️ 카르자 (캠페인 전용) — packages/client/tools/fetch_karja.mjs 가 받아 온다
+  k_scimitar: '/assets/units/k_scimitar.png',
+  k_hunter: '/assets/units/k_hunter.png',
+  k_wolf: '/assets/units/k_wolf.png',
+  k_wolfrider: '/assets/units/k_wolfrider.png',
+  k_apprentice: '/assets/units/k_apprentice.png',
+  k_tribal: '/assets/units/k_tribal.png',
+  k_shaman: '/assets/units/k_shaman.png',
+  k_spiritcaller: '/assets/units/k_spiritcaller.png',
+  k_highlander: '/assets/units/k_highlander.png',
+  k_sandgiant: '/assets/units/k_sandgiant.png',
+  k_falconer: '/assets/units/k_falconer.png',
+  k_eagle: '/assets/units/k_eagle.png',
+  k_beeswarm: '/assets/units/k_beeswarm.png',
+  k_sandwraith: '/assets/units/k_sandwraith.png',
+  k_grandshaman: '/assets/units/k_grandshaman.png',
+  k_totem: '/assets/units/k_totem.png',
+  k_falcon: '/assets/units/k_falcon.png',
+  k_spirit: '/assets/units/k_spirit.png',
   s_gouto: '/assets/units/s_gouto.png',
   s_elf_archer: ['/assets/units/s_elf_archer_f.png', '/assets/units/s_elf_archer_m.png'],
   s_marmot: '/assets/units/s_marmot.png',
@@ -253,6 +272,25 @@ export const ASSET_UNITS: Record<string, string | string[]> = {
 
 /** 상점 아이콘용 정면(south) 스프라이트. 전장은 측면, 아이콘은 정면. */
 const ASSET_ICONS: Record<string, string> = {
+  // 🏜️ 카르자 — 상점 아이콘(정면)
+  k_scimitar: '/assets/units/k_scimitar_icon.png',
+  k_hunter: '/assets/units/k_hunter_icon.png',
+  k_wolf: '/assets/units/k_wolf_icon.png',
+  k_wolfrider: '/assets/units/k_wolfrider_icon.png',
+  k_apprentice: '/assets/units/k_apprentice_icon.png',
+  k_tribal: '/assets/units/k_tribal_icon.png',
+  k_shaman: '/assets/units/k_shaman_icon.png',
+  k_spiritcaller: '/assets/units/k_spiritcaller_icon.png',
+  k_highlander: '/assets/units/k_highlander_icon.png',
+  k_sandgiant: '/assets/units/k_sandgiant_icon.png',
+  k_falconer: '/assets/units/k_falconer_icon.png',
+  k_eagle: '/assets/units/k_eagle_icon.png',
+  k_beeswarm: '/assets/units/k_beeswarm_icon.png',
+  k_sandwraith: '/assets/units/k_sandwraith_icon.png',
+  k_grandshaman: '/assets/units/k_grandshaman_icon.png',
+  k_totem: '/assets/units/k_totem_icon.png',
+  k_falcon: '/assets/units/k_falcon_icon.png',
+  k_spirit: '/assets/units/k_spirit_icon.png',
   s_gouto: '/assets/units/s_gouto_icon.png',
   s_elf_archer: '/assets/units/s_elf_archer_icon.png',
   s_marmot: '/assets/units/s_marmot_icon.png',
@@ -386,6 +424,20 @@ const ASSET_ATTACK_ANIMS_AIR: Record<string, string[][]> = {
 };
 
 const ASSET_ATTACK_ANIMS: Record<string, string[][]> = {
+  // 🏜️ 카르자 — 유닛마다 제 무기 동작 (east 4프레임, fetch_karja.mjs 가 굽는다)
+  k_scimitar: atk4('k_scimitar'),
+  k_hunter: atk4('k_hunter'),
+  k_wolf: atk4('k_wolf'),
+  k_wolfrider: atk4('k_wolfrider'),
+  k_apprentice: atk4('k_apprentice'),
+  k_tribal: atk4('k_tribal'),
+  k_shaman: atk4('k_shaman'),
+  k_spiritcaller: atk4('k_spiritcaller'),
+  k_highlander: atk4('k_highlander'),
+  k_sandgiant: atk4('k_sandgiant'),
+  k_falconer: atk4('k_falconer'),
+  k_sandwraith: atk4('k_sandwraith'),
+  k_grandshaman: atk4('k_grandshaman'),
   // 엘프 궁수: 변형(여/남)별 4프레임 발사 모션 (화살 뽑기→시위 당기기→발사)
   s_elf_archer: [
     [0, 1, 2, 3].map((n) => `/assets/units/s_elf_archer_f_atk${n}.png?v=7`),
@@ -865,6 +917,11 @@ const ASSET_SKILL_ANIMS: Record<string, string[]> = {
 const fly4 = (id: string): string[] => [0, 1, 2, 3].map((n) => `/assets/units/${id}_fly${n}.png?v=7`);
 
 const ASSET_FLAP_FRAMES: Record<string, string[]> = {
+  // 🏜️ 카르자 공중
+  k_eagle: fly4('k_eagle'),
+  k_beeswarm: fly4('k_beeswarm'),
+  k_falcon: fly4('k_falcon'),
+  k_spirit: fly4('k_spirit'),
   s_owl: fly4('s_owl'),
   s_butterfly: fly4('s_butterfly'),
   // 앤: 실에 매달려 팔다리가 흔들리는 4프레임

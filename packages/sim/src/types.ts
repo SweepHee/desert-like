@@ -14,7 +14,9 @@ export function enemyOf(team: CombatTeam): TeamId {
   return team === 0 ? 1 : 0;
 }
 
-export type RaceId = 'sylvarin' | 'pandemonium' | 'marionetta';
+export type RaceId = 'sylvarin' | 'pandemonium' | 'marionetta'
+  // 카르자 — 캠페인 전용 종족. 대전·연습 종족 선택(main.ts RACES)에는 넣지 않는다.
+  | 'karja';
 
 /** 봇 난이도. easy = 순정, normal = 인컴 이점, hard = 사람 플레이를 읽고 반응. */
 export type BotDifficulty = 'easy' | 'normal' | 'hard';

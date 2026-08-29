@@ -47,6 +47,10 @@ import {
   type SaveData,
 } from './auth.ts';
 
+/**
+ * 대전·연습에서 고를 수 있는 종족. **카르자는 일부러 빠져 있다** —
+ * 캠페인 전용 종족이라 종족 선택 아트(races.png)에도 자리가 없다.
+ */
 const RACES: RaceId[] = ['sylvarin', 'pandemonium', 'marionetta'];
 /** 「이제 둘까지」 안내를 한 번만 띄우기 위한 표시. */
 const SLOT2_SEEN = 'camp_boon_slot2_seen';
@@ -54,6 +58,7 @@ const RACE_DESC: Record<RaceId, string> = {
   sylvarin: '🌲 생명·자연·장기전. 회복과 영역으로 전장을 숲으로 만든다.',
   pandemonium: '☠️ 죽음·소모전. 힐러 없이 방어 무시·흡혈로 갈아버린다.',
   marionetta: '🧸 인형·실·호러. 연결과 조작, 순간 폭발로 무대를 지배한다.',
+  karja: '🏜️ 유목·고원·주술. 늑대와 토템, 영혼으로 기동전을 건다. (캠페인 전용)',
 };
 const TIER_LABEL: Record<string, string> = {
   basic: '기본', novice: '초급', mid: '중급', high: '고급', air: '공중', supreme: '최상급', final: '최종',
@@ -973,7 +978,7 @@ function showCampaignSelect(): void {
   for (const st of SYLVARIN_CAMPAIGN) {
     const btn = document.createElement('button');
     btn.className = 'camp-stage';
-    const unreleased = st.act === 3 && st.id > 14 && !act3Open(); // 14까지 전체 공개, 15+ 는 테스터만
+    const unreleased = st.act === 3 && st.id > 15 && !act3Open(); // 15까지 전체 공개, 16+ 는 테스터만
     const locked = unreleased || st.id > cleared + 1;
     const done = st.id <= cleared;
     const isNext = !unreleased && st.id === cleared + 1;
@@ -2115,7 +2120,7 @@ function setRetryVisible(on: boolean): void {
 }
 
 async function startCampaignStage(st: CampaignStage): Promise<void> {
-  if (st.act === 3 && st.id > 14 && !act3Open()) { showCampaignSelect(); return; } // 15+ 는 테스터 전용
+  if (st.act === 3 && st.id > 15 && !act3Open()) { showCampaignSelect(); return; } // 16+ 는 테스터 전용
   showScreen(null);
   await runDialogue(st.briefing);
   campaign = st;
@@ -2409,7 +2414,7 @@ function campaignFinish(win: boolean, reason?: string): void {
     // 2막을 끝내면 유닛마다 강화를 둘까지 고를 수 있게 된다
     const slotOpened = win && st.id === BOON_SLOT2_STAGE;
     const nextSt = SYLVARIN_CAMPAIGN.find((x) => x.id === st.id + 1);
-    const nextUnreleased = nextSt !== undefined && nextSt.act === 3 && nextSt.id > 14 && !act3Open(); // 15+ 테스터 전용
+    const nextUnreleased = nextSt !== undefined && nextSt.act === 3 && nextSt.id > 15 && !act3Open(); // 16+ 테스터 전용
     // 남은 축복 포인트 — 방금 세계수가 자랐으면 여기서 바로 보인다
     const perkLeft = Math.max(0, treeLevel() - perkPointsSpent(perkAlloc()));
     overlay.innerHTML =

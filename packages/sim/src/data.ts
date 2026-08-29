@@ -228,13 +228,14 @@ export const MAPS: Record<string, MapDef> = {
     // 작가 그림 1448x1086 = 56 x 42 타일 (반폭 21) — 자정의 마을과 같은 자
     length: tiles(56),
     halfW: tiles(21),
-    center: [[0, tiles(4.2)], [tiles(26), 0], [tiles(56), tiles(-3.2)]],
+    // 중앙선은 평평하게 둔다 — 갱·집합지 좌표를 그림에서 잰 값 그대로 쓰기 위해서다
+    center: [[0, 0], [tiles(56), 0]],
     bgImage: '/assets/maps/goldmine.png',
     mask: { cols: 84, rows: 112, data: MASK_GOLDMINE },
-    // 내 요새 x4.2(y+4.2) / 카르자 요새 x50.2(y-3.2) — gen_goldmine.py 실측
-    nexusX: [tiles(4.2), tiles(50.2)],
+    // 요새 자리 (그림용 — 이 판은 noNexus 라 실제 넥서스 엔티티는 없다)
+    nexusX: [tiles(4.7), tiles(50.9)],
     towerX: [tiles(14), tiles(42)],
-    spawnX: [tiles(8), tiles(46)],
+    spawnX: [tiles(10), tiles(46)],   // 둘 다 통행 칸 위 (실측)
   },
   village: {
     id: 'village',

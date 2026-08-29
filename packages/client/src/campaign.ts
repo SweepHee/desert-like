@@ -1650,21 +1650,28 @@ export const SYLVARIN_CAMPAIGN: readonly CampaignStage[] = [
      */
     mission: 'destroy', seed: seedOf(15), mapId: 'goldmine',
     noTowers: true,
+    /*
+     * 넥서스를 아예 걷어낸다.
+     * 양쪽 요새는 배경 그림에 이미 구워져 있는데 시뮬 넥서스까지 세우면 그 위에
+     * 초록 하트가 겹쳐 뜬다. 게다가 이 판의 승패는 금으로만 나므로 넥서스는
+     * 목표도 아니다 — 건물은 그림으로 두고 엔티티는 없앤다.
+     */
+    noNexus: true,
     startMoney: 500,
     goldRace: {
       target: 20000,
       // 갱 여섯 — gen_goldmine.py 가 「벽에서 가장 먼 점」으로 잰 갱구 자리
       mines: [
-        { xTile: 15.8, yOffTile: -9.8, label: '북서 갱' },
-        { xTile: 28.2, yOffTile: -8.3, label: '북중 갱' },
-        { xTile: 40.2, yOffTile: -10.2, label: '북동 갱' },
-        { xTile: 16.2, yOffTile: 9.2, label: '남서 갱' },
-        { xTile: 28.2, yOffTile: 8.8, label: '남중 갱' },
-        { xTile: 39.8, yOffTile: 8.8, label: '남동 갱' },
+        { xTile: 16.2, yOffTile: -9.5, label: '북서 갱' },
+        { xTile: 28.2, yOffTile: -8.4, label: '북중 갱' },
+        { xTile: 40.0, yOffTile: -9.4, label: '북동 갱' },
+        { xTile: 16.5, yOffTile: 8.8, label: '남서 갱' },
+        { xTile: 28.5, yOffTile: 8.6, label: '남중 갱' },
+        { xTile: 39.7, yOffTile: 9.1, label: '남동 갱' },
       ],
       // 갱 말고 부대를 세울 수 있는 자리 — 사잇길을 잡으면 양쪽 갱을 다 받친다
       midpoints: [
-        { xTile: 25.8, yOffTile: 0.2, label: '가운데 사잇길' },
+        { xTile: 28.2, yOffTile: 0.2, label: '가운데 사잇길' },
       ],
       radiusTiles: 4.5,
       captureSec: 10,

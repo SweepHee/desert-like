@@ -47,8 +47,8 @@ REGIONS = [
 
 # 배경에 구울 오브젝트: (조각, 어느 구역에, 발밑 기준 y 보정, 크기 배율)
 PLACE = [
-    ('gm_00.png', 'base_ally', 0.30, 0.85),
-    ('gm_01.png', 'base_foe', 0.30, 0.85),
+    ('gm_00.png', 'base_ally', 0.30, 0.43),
+    ('gm_01.png', 'base_foe', 0.30, 0.43),
     ('gm_09.png', 'mine_tl', 0.28, 0.85),
     ('gm_09.png', 'mine_tc', 0.28, 0.85),
     ('gm_09.png', 'mine_tr', 0.28, 0.85),
@@ -99,16 +99,32 @@ def wall_dist(grid):
 
 
 def centers(grid):
-    """구역마다 「벽에서 가장 먼 칸」 = 공터 한복판."""
+    """
+    구역마다 공터 한복판.
+
+    「벽에서 가장 먼 칸」 하나만 쓰면 길게 뻗은 공터에서 한쪽으로 치우친다
+    (요새를 절반으로 줄이자 공터 밖 바위에 얹혀 보였다). 벽에서 먼 정도를
+    제곱해 가중치로 준 무게중심을 쓰면 둥근 공터의 눈에 보이는 가운데에 앉는다.
+    """
     d = wall_dist(grid)
     out = {}
     for name, fx0, fy0, fx1, fy1 in REGIONS:
-        best, bx, by = -1, 0, 0
+        sw = sr = sc = 0.0
+        best = 0
         for r in range(int(fx0 * ROWS), min(ROWS, int(fx1 * ROWS) + 1)):
             for c in range(int(fy0 * COLS), min(COLS, int(fy1 * COLS) + 1)):
-                if d[r][c] > best:
-                    best, bx, by = d[r][c], r, c
-        out[name] = ((bx + 0.5) / ROWS, (by + 0.5) / COLS, best)
+                w = d[r][c]
+                if w <= 1:
+                    continue
+                best = max(best, w)
+                w = w * w
+                sw += w
+                sr += w * (r + 0.5)
+                sc += w * (c + 0.5)
+        if sw == 0:
+            out[name] = ((fx0 + fx1) / 2, (fy0 + fy1) / 2, 0)
+        else:
+            out[name] = (sr / sw / ROWS, sc / sw / COLS, best)
     return out
 
 

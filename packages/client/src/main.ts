@@ -1213,6 +1213,13 @@ function heroOwnSpent(hero: string, alloc: Record<string, number>): number {
   for (const [key, ico, name] of NAV_TABS) {
     const b = document.createElement('button');
     b.innerHTML = `<span>${ico}</span><span>${name}</span>`;
+    // 영웅 탭은 13 클리어 전까지 잠겨 있다 — 눌러 보기 전에도 알아보게 자물쇠를 붙인다
+    if (key === 'hero' && !heroUpgradesOpen()) {
+      const lk = document.createElement('i');
+      lk.className = 'eh-lock';
+      lk.textContent = '🔒';
+      b.appendChild(lk);
+    }
     b.onclick = () => {
       if (mode === key) return;
       mode = key;
@@ -1291,6 +1298,8 @@ function heroOwnSpent(hero: string, alloc: Record<string, number>): number {
     panel.appendChild(head);
 
     if (mode === 'hero') {
+      // 한 번이라도 들어와 봤으면 「열렸다」 코치마크는 더 띄우지 않는다
+      try { localStorage.setItem(HERO_TAB_SEEN_KEY, '1'); } catch { /* 무시 */ }
       // ── 영웅 탭: [영웅 레일] [중앙 쇼케이스] [강화 목록] (영웅패널개편_1_1) ──
       if (!heroUpgradesOpen() || openHeroes.length === 0) {
         const box = document.createElement('div');
@@ -1717,6 +1726,15 @@ function heroOwnSpent(hero: string, alloc: Record<string, number>): number {
         + `<div class="track"><i style="width:${pct}%"></i><span>${capped ? '' : `다음 레벨까지 EXP ${tp.need - tp.into}`}</span></div>`
         + `<div class="next">레벨마다: 시작 자금 +5 · 축복 포인트 +1${tp.level >= 10 ? ' · 수급량 +0.5%' : ''}`
         + (nextMile ? `<br/>Lv ${nextMile[0]} 고비: ${nextMile[1]}` : '') + '</div>';
+      // 「상한은 다음 판을 깨야 열리지만, 상한까지는 반복 클리어로 채울 수 있다」 —
+      // 스테이지가 막혔을 때 빠져나갈 길이 있다는 걸 여기서 알려 준다
+      xpBox.innerHTML +=
+        '<div class="tip">🔁 <b>반복 클리어로도 레벨이 오른다</b> — 이미 깬 스테이지를 다시 깨도 경험치는 그대로 들어온다.'
+        + ' 레벨 <b>상한</b>은 다음 스테이지를 클리어해야 열린다 (한 판당 +3).'
+        + (capped
+          ? ' 지금은 상한에 닿았다 — 더 올리려면 다음 판을 깨야 한다.'
+          : ` 지금 판이 버겁다면 편한 스테이지를 반복해 <b>상한 Lv ${tp.cap}</b>까지 올려 놓고 다시 도전해도 좋다.`)
+        + '</div>';
       left.appendChild(xpBox);
 
       // 총 효과 (자동 + 포인트 합산)
@@ -2035,7 +2053,48 @@ function heroOwnSpent(hero: string, alloc: Record<string, number>): number {
   showScreen('race-screen');
   // 화면에 붙기 전에는 칸 크기를 잴 수 없다 — 붙은 다음 불을 제자리에 놓는다
   syncNavPill(false);
-  requestAnimationFrame(() => syncNavPill(false));
+  requestAnimationFrame(() => {
+    syncNavPill(false);
+    showHeroCoach(navBtns.get('hero'));
+  });
+}
+
+/**
+ * 코치마크 — 「영웅」 탭 옆에 한 번 떠서 알려 준다. 두 갈래다:
+ *  · 아직 잠겨 있으면 → 해금 조건 (13스테이지 클리어)
+ *  · 열렸는데 한 번도 안 들어가 봤으면 → 「열렸다, 여기서 찍는다」
+ * 어느 쪽이든 한 번 닫으면 다시 뜨지 않는다. 탭에 들어가 보면 그것으로도 꺼진다.
+ */
+const HERO_COACH_KEY = 'dl_coach_hero';
+const HERO_TAB_SEEN_KEY = 'dl_hero_tab_seen';
+function showHeroCoach(btn: HTMLButtonElement | undefined): void {
+  if (!btn) return;
+  const open = heroUpgradesOpen();
+  // 열린 뒤엔 「한 번도 안 들어가 본 사람」에게만
+  const key = open ? HERO_TAB_SEEN_KEY : HERO_COACH_KEY;
+  try { if (localStorage.getItem(key) === '1') return; } catch { return; }
+  const r = btn.getBoundingClientRect();
+  if (r.width === 0) return;   // 아직 화면에 안 붙었다
+  const tip = document.createElement('div');
+  tip.className = 'coachmark';
+  tip.innerHTML = (open
+    ? '<b>🛡 영웅 강화 해금!</b><br/>확인해 보자.'
+    : `<b>🛡 영웅 강화</b><br/>${HERO_UNLOCK_STAGE}스테이지를 클리어하면 열린다.`)
+    + '<div class="cm-ok">알겠다</div>';
+  document.body.appendChild(tip);
+  const w = 250;
+  tip.style.width = `${w}px`;
+  // 탭은 패널 오른쪽 세로줄이다 — 왼쪽에 붙이고, 자리가 없으면 아래로 내린다
+  const left = r.left - w - 14;
+  tip.style.left = `${left > 8 ? left : Math.max(8, r.left - w / 2)}px`;
+  tip.style.top = `${Math.max(8, r.top - 18)}px`;
+  const close = (): void => {
+    tip.remove();
+    try { localStorage.setItem(key, '1'); } catch { /* 무시 */ }
+  };
+  (tip.querySelector('.cm-ok') as HTMLElement).onclick = close;
+  // 탭을 바로 눌러 들어가도 코치마크는 제 할 일을 다한 것이다
+  btn.addEventListener('click', close, { once: true });
 }
 
 /** 유닛 강화 화면 — 스테이지 클리어로 개방, 유닛당 3택 1. 언제든 무료 재선택. */
@@ -2341,6 +2400,8 @@ function campaignFinish(win: boolean, reason?: string): void {
     const slotOpened = win && st.id === BOON_SLOT2_STAGE;
     const nextSt = SYLVARIN_CAMPAIGN.find((x) => x.id === st.id + 1);
     const nextUnreleased = nextSt !== undefined && nextSt.act === 3 && nextSt.id > 14 && !act3Open(); // 15+ 테스터 전용
+    // 남은 축복 포인트 — 방금 세계수가 자랐으면 여기서 바로 보인다
+    const perkLeft = Math.max(0, treeLevel() - perkPointsSpent(perkAlloc()));
     overlay.innerHTML =
       `<h1>${win ? '스테이지 클리어!' : `패배… (${turnAt}턴)`}</h1>` +
       `<p>${st.id}. ${st.title}${reason ? ` — ${reason}` : ''}</p>` +
@@ -2353,6 +2414,8 @@ function campaignFinish(win: boolean, reason?: string): void {
       (win && !isLast && !nextUnreleased
         ? `<button id="camp-next" class="menubtn">다음 스테이지 ▶</button>` : '') +
       (!win ? `<button id="camp-retry" class="menubtn">다시 도전</button>` : '') +
+      // 클리어·패배 직후가 강화를 손볼 가장 좋은 순간이다 — 목록까지 안 나가도 여기서 바로 연다
+      `<button id="camp-enh" class="menubtn alt">⚔ 강화${perkLeft > 0 ? ` — 🌿 ${perkLeft}P` : ''}</button>` +
       `<button id="camp-menu" class="menubtn alt">캠페인 목록으로</button>` +
       `</div>`;
     overlay.classList.remove('hidden');
@@ -2364,6 +2427,11 @@ function campaignFinish(win: boolean, reason?: string): void {
     const retry = document.querySelector('#camp-retry') as HTMLButtonElement | null;
     if (retry) retry.onclick = () => {
       sessionStorage.setItem('camp_auto', String(st.id));
+      location.reload();
+    };
+    const enh = document.querySelector('#camp-enh') as HTMLButtonElement | null;
+    if (enh) enh.onclick = () => {
+      sessionStorage.setItem('camp_auto', 'enhance');
       location.reload();
     };
     (document.querySelector('#camp-menu') as HTMLButtonElement).onclick = () => {
@@ -2387,6 +2455,11 @@ function campaignAutoResume(): boolean {
   if (!campaignGate()) return true; // 로그아웃 상태 — 안내를 띄우고 타이틀에 머문다
   if (auto === 'list') {
     showCampaignSelect();
+    return true;
+  }
+  // 결과 화면에서 「강화」로 나왔다 — 강화 패널을 바로 연다 (뒤로가기는 캠페인 목록)
+  if (auto === 'enhance') {
+    showEnhanceScreen();
     return true;
   }
   const id = Number(auto);

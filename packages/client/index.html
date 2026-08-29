@@ -1550,6 +1550,39 @@
     #tree-xp .track i { position: absolute; inset: 0; width: 0; background: linear-gradient(180deg, #8cc763, #3f6b2e); }
     #tree-xp .track span { position: relative; display: block; text-align: center; font-size: 10px; line-height: 16px; color: #fff; text-shadow: 0 1px 2px #000; }
     #tree-xp .next { color: var(--dim); font-size: 11px; margin-top: 6px; text-align: center; word-break: keep-all; }
+    /* 반복 클리어 안내 — 「상한까지는 갈아서 올릴 수 있다」를 축복 탭에서 알려 준다 */
+    #tree-xp .tip {
+      margin-top: 8px; padding: 7px 9px; border-radius: 8px;
+      background: rgba(140,199,99,.10); border: 1px solid rgba(140,199,99,.28);
+      color: var(--dim); font-size: 11px; line-height: 1.55; word-break: keep-all;
+    }
+    #tree-xp .tip b { color: #b6dd8f; }
+    /* 잠긴 탭에 붙는 자물쇠 */
+    #eh-nav button .eh-lock {
+      position: absolute; top: 3px; right: 5px;
+      font-size: 10px; font-style: normal; letter-spacing: normal; opacity: .85;
+    }
+    /* 코치마크 — 잠긴 영웅 탭 옆에 한 번 떠서 해금 조건을 알려 준다 */
+    .coachmark {
+      position: fixed; z-index: 60; padding: 12px 14px; border-radius: 10px;
+      background: linear-gradient(180deg, #2a2b22, #1a1b15);
+      border: 1px solid rgba(214,178,90,.55); box-shadow: 0 10px 28px rgba(0,0,0,.55);
+      color: var(--text, #efe6d5); font-size: 12px; line-height: 1.6; word-break: keep-all;
+      animation: cmIn .22s ease both;
+    }
+    .coachmark b { color: var(--gold); }
+    .coachmark::after {
+      content: ''; position: absolute; right: -7px; top: 26px;
+      width: 12px; height: 12px; transform: rotate(45deg);
+      background: #22231c; border-right: 1px solid rgba(214,178,90,.55); border-top: 1px solid rgba(214,178,90,.55);
+    }
+    .coachmark .cm-ok {
+      margin-top: 10px; text-align: center; padding: 5px 0; border-radius: 7px;
+      background: rgba(214,178,90,.18); border: 1px solid rgba(214,178,90,.45);
+      color: var(--gold); font-weight: bold; cursor: pointer;
+    }
+    .coachmark .cm-ok:hover { background: rgba(214,178,90,.3); }
+    @keyframes cmIn { from { opacity: 0; transform: translateX(8px); } to { opacity: 1; transform: none; } }
     #tree-fx { background: rgba(0,0,0,.24); border: 1px solid rgba(255,246,225,.12); border-radius: 10px; padding: 10px 12px; }
     #tree-fx h4 { margin: 0 0 8px; font-size: 12px; color: var(--gold); letter-spacing: 2px; }
     #tree-fx .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 3px 16px; }

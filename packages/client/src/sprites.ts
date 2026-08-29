@@ -242,6 +242,7 @@ const SHAPES: Record<string, string[]> = {
  * 픽셀랩 에셋이 도착하기 전까지의 플레이스홀더 매핑 — 실루엣은 역할만 얼추 맞춘 것.
  */
 const LOOK: Record<string, { shape: string; pal: string; accent?: string }> = {
+  c_elf_miner: { shape: 'soldier', pal: 'sylvarin', accent: '#c9a05a' },
   // 🏜️ 카르자 (캠페인 전용) — 픽셀 아트가 붙기 전까지 쓰는 폴백
   k_scimitar: { shape: 'soldier', pal: 'karja', accent: '#e8d5b0' },
   k_hunter: { shape: 'archer', pal: 'karja' },

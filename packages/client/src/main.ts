@@ -658,6 +658,19 @@ let campaignCampDown = new Set<number>();
 let campaignCaptureStartTick = -1;
 /** boss 미션: 처치 대상 보스 엔티티 id (-1 = 없음). */
 let campaignBossId = -1;
+// ── 골드 레이스 (15. 금광 고원) 상태 ──
+/** 갱 소유 — -1 중립 / 0 우리 / 1 카르자. 판이 열릴 땐 전부 카르자다. */
+let goldOwner: number[] = [];
+/** 갱마다 한쪽이 단독 점유한 틱 (부호로 어느 쪽인지: +우리 / -카르자). */
+let goldHold: number[] = [];
+/** 갱에 배치된 광부 엔티티 id. */
+let goldMiners: number[][] = [];
+/** 모은 금 (우리 / 카르자). 이 판의 승패는 이 둘로만 난다. */
+let goldAlly = 0;
+let goldFoe = 0;
+/** 마지막으로 금을 준 틱 — 5초마다 정산한다. */
+let goldLastTick = 0;
+
 // ── 호위전 (13. 페이로드) 상태 ──
 /** 확보한 거점 수 (0..points.length). */
 let escortFrontier = 0;
@@ -2177,6 +2190,17 @@ async function startCampaignStage(st: CampaignStage): Promise<void> {
       { y: 0, label: '가운데 대기', hold: true },
       ...st.deployLanes.filter((l) => l.yTile >= 0).map((l) => ({ y: Math.round(l.yTile * FP), label: l.label })),
     ]
+    : st.goldRace
+      ? [
+        ...st.goldRace.mines.map((m) => ({
+          x: Math.round(m.xTile * FP), y: Math.round(m.yOffTile * FP), label: m.label,
+          r: Math.round(st.goldRace!.radiusTiles * FP),
+        })),
+        ...st.goldRace.midpoints.map((m) => ({
+          x: Math.round(m.xTile * FP), y: Math.round(m.yOffTile * FP), label: m.label,
+          r: Math.round(2 * FP),
+        })),
+      ]
     : st.village
       ? st.village.rallyPoints.map((r) => ({
         x: Math.round(r.xTile * FP), y: Math.round(r.yOffTile * FP), label: r.label,
@@ -2204,6 +2228,12 @@ async function startCampaignStage(st: CampaignStage): Promise<void> {
   campaignSpawnFires = (st.spawns ?? []).map(() => 0);
   campaignCaptureStartTick = -1;
   campaignBossId = -1;
+  goldOwner = [];
+  goldHold = [];
+  goldMiners = [];
+  goldAlly = 0;
+  goldFoe = 0;
+  goldLastTick = 0;
   escortFrontier = 0;
   escortProgressTicks = 0;
   escortLoseTicks = 0;
@@ -2270,6 +2300,36 @@ async function startCampaignStage(st: CampaignStage): Promise<void> {
   villageHousesSeen = -1;
   // 마을 방어전이 아니면 적 진입 예고는 지운다 (판을 옮겨도 남아 있으면 안 된다)
   renderer?.setLaneWarnings(null);
+  /*
+   * 골드 레이스: 갱 여섯에 카르자 주둔군을 박고, 소유를 전부 적으로 시작한다.
+   * 적 요새 쪽은 holdLine 으로 잘라 애초에 갈 수 없게 한다 — 이 판의 목표는
+   * 요새가 아니라 금이다.
+   */
+  if (st.goldRace && game) {
+    const gr = st.goldRace;
+    const at = (xTile: number, yOff: number): { x: number; y: number } => {
+      const x = Math.floor(xTile * FP);
+      return { x, y: laneCenterY(game!.map, x) + Math.floor(yOff * FP) };
+    };
+    goldOwner = gr.mines.map(() => 1);
+    goldHold = gr.mines.map(() => 0);
+    goldMiners = gr.mines.map(() => []);
+    gr.mines.forEach((m, i) => {
+      const c = at(m.xTile, m.yOffTile);
+      // 주둔군: 갱을 떠나지 않는다 (garrisonR). 밀어내야 점령이 시작된다.
+      const list = gr.garrisons[i] ?? [];
+      let k = 0;
+      for (const row of list) {
+        for (let n = 0; n < row.count; n++, k++) {
+          const q = at(m.xTile + (k % 4 - 1.5) * 0.7, m.yOffTile + (Math.floor(k / 4) - 0.5) * 0.7);
+          spawnGarrison(game!, row.defId, 1, q.x, q.y, Math.floor(gr.radiusTiles * FP));
+        }
+      }
+      // 카르자 광부 — 이미 캐고 있다
+      spawnGoldMiners(i, 1);
+    });
+    game.holdLineX = Math.floor(gr.holdLineXTile * FP);
+  }
   if (st.village && game) {
     const vg = st.village;
     const at = (xTile: number, yOff: number): { x: number; y: number } => {
@@ -2389,6 +2449,143 @@ async function startCampaignStage(st: CampaignStage): Promise<void> {
   const goal = $('#campaign-goal');
   goal.textContent = `[${st.id}. ${st.title}] ${st.goal}`;
   goal.classList.remove('hidden');
+}
+
+// ══ 골드 레이스 (15 「에메랄드 숲의 값」) ══════════════════════════════
+
+/** 갱 i 의 한복판 (FP). */
+function goldMineAt(i: number): { x: number; y: number } | null {
+  const gr = campaign?.goldRace;
+  if (!gr || !game) return null;
+  const m = gr.mines[i];
+  if (!m) return null;
+  const x = Math.floor(m.xTile * FP);
+  return { x, y: laneCenterY(game.map, x) + Math.floor(m.yOffTile * FP) };
+}
+
+/**
+ * 갱에 광부를 세운다.
+ *
+ * homeX/homeY 를 박아 그 자리를 지키게 한다 — 진군도 안 하고, 집합 명령도 안 따른다.
+ * 무기가 없어 스스로 아무것도 못 하므로, 적이 들어오면 그냥 죽는다.
+ */
+function spawnGoldMiners(i: number, team: 0 | 1): void {
+  const gr = campaign?.goldRace;
+  const c = goldMineAt(i);
+  if (!gr || !game || !c) return;
+  const ids = goldMiners[i] ?? (goldMiners[i] = []);
+  for (let k = ids.length; k < gr.workersPerMine; k++) {
+    const defId = gr.workerDefIds[k % gr.workerDefIds.length]!;
+    // 갱 앞마당에 조금씩 흩어 세운다 (겹쳐 서면 한 방에 같이 죽는다)
+    const ox = ((k % 3) - 1) * Math.floor(0.8 * FP);
+    const oy = (Math.floor(k / 3) - 0.5) * Math.floor(0.8 * FP);
+    const e = spawnUnit(game, defId, team, c.x + ox, c.y + oy);
+    e.homeX = e.x;
+    e.homeY = e.y;
+    ids.push(e.id);
+  }
+}
+
+/** 갱에 남은 광부를 정리하고(죽은 것 제거) 모자라면 다시 채운다. */
+function syncGoldMiners(i: number): void {
+  if (!game) return;
+  const owner = goldOwner[i] ?? -1;
+  const alive = (goldMiners[i] ?? []).filter((id) => {
+    const e = game!.entities.find((q) => q.id === id);
+    return e !== undefined && e.alive;
+  });
+  goldMiners[i] = alive;
+  if (owner === 0 || owner === 1) spawnGoldMiners(i, owner as 0 | 1);
+}
+
+/** 갱 하나를 잃거나 뺏을 때 — 그쪽 광부는 전부 흩어진다. */
+function clearGoldMiners(i: number): void {
+  if (!game) return;
+  for (const id of goldMiners[i] ?? []) {
+    const e = game.entities.find((q) => q.id === id);
+    if (e && e.alive) e.alive = false;
+  }
+  goldMiners[i] = [];
+}
+
+/**
+ * 골드 레이스 한 틱.
+ *
+ *  1) 갱마다 「누가 혼자 서 있나」를 보고 점령 진행을 굴린다
+ *  2) 5초마다 소유한 갱 수만큼 양쪽에 금을 준다
+ *  3) 목표 금액에 먼저 닿는 쪽이 이긴다
+ */
+function tickGoldRace(): void {
+  const gr = campaign?.goldRace;
+  if (!gr || !game || campaignDone) return;
+  const r2 = Math.floor(gr.radiusTiles * FP) ** 2;
+  const holdNeed = gr.captureSec * TICK_HZ;
+
+  for (let i = 0; i < gr.mines.length; i++) {
+    const c = goldMineAt(i);
+    if (!c) continue;
+    // 갱 둘레에 선 「싸울 수 있는」 유닛만 센다 — 광부는 점령권이 없다
+    let ally = 0;
+    let foe = 0;
+    for (const e of game.entities) {
+      if (!e.alive || e.defId === 'c_elf_miner') continue;
+      const d = DEFS[e.defId];
+      if (!d || d.tier === 'structure' || !d.weapon) continue;
+      const dx = e.x - c.x;
+      const dy = e.y - c.y;
+      if (dx * dx + dy * dy > r2) continue;
+      if (e.team === 0) ally++;
+      else foe++;
+    }
+    const owner = goldOwner[i] ?? -1;
+    // 한쪽만 서 있고 그쪽이 주인이 아니면 점령이 굴러간다
+    const claimer = ally > 0 && foe === 0 ? 0 : foe > 0 && ally === 0 ? 1 : -1;
+    if (claimer < 0 || claimer === owner) {
+      goldHold[i] = 0;
+    } else {
+      const dir = claimer === 0 ? 1 : -1;
+      const cur = goldHold[i] ?? 0;
+      goldHold[i] = (cur === 0 || Math.sign(cur) === dir) ? cur + dir : dir;
+      if (Math.abs(goldHold[i]!) >= holdNeed) {
+        clearGoldMiners(i);
+        goldOwner[i] = claimer;
+        goldHold[i] = 0;
+        spawnGoldMiners(i, claimer as 0 | 1);
+        showToast(claimer === 0
+          ? `⛏ ${gr.mines[i]!.label} 확보! 광부를 올려보낸다`
+          : `⚠ ${gr.mines[i]!.label}를 빼앗겼다!`);
+        audio.play(claimer === 0 ? 'cast_bless' : 'cast_skill', { volume: 0.9 });
+      }
+    }
+    syncGoldMiners(i);
+  }
+
+  // ── 5초마다 정산 ──
+  if (game.tick - goldLastTick >= TICK_HZ * 5) {
+    goldLastTick = game.tick;
+    let mineAlly = 0;
+    let mineFoe = 0;
+    for (let i = 0; i < gr.mines.length; i++) {
+      // 광부가 한 명도 없는 갱은 캐지 못한다 — 뺏고 지키지 않으면 값이 없다
+      if ((goldMiners[i] ?? []).length === 0) continue;
+      if (goldOwner[i] === 0) mineAlly++;
+      else if (goldOwner[i] === 1) mineFoe++;
+    }
+    goldAlly += gr.baseGold + mineAlly * gr.goldPerMine;
+    goldFoe += gr.baseGold + mineFoe * gr.goldPerMine;
+    // 목표줄을 레이스 현황판으로 쓴다 — 금·갱 수가 한눈에 보여야 판단이 선다
+    const bar = (v: number): string => {
+      const n = Math.min(10, Math.floor((v / gr.target) * 10));
+      return '█'.repeat(n) + '░'.repeat(10 - n);
+    };
+    $('#campaign-goal').textContent =
+      `💰 우리 ${goldAlly.toLocaleString()} ${bar(goldAlly)}`
+      + ` · 카르자 ${goldFoe.toLocaleString()} ${bar(goldFoe)}`
+      + ` — 목표 ${gr.target.toLocaleString()} · 갱 ${mineAlly}:${mineFoe}`;
+  }
+
+  if (goldAlly >= gr.target) campaignFinish(true);
+  else if (goldFoe >= gr.target) campaignFinish(false, '카르자가 먼저 이만을 채웠다');
 }
 
 /** 캠페인 스테이지 종료 처리 — 승리 시 outro 대화 후 저장. */
@@ -4059,11 +4256,29 @@ function tick(deltaMS: number): void {
   // 두 갈래 맵: 지금 고른 출정 레인에 불이 들어온다
   if (renderer) {
     renderer.setDeployLanes(campaignLanes, currentLaneIdx());
+    // 금광 소유·점령 진행을 렌더러에 넘긴다 (깃발 + 진행 고리)
+    if (campaign?.goldRace) {
+      const gr = campaign.goldRace;
+      const need = gr.captureSec * TICK_HZ;
+      renderer.setGoldMines(gr.mines.map((_, i) => {
+        const c = goldMineAt(i);
+        return {
+          x: c?.x ?? 0, y: c?.y ?? 0,
+          owner: goldOwner[i] ?? -1,
+          hold: (goldHold[i] ?? 0) / need,
+        };
+      }));
+    } else {
+      renderer.setGoldMines(null);
+    }
   }
   // 영웅 출정 칸: 다음 영웅까지 남은 시간이 여기서 줄어든다
   if (shopTab === 'hero') syncHeroShop();
   // 캠페인: 확정 성장 — fromWave 턴부터 매 턴 적 봇 comp 에 +1 (캡 도달 시 멈춤).
   // 출정 직전 턴에 미리 편입해 fromWave 웨이브부터 실제로 필드에 나오게 한다.
+  // 골드 레이스 — 갱 점령·수입 정산·승패는 여기서만 난다
+  if (campaign?.goldRace) tickGoldRace();
+
   if (campaign && !campaignDone && !game.over && campaign.growth) {
     for (let i = 0; i < campaign.growth.length; i++) {
       const rule = campaign.growth[i]!;

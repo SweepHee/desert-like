@@ -43,6 +43,8 @@ const UNITS = {
   k_totem: 'f70f1bb1-2844-4316-af5b-9ce069896fb0',
   k_falcon: '4e24c63e-1a9d-412c-acc4-8866c9127486',
   k_spirit: '16140f81-2e55-42b5-ab84-4e46104a4804',
+  // 15 「에메랄드 숲의 값」 일꾼 — 캐는 모션이 karja_attack 으로 들어간다
+  c_elf_miner: '19f3d381-e861-46fe-8a34-60acc2d12735',
 };
 
 const PY = `

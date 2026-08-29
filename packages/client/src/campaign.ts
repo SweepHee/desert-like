@@ -181,6 +181,41 @@ export interface CampaignStage {
     readonly winDialogue?: readonly DialogueLine[];
   };
   /** true = 양 팀 넥서스를 아예 두지 않는다 (마을 방어전). */
+  /**
+   * 골드 레이스 (15 「에메랄드 숲의 값」).
+   *
+   * 적을 함락하는 판이 아니다 — **먼저 목표 금액을 모으는 쪽이 이긴다.**
+   * 금은 갱에서 나오고, 갱은 처음에 전부 적 소유다. 뺏어야 내 수입이 늘고
+   * 동시에 적 수입이 준다. 뺏은 갱에는 우리 일꾼이 걸어가 캔다 —
+   * 일꾼이 죽으면 그 갱은 캐지 못하므로 지켜야 한다.
+   */
+  readonly goldRace?: {
+    /** 먼저 이만큼 모으면 이긴다. */
+    readonly target: number;
+    /** 갱 여섯 — 화면에 보이는 갱구 자리 그대로 (gen_goldmine.py 실측). */
+    readonly mines: readonly {
+      readonly xTile: number; readonly yOffTile: number; readonly label: string;
+    }[];
+    /** 갱 말고도 부대를 보낼 수 있는 자리 (사잇길). */
+    readonly midpoints: readonly {
+      readonly xTile: number; readonly yOffTile: number; readonly label: string;
+    }[];
+    /** 갱 둘레 이 거리 안이 「점령권」. */
+    readonly radiusTiles: number;
+    /** 상대가 없는 채로 이만큼 버티면 갱이 넘어온다. */
+    readonly captureSec: number;
+    /** 갱 하나가 5초마다 주는 금. */
+    readonly goldPerMine: number;
+    /** 아무 갱도 없을 때의 기본 수입 (5초당) — 0 이면 갱이 전부다. */
+    readonly baseGold: number;
+    /** 갱마다 처음 박혀 있는 카르자 주둔군. */
+    readonly garrisons: readonly (readonly { readonly defId: string; readonly count: number }[])[];
+    /** 갱을 가진 쪽이 보내는 일꾼 — 죽으면 다시 걸어온다. */
+    readonly workerDefIds: readonly string[];
+    readonly workersPerMine: number;
+    /** 이 x 너머로는 진군하지 않는다 (적 요새는 못 친다). */
+    readonly holdLineXTile: number;
+  };
   readonly noNexus?: boolean;
   /** true = 수호탑·수호자 없이 넥서스전만 (탑 제거 + 넥서스 보호막 해제). */
   readonly noTowers?: boolean;
@@ -1590,126 +1625,90 @@ export const SYLVARIN_CAMPAIGN: readonly CampaignStage[] = [
     ],
   },
   {
-    id: 15, act: 3, title: '에메랄드 숲의 값', goal: '카르자의 채굴 캠프 여섯을 걷어내고 금광 고원에서 몰아내라',
+    id: 15, act: 3, title: '에메랄드 숲의 값', goal: '💰 금 20,000을 먼저 모아라 — 금광 여섯을 빼앗고 지켜라',
     allowedUnits: U14, botDifficulty: 'normal',
-    // 카르자는 한 덩어리가 아니라 갱마다 흩어져 있다 — 본진 + 채굴 캠프 여섯.
-    enemies: ['karja', 'karja', 'karja', 'karja', 'karja', 'karja', 'karja'],
+    // 카르자가 이미 고원을 차지하고 캐고 있다. 갱마다 주둔군이 박혀 있다.
+    enemies: ['karja', 'karja', 'karja'],
     allies: [],
-    mission: 'destroy', seed: seedOf(15), mapId: 'goldmine',
-    noTowers: true, // 고원엔 수호탑이 없다 — 갱과 진영이 전부다
     /*
-     * 이 판에 나올 수 있는 카르자. 최상급(모래 거인)·최종(대주술사)은 목록에서
-     * 빼 두고 「출현!」으로만 부른다 — 봇 경제로 굴러가면 후반에 벽이 된다.
+     * 이 판은 적을 함락하는 판이 아니다 — 금을 먼저 모으는 쪽이 이긴다.
+     * mission 은 형식상 destroy 로 두고, 승패는 goldRace 가 직접 낸다
+     * (적 요새는 holdLine 너머라 애초에 칠 수 없다).
      */
+    mission: 'destroy', seed: seedOf(15), mapId: 'goldmine',
+    noTowers: true,
+    startMoney: 500,
+    goldRace: {
+      target: 20000,
+      // 갱 여섯 — gen_goldmine.py 가 「벽에서 가장 먼 점」으로 잰 갱구 자리
+      mines: [
+        { xTile: 15.8, yOffTile: -9.8, label: '북서 갱' },
+        { xTile: 28.2, yOffTile: -8.3, label: '북중 갱' },
+        { xTile: 40.2, yOffTile: -10.2, label: '북동 갱' },
+        { xTile: 16.2, yOffTile: 9.2, label: '남서 갱' },
+        { xTile: 28.2, yOffTile: 8.8, label: '남중 갱' },
+        { xTile: 39.8, yOffTile: 8.8, label: '남동 갱' },
+      ],
+      // 갱 말고 부대를 세울 수 있는 자리 — 사잇길을 잡으면 양쪽 갱을 다 받친다
+      midpoints: [
+        { xTile: 25.8, yOffTile: 0.2, label: '가운데 사잇길' },
+      ],
+      radiusTiles: 4.5,
+      captureSec: 10,
+      goldPerMine: 40,
+      baseGold: 20,
+      /*
+       * 갱 주둔군 — 서쪽(가까운) 갱이 얇고 동쪽(적진 쪽)이 두껍다.
+       * 순서는 mines 와 같다: 북서 · 북중 · 북동 · 남서 · 남중 · 남동.
+       */
+      garrisons: [
+        [{ defId: 'k_scimitar', count: 3 }, { defId: 'k_hunter', count: 2 }],
+        [{ defId: 'k_scimitar', count: 4 }, { defId: 'k_hunter', count: 3 }, { defId: 'k_wolf', count: 2 }],
+        [{ defId: 'k_tribal', count: 3 }, { defId: 'k_hunter', count: 4 }, { defId: 'k_shaman', count: 1 }],
+        [{ defId: 'k_scimitar', count: 3 }, { defId: 'k_wolf', count: 2 }],
+        [{ defId: 'k_scimitar', count: 4 }, { defId: 'k_hunter', count: 3 }, { defId: 'k_wolf', count: 2 }],
+        [{ defId: 'k_tribal', count: 3 }, { defId: 'k_hunter', count: 4 }, { defId: 'k_shaman', count: 1 }],
+      ],
+      workerDefIds: ['c_elf_miner'],
+      workersPerMine: 3,
+      // 적 요새(x50.2)는 못 친다 — 마지막 갱 너머로는 진군하지 않는다
+      holdLineXTile: 44,
+    },
+    // 카르자 본진은 갱을 되찾으러 계속 밀어낸다
     enemyAllowedUnits: [
       'k_scimitar', 'k_hunter', 'k_wolf', 'k_wolfrider', 'k_apprentice',
-      'k_tribal', 'k_shaman', 'k_spiritcaller', 'k_highlander', 'k_falconer',
-      'k_eagle', 'k_beeswarm', 'k_sandwraith',
+      'k_tribal', 'k_shaman', 'k_falconer', 'k_eagle', 'k_beeswarm', 'k_sandwraith',
     ],
     enemyStartTech: 3,
-    // 카르자의 값어치는 「발」에 있다 — 늑대·기수가 앞서 달려와 뒤를 문다
     enemyPreferredUnits: ['k_wolf', 'k_wolfrider', 'k_scimitar'],
     enemyUnitMinWave: {
-      k_apprentice: 3, k_tribal: 4,
-      k_shaman: 6, k_falconer: 6,       // 6턴: 토템과 매 — 여기서 성격이 바뀐다
-      k_eagle: 8, k_beeswarm: 8,
-      k_spiritcaller: 10, k_sandwraith: 11,
-      k_highlander: 13,                  // 13턴: 대돌격이 전선을 갈아엎기 시작
+      k_apprentice: 3, k_tribal: 4, k_shaman: 6, k_falconer: 7,
+      k_eagle: 9, k_beeswarm: 10, k_sandwraith: 12,
     },
     enemyUnitCaps: {
-      // 잡졸은 갱마다 쏟아지므로 본진 생산은 조여 둔다
-      k_scimitar: 14, k_hunter: 10, k_wolf: 16,
-      k_wolfrider: 8, k_tribal: 6, k_apprentice: 6,
-      k_shaman: 3, k_spiritcaller: 2, k_falconer: 4,
-      k_eagle: 6, k_beeswarm: 5, k_sandwraith: 4, k_highlander: 4,
+      k_scimitar: 12, k_hunter: 9, k_wolf: 14, k_wolfrider: 7,
+      k_tribal: 5, k_apprentice: 5, k_shaman: 3, k_falconer: 3,
+      k_eagle: 5, k_beeswarm: 4, k_sandwraith: 3,
     },
-    deadlineWave: 40,
-    enemyCamps: [
-      {
-        // ── 카르자 진영 (오른쪽 끝, 붉은 천막) — 유일하게 스스로 생산한다
-        slot: 0, label: '카르자 진영', x: 49 * FP, y: -3.4 * FP,
-        startIncome: 5, startMoney: 400, spendAll: true,
-        phases: [
-          { fromWave: 1, units: ['k_scimitar', 'k_wolf', 'k_hunter'] },
-          { fromWave: 4, units: ['k_scimitar', 'k_wolf', 'k_hunter', 'k_wolfrider', 'k_apprentice'], preferred: ['k_wolfrider'] },
-          { fromWave: 8, units: ['k_wolfrider', 'k_tribal', 'k_shaman', 'k_falconer', 'k_eagle'], preferred: ['k_eagle', 'k_shaman'] },
-          { fromWave: 13, units: ['k_highlander', 'k_eagle', 'k_sandwraith', 'k_spiritcaller', 'k_beeswarm'], preferred: ['k_highlander'] },
-        ],
-        forcedGrowth: [
-          { fromWave: 13, units: ['k_highlander', 'k_eagle', 'k_sandwraith'], perWave: 2 },
-        ],
-      },
-      // ── 채굴 캠프 여섯. 인컴 0 — 스스로 크지 않고 정해진 증원만 게워 낸다.
-      //    좌표는 gen_goldmine.py 가 잰 갱구 자리 그대로다.
-      {
-        slot: 1, label: '1시 갱', x: 16.8 * FP, y: -12.0 * FP, nexusDefId: 'c_demon_camp',
-        startIncome: 0, incomeCap: 0, startMoney: 0,
-        phases: [{ fromWave: 1, units: ['k_wolf'] }],
-      },
-      {
-        slot: 2, label: '12시 갱', x: 28.8 * FP, y: -6.5 * FP, nexusDefId: 'c_demon_camp',
-        startIncome: 0, incomeCap: 0, startMoney: 0,
-        phases: [{ fromWave: 1, units: ['k_scimitar'] }],
-      },
-      {
-        slot: 3, label: '11시 갱', x: 40.0 * FP, y: -12.4 * FP, nexusDefId: 'c_demon_camp',
-        startIncome: 0, incomeCap: 0, startMoney: 0,
-        phases: [{ fromWave: 1, units: ['k_hunter'] }],
-      },
-      {
-        slot: 4, label: '7시 갱', x: 15.7 * FP, y: 8.4 * FP, nexusDefId: 'c_demon_camp',
-        startIncome: 0, incomeCap: 0, startMoney: 0,
-        phases: [{ fromWave: 1, units: ['k_wolf'] }],
-      },
-      {
-        slot: 5, label: '6시 갱', x: 28.0 * FP, y: 4.4 * FP, nexusDefId: 'c_demon_camp',
-        startIncome: 0, incomeCap: 0, startMoney: 0,
-        phases: [{ fromWave: 1, units: ['k_scimitar'] }],
-      },
-      {
-        slot: 6, label: '5시 갱', x: 41.7 * FP, y: 7.6 * FP, nexusDefId: 'c_demon_camp',
-        startIncome: 0, incomeCap: 0, startMoney: 0,
-        phases: [{ fromWave: 1, units: ['k_hunter'] }],
-      },
-    ],
     spawns: [
-      // ── 영웅: 상점 「영웅」 탭에서 직접 부른다 ──
       { defId: 'c_kael', label: '🛡 숲지기 카엘 참전!', heroPick: true, everySec: 110,
         concurrentCap: 1, respawnAfterDeathSec: 110, atXTile: 7, friendly: true },
       { defId: 'c_elowyn', label: '🧙 현자 엘로윈 참전!', heroPick: true, everySec: 240,
         concurrentCap: 1, respawnAfterDeathSec: 240, atXTile: 7, friendly: true },
       { defId: 'c_evergreen', label: '🏹 신궁 에버그린 참전!', heroPick: true, everySec: 170,
         concurrentCap: 1, respawnAfterDeathSec: 170, atXTile: 7, friendly: true },
-      // ── 갱 증원: 80초마다. 갱이 무너지면 그쪽은 영구히 끊긴다 ──
-      { defId: 'k_wolf', label: '1시 갱 사냥무리', count: 3, everySec: 80,
-        atXTile: 16.8, yOffTile: -12.0, whileCampSlot: 1 },
-      { defId: 'k_scimitar', label: '12시 갱 수비대', count: 3, everySec: 80,
-        atXTile: 28.8, yOffTile: -6.5, whileCampSlot: 2 },
-      { defId: 'k_hunter', label: '11시 갱 사수', count: 3, everySec: 80,
-        atXTile: 40.0, yOffTile: -12.4, whileCampSlot: 3 },
-      { defId: 'k_wolf', label: '7시 갱 사냥무리', count: 3, everySec: 80,
-        atXTile: 15.7, yOffTile: 8.4, whileCampSlot: 4 },
-      { defId: 'k_scimitar', label: '6시 갱 수비대', count: 3, everySec: 80,
-        atXTile: 28.0, yOffTile: 4.4, whileCampSlot: 5 },
-      { defId: 'k_hunter', label: '5시 갱 사수', count: 3, everySec: 80,
-        atXTile: 41.7, yOffTile: 7.6, whileCampSlot: 6 },
-      // ── 갱이 무너지면 그 자리에서 모래 망령이 일어선다 (주술로 묻어 둔 파수) ──
-      { defId: 'k_sandwraith', label: '🏜 모래 망령', onCampDown: 1, atXTile: 16.8, yOffTile: -12.0 },
-      { defId: 'k_sandwraith', label: '🏜 모래 망령', onCampDown: 3, atXTile: 40.0, yOffTile: -12.4 },
-      { defId: 'k_sandwraith', label: '🏜 모래 망령', onCampDown: 6, atXTile: 41.7, yOffTile: 7.6 },
-      // ── 후반 손님: 목록에 없는 끝판급은 여기서만 나온다 ──
-      { defId: 'k_sandgiant', label: '🗿 모래 거인', atSec: 780, everySec: 210, concurrentCap: 2 },
-      { defId: 'k_grandshaman', label: '👑 천막의 대주술사 하르간!', atSec: 1080, everySec: 300, concurrentCap: 1 },
+      // 후반 압박 — 카르자가 갱을 되찾으러 정예를 보낸다
+      { defId: 'k_highlander', label: '🐎 고원 기마전사', atSec: 480, everySec: 150, concurrentCap: 3 },
+      { defId: 'k_sandgiant', label: '🗿 모래 거인', atSec: 720, everySec: 200, concurrentCap: 2 },
+      { defId: 'k_grandshaman', label: '👑 천막의 대주술사 하르간!', atSec: 960, everySec: 300, concurrentCap: 1 },
     ],
     cutscenes: [
       {
-        // 대주술사가 직접 나서는 순간 — 판의 성격이 바뀐다
-        atSec: 1080,
+        atSec: 960,
         lines: [
           { who: '', text: '고원 전체에서 북소리가 한 번에 멎었다. 천막들이 열리고, 모래가 스스로 일어선다.' },
-          { who: '하르간', text: '충분히 봐줬다. 이 땅은 값으로 사는 게 아니야 — 뼈를 묻어야 갖는 거지.' },
-          { who: '카엘', text: '…부족장이 직접 나왔습니다.' },
-          { who: '엘로윈', text: '조상의 혼을 부른다. 저 노인이 서 있는 동안엔 카르자가 두 배로 강해진다 — 먼저 끊어라.' },
+          { who: '하르간', text: '금을 캐 가겠다고? 이 산은 백 년을 우리 것이었다. 갱을 도로 묻어 버리지.' },
+          { who: '엘로윈', text: '저 노인이 서 있는 동안엔 카르자가 두 배로 강해진다 — 갱을 지켜라, 먼저 끊고.' },
         ],
       },
     ],
@@ -1718,21 +1717,23 @@ export const SYLVARIN_CAMPAIGN: readonly CampaignStage[] = [
       { who: '카엘', text: '정면은 안 됩니다. 문을 두드릴 때마다 우리 쪽이 더 줄어요.' },
       { who: '엘로윈', text: '문은 두드리는 게 아니라 열고 들어가는 거다. …에메랄드 숲으로 가자.' },
       { who: '티아', text: '에메랄드 숲이요? 거긴 엘프인데 실바린이 아니라고… 300년 동안 한 번도 안 도왔다면서요.' },
-      { who: '엘로윈', text: '돕지 않았지. 대신 값을 받으면 움직인다. 그들은 자물쇠를 여는 일에 관해서는 대륙 최고다.' },
+      { who: '엘로윈', text: '돕지 않았지. 대신 값을 받으면 움직인다. 자물쇠를 여는 일에 관해서는 대륙 최고다.' },
       { who: '아샤', text: '(나무 그늘에서) 오랜만이군, 현자. 여전히 공짜로 남의 칼을 빌리려 드는가?' },
       { who: '카엘', text: '…언제부터 거기 계셨습니까.' },
-      { who: '아샤', text: '너희가 숲에 들어선 순간부터. 값은 금이다 — 고원의 금. 그것도 우리가 쓰는 것으로.' },
-      { who: '브리아', text: '고원의 금? 그거 지금 카르자가 앉아서 캐고 있는데.' },
+      { who: '아샤', text: '너희가 숲에 들어선 순간부터. 값은 금이다 — 고원의 금 이만.' },
+      { who: '브리아', text: '이만? 그거 지금 카르자가 앉아서 캐고 있는데.' },
       { who: '아샤', text: '알고 있다. 그러니 값인 거지. 쉬웠으면 벌써 우리가 캤을 테니.' },
-      { who: '', text: '고원의 능선은 좁고 굽어 있었다. 바위 사이로 난 길마다 채굴 캠프가 앉아 있고,\n그 너머 붉은 천막에서 북소리가 들려왔다.' },
+      { who: '', text: '고원의 능선은 좁고 굽어 있었다. 갱 여섯에서 전부 붉은 깃발이 올라 있었고,\n광차가 쉬지 않고 카르자의 천막으로 굴러 들어갔다.' },
       { who: '하르간', text: '숲 것들이 고원까지 올라왔군. 여긴 우리가 백 년을 걸어 찾은 땅이다. 돌아가라.' },
       { who: '엘로윈', text: '우리도 물러설 곳이 없소. 뒤에 숲이 마르고 있어서.' },
-      { who: '하르간', text: '…그럼 서로 물러설 수 없겠구나. 늑대를 풀어라.' },
-      { who: '아린', text: '적이 빨라요! 늑대가 먼저 붙고 기수가 뒤를 파고들어요 — 후열부터 지켜야 해요.' },
-      { who: '엘로윈', text: '갱을 하나씩 걷어내라. 캠프가 무너지면 그쪽 증원이 끊긴다. 여섯을 다 끊고 천막을 밀어내라.' },
+      { who: '하르간', text: '…그럼 캐는 속도로 정하자. 먼저 이만을 채우는 쪽이 이 산의 주인이다.' },
+      { who: '티아', text: '갱을 뺏으면 우리 광부들이 바로 올라가 캘게요! 대신 광부는 스스로 못 싸워요 — 꼭 지켜 주세요.' },
+      { who: '엘로윈', text: '갱 여섯을 하나씩 걷어내라. 뺏을수록 우리는 빨라지고 저쪽은 느려진다.',
+      },
+      { who: '아린', text: '적 요새까지는 못 갑니다 — 길이 막혀 있어요. 이 판은 갱으로만 결판납니다.' },
     ],
     outro: [
-      { who: '하르간', text: '(무릎을 꿇으며) …북이 멎었군. 백 년을 걸어와서, 또 걸어 나가야 하나.' },
+      { who: '하르간', text: '(광차가 멎는다) …북이 멎었군. 백 년을 걸어와서, 또 걸어 나가야 하나.' },
       { who: '카엘', text: '금만 가져가겠습니다. 갱은 두고 갑니다 — 당신들이 다시 캐면 됩니다.' },
       { who: '하르간', text: '…뭐?' },
       { who: '카엘', text: '우리가 싸우는 상대는 당신이 아니라 겨울입니다. 겨울이 여기까지 오면, 이 금도 언 땅 밑에 묻힙니다.' },

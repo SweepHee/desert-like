@@ -74,6 +74,8 @@ export function worldH(): number {
  * (예: 엘프 궁수는 생산 시 여/남 50:50 — docs/races/sylvarin.md)
  */
 export const ASSET_UNITS: Record<string, string | string[]> = {
+  // ⛏ 엘프 광부 (15 금광 고원)
+  c_elf_miner: '/assets/units/c_elf_miner.png',
   // 🏜️ 카르자 (캠페인 전용) — packages/client/tools/fetch_karja.mjs 가 받아 온다
   k_scimitar: '/assets/units/k_scimitar.png',
   k_hunter: '/assets/units/k_hunter.png',
@@ -272,6 +274,7 @@ export const ASSET_UNITS: Record<string, string | string[]> = {
 
 /** 상점 아이콘용 정면(south) 스프라이트. 전장은 측면, 아이콘은 정면. */
 const ASSET_ICONS: Record<string, string> = {
+  c_elf_miner: '/assets/units/c_elf_miner_icon.png',
   // 🏜️ 카르자 — 상점 아이콘(정면)
   k_scimitar: '/assets/units/k_scimitar_icon.png',
   k_hunter: '/assets/units/k_hunter_icon.png',
@@ -424,6 +427,8 @@ const ASSET_ATTACK_ANIMS_AIR: Record<string, string[][]> = {
 };
 
 const ASSET_ATTACK_ANIMS: Record<string, string[][]> = {
+  // ⛏ 광부는 「공격」 자리에 곡괭이질을 넣는다 — 갱에 서면 계속 캐는 것처럼 보인다
+  c_elf_miner: atk4('c_elf_miner'),
   // 🏜️ 카르자 — 유닛마다 제 무기 동작 (east 4프레임, fetch_karja.mjs 가 굽는다)
   k_scimitar: atk4('k_scimitar'),
   k_hunter: atk4('k_hunter'),
@@ -1105,6 +1110,14 @@ export interface Renderer {
    * 숲길 입구에서 마을 쪽으로 흘러가는 붉은 화살표 + 맥동하는 고리.
    */
   setLaneWarnings(marks: { x: number; y: number; toX: number; toY: number; label: string }[] | null): void;
+  /**
+   * 금광 소유 표식 (15 「에메랄드 숲의 값」).
+   *
+   * 갱 그림은 배경에 구워져 있고 중립이다 — 누구 것인지는 이 깃발이 말한다.
+   * owner: 0 우리(청록) / 1 카르자(붉은) / -1 중립. hold 는 점령 진행(0~1),
+   * 부호로 어느 쪽이 밀고 있는지 나타낸다.
+   */
+  setGoldMines(mines: { x: number; y: number; owner: number; hold: number }[] | null): void;
   /** 선택 표시 링을 그릴 유닛 id (null = 해제). */
   setSelected(id: number | null): void;
   /** 효과음 재생기 연결 (없으면 무음으로 동작). */
@@ -1454,6 +1467,12 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
     }),
   );
   // 메테오는 일반 장판과 달리 대형 낙하체와 전용 착탄 데칼을 따로 쓴다.
+  const goldFlagTex = [
+    await loadTex('/assets/tiles/gm_flag_ally.png'),
+    await loadTex('/assets/tiles/gm_flag_foe.png'),
+  ];
+  let goldMines: { x: number; y: number; owner: number; hold: number }[] | null = null;
+  const goldFlagSp: Sprite[] = [];
   const meteorTex = await loadTex('/assets/fx/fx_meteor_large.png');
   const meteorZoneTex = await loadTex('/assets/fx/zone_meteor.png');
   // 스킬 시전 이펙트 그림 — 시전 위치에 잠깐 떴다 커지며 사라진다
@@ -2363,6 +2382,7 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
     if (a?.kind === 'slowFoe' || a?.kind === 'timelock') return 'cast_ice';
     if (a?.kind === 'burrow') return 'cast_quake';
     if (a?.kind === 'meteor') return 'cast_meteor';
+    if (z === 'silverrain') return 'cast_silverrain';
     if (z === 'blaze' || z === 'hellfire' || z === 'fireburst') return 'cast_fire';
     if (z === 'frost' || a?.kind === 'freeze') return 'cast_ice';
     if (z === 'quake' || a?.kind === 'slowfield') return 'cast_quake';
@@ -2805,6 +2825,60 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
         }
         continue;
       }
+      if (z.kind === 'silverrain') {
+        /*
+         * 「은빛 화살비」(에버그린) — 전용 연출이 없어 옅은 타원만 깔렸고,
+         * 12초짜리 궁극기를 쓰는지도 몰랐다. 하늘에서 은화살이 쉬지 않고
+         * 꽂히고, 바닥에는 달빛 고리가 돈다.
+         *
+         * 좌표는 화면 기준이다 — 세로 맵은 월드가 -90도 돌아 있어 그냥 그리면
+         * 화살이 옆에서 날아든다 (메테오와 같은 자).
+         */
+        const vert = curMap.vertical === true;
+        const sq = vert ? 1 : 0.62;
+        const up = (bx: number, by: number, d: number): [number, number] =>
+          (vert ? [bx + d, by] : [bx, by - d]);
+        const rnd = (n: number): number => {
+          const v = Math.sin(z.id * 91.7 + n * 233.3) * 43758.5453;
+          return v - Math.floor(v);
+        };
+        // 바닥: 달빛 고리 두 겹이 반대로 돈다
+        zonesGr.ellipse(cx, cy, r, r * sq).fill({ color: 0x8fa8d8, alpha: 0.10 * fade });
+        for (const [rr, spd, w] of [[r, 0.0011, 2], [r * 0.72, -0.0017, 1.5]] as const) {
+          const seg = 26;
+          for (let k = 0; k < seg; k++) {
+            if ((k + Math.floor(now * spd * 12)) % 3 === 0) continue;   // 점선으로 돈다
+            const a0 = now * spd + (k / seg) * Math.PI * 2;
+            zonesGr.circle(cx + Math.cos(a0) * rr, cy + Math.sin(a0) * rr * sq, w)
+              .fill({ color: 0xdfe8ff, alpha: 0.75 * fade });
+          }
+        }
+        // 쏟아지는 은화살 — 착탄점마다 제 리듬으로 떨어진다
+        const N = 18;
+        for (let k = 0; k < N; k++) {
+          const ang = rnd(k * 3) * Math.PI * 2;
+          const rad = Math.sqrt(rnd(k * 3 + 1)) * r;
+          const tx = cx + Math.cos(ang) * rad;
+          const ty = cy + Math.sin(ang) * rad * sq;
+          const period = 460 + rnd(k * 3 + 2) * 420;
+          const t = (((now + rnd(k * 3 + 2) * period * 3) % period) / period);
+          if (t < 0.7) {
+            const p = t / 0.7;
+            const [ax, ay] = up(tx, ty, (1 - p) * (r * 1.1 + 120));
+            const [bx, by] = up(ax, ay, 16 + (1 - p) * 10);
+            // 화살대 + 은빛 머리
+            zonesGr.moveTo(bx, by).lineTo(ax, ay)
+              .stroke({ color: 0xdfe8ff, width: 1.8, alpha: (0.35 + p * 0.5) * fade });
+            fx.circle(ax, ay, 1.9).fill({ color: 0xffffff, alpha: 0.9 * fade });
+          } else if (t < 0.86) {
+            // 착탄 — 짧게 퍼지는 은빛 파문
+            const p = (t - 0.7) / 0.16;
+            fx.ellipse(tx, ty, 3 + 15 * p, (3 + 15 * p) * sq)
+              .stroke({ color: 0xeaf2ff, width: 2 * (1 - p), alpha: 0.85 * (1 - p) * fade });
+          }
+        }
+        continue;
+      }
       const tex = zoneTex.get(z.kind);
       if (tex) {
         zoneSeen.add(z.id);
@@ -2855,7 +2929,7 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
           : z.kind === 'stormwing' ? 0x4a4a68 // 검은 폭풍 — 잿빛 도는 흑청
           : z.kind === 'moonveil' ? 0xa87fd0 // 인분의 장막
           : z.kind === 'threadstorm' ? 0xc8d4e8 // 실의 폭풍
-          : z.kind === 'silverrain' ? 0xdfe8ff // 은빛 화살비 — 창백한 은빛
+          // 은빛 화살비는 위에서 전용 연출로 빠진다 (여기 오지 않는다)
           : 0x5fcf6a;
         zonesGr.ellipse(cx, cy, r, r * 0.62).fill({ color, alpha: 0.14 * fade * pulse });
         zonesGr.ellipse(cx, cy, r, r * 0.62).stroke({ color, width: 1.5, alpha: 0.45 * fade * pulse });
@@ -4053,6 +4127,58 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
     }
     // 이번 프레임에 안 쓴 풀 스프라이트는 숨긴다
     for (let i = projUsed; i < projPool.length; i++) projPool[i]!.visible = false;
+    /*
+     * ── 금광 소유 깃발 (15) ──
+     *
+     * 갱 위에 깃발을 꽂아 주인을 알린다. 점령이 굴러가는 동안에는 갱 둘레에
+     * 진행 고리가 차오른다 — 「지금 누가 밀고 있나」가 화면에서 바로 읽혀야
+     * 부대를 어디로 보낼지 정할 수 있다.
+     */
+    if (goldMines) {
+      while (goldFlagSp.length < goldMines.length) {
+        const sp = new Sprite();
+        sp.anchor.set(0.5, 1);
+        sp.zIndex = Number.MAX_SAFE_INTEGER - 1;
+        units.addChild(sp);
+        goldFlagSp.push(sp);
+      }
+      for (let i = 0; i < goldFlagSp.length; i++) {
+        const sp = goldFlagSp[i]!;
+        const m = goldMines[i];
+        if (!m) { sp.visible = false; continue; }
+        const tex = m.owner === 0 ? goldFlagTex[0] : m.owner === 1 ? goldFlagTex[1] : undefined;
+        const px = sx(m.x);
+        const py = sy(m.y);
+        if (tex) {
+          sp.visible = true;
+          if (sp.texture !== tex) sp.texture = tex;
+          sp.scale.set(TILE * 1.6 / tex.width);
+          sp.rotation = curMap.vertical ? Math.PI / 2 : 0;
+          // 갱 바로 위에 꽂는다 — 세로 맵이면 화면 위쪽이 월드 +x 다
+          sp.x = curMap.vertical ? px + 26 : px;
+          sp.y = curMap.vertical ? py : py - 26;
+        } else {
+          sp.visible = false;
+        }
+        // 점령 진행 고리 — 미는 쪽 색으로 차오른다
+        if (m.hold !== 0) {
+          const t = Math.min(1, Math.abs(m.hold));
+          const col = m.hold > 0 ? 0x6fd8ff : 0xff6a57;
+          const rr = TILE * 1.5;
+          fx.ellipse(px, py, rr, curMap.vertical ? rr : rr * 0.5)
+            .stroke({ color: col, width: 2, alpha: 0.35 });
+          const steps = Math.max(1, Math.round(t * 28));
+          for (let k = 0; k < steps; k++) {
+            const a = -Math.PI / 2 + (k / 28) * Math.PI * 2;
+            const ax = px + Math.cos(a) * rr;
+            const ay = py + Math.sin(a) * rr * (curMap.vertical ? 1 : 0.5);
+            fx.circle(ax, ay, 2.2).fill({ color: col, alpha: 0.95 });
+          }
+        }
+      }
+    } else {
+      for (const sp of goldFlagSp) sp.visible = false;
+    }
     // ── 임팩트 링 (220ms) ──
     for (let i = impacts.length - 1; i >= 0; i--) {
       const im = impacts[i]!;
@@ -4706,6 +4832,9 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
       return null;
     },
     quietRemove(id) { quietIds.add(id); },
+    setGoldMines(mines) {
+      goldMines = mines;
+    },
     setLaneWarnings(marks) {
       laneWarns = marks;
       while (warnLabels.length > (marks?.length ?? 0)) {

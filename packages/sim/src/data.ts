@@ -1118,9 +1118,19 @@ reg(D({
   id: 's_owl', race: 'sylvarin', name: '숲올빼미', tier: 'air',
   cost: 240, supply: 3, maxHp: 320, armor: 1, tags: ['leather', 'bio'], flying: true,
   speed: tilesPerSecond(3.3), radius: tiles(0.4), acquireRange: tiles(6),
-  // 발톱 (급습): 가죽 카운터 — 원거리 사격수에서 달려들어 할퀴는 근접으로 바꿨다.
-  // 활을 쏘던 시절엔 와이번의 하위 호환이었다. 이제는 체력으로 파고든다.
-  weapon: { damage: 26, bonus: { leather: 13 }, cooldown: seconds(1.2), range: tiles(0.6), targets: 'both' },
+  /*
+   * 관통 (기수의 활): 가죽 카운터 — 사거리 4.5.
+   *
+   * 한때 근접(0.6)으로 바꿔 「체력으로 파고드는」 급습 유닛으로 만들었는데,
+   * 그 순간 8 「태엽 공방」이 막혔다. 이 판의 지상 병력은 대부분 대공이 안 되고
+   * (봉제곰·태엽 거미·괘종시계·고어 테디·발레리나 전부 targets: 'ground'),
+   * 옛 올빼미는 그 무리 밖 4.5타일에 떠서 일방적으로 쪼는 것이 해법이었다.
+   * 0.6 은 그 해법을 지웠다 — 무리 한복판에 들어가야 하니 시계탑 톱니바퀴의
+   * 「자정의 종소리」(사거리 5.5·비행에도 걸린다)를 정통으로 맞는다. 이 시점엔
+   * 공포 해제 수단이 없어 판이 통째로 잠겼다. 사거리를 되돌린다.
+   * (체력 320 은 근접 시절에 올린 값 그대로 둔다)
+   */
+  weapon: { damage: 26, bonus: { leather: 13 }, cooldown: seconds(1.2), range: tiles(4.5), targets: 'both' },
 }));
 reg(D({
   id: 's_butterfly', race: 'sylvarin', name: '거대 나비', tier: 'air',

@@ -943,6 +943,14 @@ export interface GameEvent {
   readonly team?: TeamId;
   readonly slot?: number;
   readonly winner?: TeamId;
+  /**
+   * guardianSpawn: 실제로 나온 수호자의 defId.
+   *
+   * 캠페인은 스테이지마다 적 수호자를 갈아 끼운다(enemyGuardian) — 2막은
+   * 「특제 대형 곰인형」이다. 팀 번호로 이름을 찍으면 곰인형이 나왔는데
+   * 「슬리피 할로우 등장」이라고 뜬다.
+   */
+  readonly defId?: string;
   /** boneRevive: 되살아난 자리 (FP). */
   readonly x?: number;
   readonly y?: number;

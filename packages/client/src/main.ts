@@ -763,6 +763,8 @@ let villageWave = -1;
 let villageWarned = false;
 /** 등장한 쿠르가의 엔티티 id (-1 = 아직). */
 let villageBossId = -1;
+/** 직전 프레임의 남은 집 수 — 하나 무너질 때마다 적 목표를 다시 겨눈다. */
+let villageHousesSeen = -1;
 
 /**
  * 「turn 턴에」 어느 숲길이 열리는가.
@@ -813,6 +815,87 @@ function applyVillageWarnings(vg: NonNullable<CampaignStage['village']>, turn: n
   }));
 }
 
+/** 이 숲길에 설정된 목표 (없으면 null). */
+function villageLaneGoal(vg: NonNullable<CampaignStage['village']>, i: number): { x: number; y: number } | null {
+  const lane = vg.lanes[i];
+  if (!game || !lane || lane.goalXTile === undefined || lane.goalYOffTile === undefined) return null;
+  const x = Math.floor(lane.goalXTile * FP);
+  return { x, y: laneCenterY(game.map, x) + Math.floor(lane.goalYOffTile * FP) };
+}
+
+/**
+ * 이 숲길이 노리는 집이 아직 남아 있는가.
+ *
+ * 집은 「목표가 가장 가까운 숲길」에 딸린다 — 지금 배치로는 서(11시)가 집A·집C,
+ * 동(1시)이 집B·집D 다. 집을 옮기면 자동으로 다시 갈린다.
+ */
+function villageLaneHasPrey(vg: NonNullable<CampaignStage['village']>, i: number): boolean {
+  if (!game) return false;
+  const goals = vg.lanes.map((_, k) => villageLaneGoal(vg, k));
+  if (!goals[i]) return false;
+  for (const h of vg.houses) {
+    const ent = game.entities.find((e) => e.alive && e.defId === h.defId);
+    if (!ent) continue;
+    let best = -1;
+    let bestD = Infinity;
+    for (let k = 0; k < goals.length; k++) {
+      const q = goals[k];
+      if (!q) continue;
+      const dx = ent.x - q.x;
+      const dy = ent.y - q.y;
+      const d = dx * dx + dy * dy;
+      if (d < bestD) { bestD = d; best = k; }
+    }
+    if (best === i) return true;
+  }
+  return false;
+}
+
+/**
+ * 숲길이 「지금」 노려야 할 곳.
+ *
+ * 6시 길이 두 갈래라 숲길마다 다른 쪽을 물려 놨는데, 그쪽 집이 다 무너지면
+ * 원래 목표는 부술 것 없는 막다른 길이 된다 — 적이 거기 쌓이기만 하고,
+ * 플레이어는 그 숲길을 통째로 무시해도 아무 손해가 없는 꼼수가 생겼다.
+ * 자기 쪽에 남은 집이 없으면 아직 집이 서 있는 길목으로 넘어가고,
+ * 집이 하나도 없으면 주민이 빠지는 6시 길로 간다.
+ */
+function villageGoalNow(vg: NonNullable<CampaignStage['village']>, i: number): { x: number; y: number } | null {
+  const own = villageLaneGoal(vg, i);
+  if (!own || !game) return own;
+  if (villageLaneHasPrey(vg, i)) return own;
+  for (let k = 0; k < vg.lanes.length; k++) {
+    if (k === i || !villageLaneHasPrey(vg, k)) continue;
+    const alt = villageLaneGoal(vg, k);
+    if (alt) return alt;
+  }
+  const fx = Math.floor(vg.fleeXTile * FP);
+  return { x: fx, y: laneCenterY(game.map, fx) + Math.floor(vg.fleeYOffTile * FP) };
+}
+
+/**
+ * 이미 나와 있는 적도 목표를 바꾼다.
+ *
+ * 출정할 때 찍힌 목표를 그대로 두면, 집이 무너진 뒤에도 이미 나온 부대는
+ * 막다른 길에 그대로 쌓여 있다 — 집이 하나 무너질 때마다 다시 겨눈다.
+ */
+function retargetVillageEnemies(vg: NonNullable<CampaignStage['village']>): void {
+  if (!game) return;
+  const own = vg.lanes.map((_, i) => villageLaneGoal(vg, i));
+  const now = vg.lanes.map((_, i) => villageGoalNow(vg, i));
+  for (const e of game.entities) {
+    if (!e.alive || e.team !== 1 || e.goalX < 0) continue;
+    for (let i = 0; i < own.length; i++) {
+      const o = own[i];
+      const f = now[i];
+      if (!o || !f || e.goalX !== o.x || e.goalY !== o.y) continue;
+      e.goalX = f.x;
+      e.goalY = f.y;
+      break;
+    }
+  }
+}
+
 function applyVillageLanes(vg: NonNullable<CampaignStage['village']>, turn: number): void {
   if (!game) return;
   const open = villageLanesFor(vg, turn);
@@ -823,11 +906,12 @@ function applyVillageLanes(vg: NonNullable<CampaignStage['village']>, turn: numb
     const c = camp as { x: number; y: number; goalX?: number | undefined; goalY?: number | undefined };
     c.x = lx;
     c.y = laneCenterY(game.map, lx) + Math.floor((lane.yOffTile + stack) * FP);
-    // 이 길로 나오는 부대가 노릴 곳 (출정하는 순간 유닛에 찍힌다)
-    if (lane.goalXTile !== undefined && lane.goalYOffTile !== undefined) {
-      const gx = Math.floor(lane.goalXTile * FP);
-      c.goalX = gx;
-      c.goalY = laneCenterY(game.map, gx) + Math.floor(lane.goalYOffTile * FP);
+    // 이 길로 나오는 부대가 노릴 곳 (출정하는 순간 유닛에 찍힌다).
+    // 자기 쪽 집이 다 무너졌으면 아직 집이 선 길목으로 넘어간다 — villageGoalNow.
+    const goal = villageGoalNow(vg, open[camp.slot % open.length]!);
+    if (goal) {
+      c.goalX = goal.x;
+      c.goalY = goal.y;
     } else {
       c.goalX = undefined;
       c.goalY = undefined;
@@ -2109,6 +2193,7 @@ async function startCampaignStage(st: CampaignStage): Promise<void> {
   villageWave = -1;
   villageWarned = false;
   villageBossId = -1;
+  villageHousesSeen = -1;
   // 마을 방어전이 아니면 적 진입 예고는 지운다 (판을 옮겨도 남아 있으면 안 된다)
   renderer?.setLaneWarnings(null);
   if (st.village && game) {
@@ -3257,7 +3342,12 @@ function consumeEvents(g: Game): void {
       showToast(`💥 ${ev.team! + 1}팀 수호탑 파괴 — ${winners + 1}팀 전원 +${MAP.TOWER_BOUNTY}원!`);
       audio.play('tower_down', { volume: 0.9 });
     } else if (ev.kind === 'guardianSpawn') {
-      showToast(`🛡 ${ev.team! + 1}팀 수호자 ${ev.team === 0 ? '드래곤' : '슬리피 할로우'} 등장! (대공 유닛만 공격 가능)`);
+      // 이름·경고문은 실제로 나온 수호자에서 읽는다 — 캠페인은 스테이지마다
+      // 다른 수호자가 나오고(2막 = 특제 대형 곰인형), 그 곰인형은 지상이다.
+      const gd = ev.defId !== undefined ? DEFS[ev.defId] : undefined;
+      const gName = gd?.name ?? (ev.team === 0 ? '드래곤' : '슬리피 할로우');
+      const gNote = (gd?.flying ?? true) ? ' (대공 유닛만 공격 가능)' : '';
+      showToast(`🛡 ${ev.team! + 1}팀 수호자 ${gName} 등장!${gNote}`);
       audio.play('cast_skill', { volume: 1 });
     } else if (ev.kind === 'boneRevive') {
       // 뼈 무덤이 부화하는 순간 — 굉음이 울려퍼진다
@@ -3976,12 +4066,11 @@ function tick(deltaMS: number): void {
           const bx = Math.floor(vg.lanes[0]!.xTile * FP);
           const by = laneCenterY(game.map, bx) + Math.floor(vg.lanes[0]!.yOffTile * FP);
           const kurga = spawnUnit(game, vg.bossDefId, 1, bx, by);
-          // 쿠르가도 그 숲길이 노리는 곳으로 내려간다 (한복판에 눌러앉지 않는다)
-          const bl = vg.lanes[0]!;
-          if (bl.goalXTile !== undefined && bl.goalYOffTile !== undefined) {
-            const gx = Math.floor(bl.goalXTile * FP);
-            kurga.goalX = gx;
-            kurga.goalY = laneCenterY(game.map, gx) + Math.floor(bl.goalYOffTile * FP);
+          // 쿠르가도 그 숲길이 「지금」 노리는 곳으로 내려간다 (한복판에 눌러앉지 않는다)
+          const bg = villageGoalNow(vg, 0);
+          if (bg) {
+            kurga.goalX = bg.x;
+            kurga.goalY = bg.y;
           }
           villageBossId = kurga.id;
           campaignAlertText = '⚔ 리치 쿠르가가 마을로 내려온다!';
@@ -4031,6 +4120,11 @@ function tick(deltaMS: number): void {
       }
       const housesLeft = game.entities.filter(
         (e) => e.alive && e.defId.startsWith('c_village_')).length;
+      // 집이 하나 무너지면 그 길목은 값어치를 잃는다 — 적을 즉시 다시 겨눈다
+      if (housesLeft !== villageHousesSeen) {
+        villageHousesSeen = housesLeft;
+        retargetVillageEnemies(vg);
+      }
       if (housesLeft === 0) {
         campaignFinish(false, '마을이 전부 불탔다');
         return;
@@ -4057,7 +4151,7 @@ function tick(deltaMS: number): void {
     if (campaign.mission === 'survive' && campaign.surviveSec !== undefined) {
       const left = campaign.surviveSec - Math.floor(game.tick / TICK_HZ);
       /*
-       * 마을 방어전은 시간이 다 돼도 이기지 않는다 — 30턴은 「쿠르가가 나오는 때」일
+       * 마을 방어전은 시간이 다 돼도 이기지 않는다 — bossWave 는 「쿠르가가 나오는 때」일
        * 뿐이고, 그를 쓰러뜨려야 끝난다. 이 판정을 막지 않으면 보스가 나오는 순간
        * 승리 처리가 먼저 나가 버린다.
        */

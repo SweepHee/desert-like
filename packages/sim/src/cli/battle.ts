@@ -67,7 +67,7 @@ while (!g.over && g.tick < MAX_TICKS) {
   for (const ev of g.events) {
     if (ev.kind === 'wave') console.log(`[${fmt(ev.tick)}] ${ev.slot! + 1}번 유저들 출정 (전장 유닛 ${g.entities.filter((e) => e.alive).length}개)`);
     if (ev.kind === 'towerDown') console.log(`[${fmt(ev.tick)}] *** ${ev.team! + 1}팀 수호탑 파괴!`);
-    if (ev.kind === 'guardianSpawn') console.log(`[${fmt(ev.tick)}] >>> ${ev.team! + 1}팀 수호자(${ev.team === 0 ? '드래곤' : '슬리피 할로우'}) 젠`);
+    if (ev.kind === 'guardianSpawn') console.log(`[${fmt(ev.tick)}] >>> ${ev.team! + 1}팀 수호자(${ev.defId ? DEFS[ev.defId]?.name ?? ev.defId : ev.team === 0 ? '드래곤' : '슬리피 할로우'}) 젠`);
     if (ev.kind === 'guardianDown') console.log(`[${fmt(ev.tick)}] xxx ${ev.team! + 1}팀 수호자 사망`);
   }
   // 넥서스 체력 10% 단위 리포트

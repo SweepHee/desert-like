@@ -419,9 +419,12 @@ const U4 = [...U3, 's_druid', 's_mushroom_bomber'];
 // 덩굴 사냥꾼은 4(독이 스민 숲) 클리어 보상 — 늪 건너편에 갇혀 있던 에메랄드 숲 사람들이 합류한다
 const U5 = [...U4, 's_vine_hunter', 's_owl', 's_butterfly'];
 const U8 = [...U5, 's_thorn_witch'];
-const U11 = [...U8, 's_treekeeper', 's_wyvern', 's_unicorn', 's_fairy'];
-const U13 = [...U11, 's_marksman'];
-const U14 = [...U13, 's_apostle', 's_treant'];
+const U11 = [...U8, 's_wyvern', 's_unicorn', 's_fairy'];
+// 나무지기는 13 「세계수 뿌리 탈환」에서 합류한다 — 뿌리를 지키던 이들이라
+// 뿌리 지대에 들어서야 깨어난다. (한동안 11부터 살 수 있게 잘못 열려 있었다)
+const U13 = [...U11, 's_treekeeper'];
+// 숲의 명궁은 13 을 클리어해야 상시 해금 — 13 안에서는 에버그린이 데려올 때만 풀린다
+const U14 = [...U13, 's_marksman', 's_apostle', 's_treant'];
 const U17 = [...U14, 's_sage'];
 
 const seedOf = (id: number): number => (id * 7919 + 3) | 0;
@@ -658,10 +661,10 @@ export const SYLVARIN_CAMPAIGN: readonly CampaignStage[] = [
   },
   {
     id: 6, act: 1, title: '자정의 마을',
-    goal: '30턴을 버티고 쿠르가를 쓰러뜨려라 — 주민을 6시 길로 대피시켜라',
+    goal: '18턴을 버티고 쿠르가를 쓰러뜨려라 — 주민을 6시 길로 대피시켜라',
     allowedUnits: U5, enemies: ['pandemonium', 'pandemonium'], allies: [], botDifficulty: 'normal',
-    // 30턴 = 1800초. 시간만 버텨서는 이기지 못한다 — village.bossWave 참고.
-    mission: 'survive', surviveSec: 1800, seed: seedOf(6), noTowers: true,
+    // 18턴 = 1080초. 시간만 버텨서는 이기지 못한다 — village.bossWave 참고.
+    mission: 'survive', surviveSec: 1080, seed: seedOf(6), noTowers: true,
     mapId: 'village', noNexus: true,
     incomeCap: 5, techCap: 2,
     /*
@@ -674,8 +677,12 @@ export const SYLVARIN_CAMPAIGN: readonly CampaignStage[] = [
      * 「이번 턴에 어느 길이 열리는가」는 main.ts 가 매 턴 이 자리를 옮겨 정한다.
      * (x/y 는 형식상 초기값 — 실제 값은 village.lanes 에서 온다)
      *
-     * waveMoney: 4턴부터 매 턴 얹어 주는 자금. 15턴부터는 「인컴 두 배」에
-     * 해당하는 값으로 뛴다 (인컴 5단계 = 70/5초 = 840/턴).
+     * waveMoney: 4턴부터 매 턴 얹어 주는 자금.
+     *
+     * 예전엔 15턴부터 거점당 +850 (인컴 두 배에 해당) 으로 뛰었는데, 하필
+     * 「양쪽 상시 출정」이 열리는 턴과 같아 두 축이 겹쳤다 — 15턴에 전선이
+     * 둘로 늘면서 물량까지 5.7배가 되니 그 한 턴에 판이 무너졌다. 도약은
+     * 걷어내고 +150 하나로 간다.
      * forcedGrowth 는 쓰지 않는다 — 편성(comp)은 매 턴 통째로 다시 나가므로
      * 확정 편입은 턴이 갈수록 제곱으로 불어난다 (실측: 12분에 465기).
      *
@@ -685,14 +692,14 @@ export const SYLVARIN_CAMPAIGN: readonly CampaignStage[] = [
      */
     enemyCamps: [
       { slot: 0, x: 47.5 * 1000, y: -18.5 * 1000,
-        waveMoney: [{ fromWave: 4, amount: 150 }, { fromWave: 15, amount: 850 }],
+        waveMoney: [{ fromWave: 4, amount: 150 }],
         phases: [
           { fromWave: 1, units: ['p_deadman', 'p_skeleton', 'p_hound', 'p_bone_thrower'] },
           { fromWave: 8, units: ['p_deadman', 'p_skeleton', 'p_hound', 'p_bone_thrower',
             'p_lich', 'p_headless_knight', 'p_summoner', 'p_wraith'] },
         ] },
       { slot: 1, x: 10.0 * 1000, y: -18.5 * 1000,
-        waveMoney: [{ fromWave: 4, amount: 150 }, { fromWave: 15, amount: 850 }],
+        waveMoney: [{ fromWave: 4, amount: 150 }],
         phases: [
           { fromWave: 1, units: ['p_deadman', 'p_skeleton', 'p_hound', 'p_bone_thrower'] },
           { fromWave: 8, units: ['p_deadman', 'p_skeleton', 'p_hound', 'p_bone_thrower',
@@ -752,9 +759,9 @@ export const SYLVARIN_CAMPAIGN: readonly CampaignStage[] = [
         { xTile: 36.0, yOffTile: 15.0, label: '6시 길목' },
       ],
       rallyRadiusTiles: 4.0,
-      bossWave: 30,
+      bossWave: 18,
       bossDefId: 'c_kurga',
-      finalWave: 31,
+      finalWave: 19,
       winDialogue: [
         { who: '카엘', text: '…쓰러졌습니다. 쿠르가가.' },
         { who: '티아', text: '행렬은요? 마지막 한 사람까지 6시 길로 내려갔어요. 아무도 안 남았어요.' },
@@ -908,6 +915,11 @@ export const SYLVARIN_CAMPAIGN: readonly CampaignStage[] = [
     outro: [
       { who: '앨리스', text: '…재밌네, 숲지기. 300년 만에 재밌어.' },
       { who: '엘로윈', text: '(300년…? 이 여왕, 대체—)' },
+      { who: '앨리스', text: '길은 열어 줄게. 동맹은 아직 아니고 — 인형은 거래를 하지, 약속은 안 하니까.' },
+      { who: '카엘', text: '발타르의 성으로 가는 길만 알려 주십시오.' },
+      { who: '앨리스', text: '내 나라 서쪽 끝, 탐욕의 계곡. 그 협곡만 빠져나가면 뼈다귀의 뒷마당이야.' },
+      { who: '앨리스', text: '…아, 계곡엔 장사꾼이 하나 살아. 마몬. 돈만 내면 누구에게든 팔지 — 너희에게도.' },
+      { who: '브리아', text: '누구에게든? 그럼 저쪽에도 이미 팔았겠네.' },
     ],
   },
   {
@@ -927,6 +939,9 @@ export const SYLVARIN_CAMPAIGN: readonly CampaignStage[] = [
     growth: [{ defId: 'p_demilich', label: '데미리치 요격수', fromWave: 5 }],
     deadlineWave: 60,
     briefing: [
+      { who: '', text: '인형 왕국 서쪽 끝. 태엽 소리가 멎은 자리에 동전 세는 소리가 들려왔다.\n좁은 협곡 한복판에 천막 하나 — 그 앞엔 실바린의 방패와 판데모니엄의 뼈창이 나란히 걸려 있었다.' },
+      { who: '카엘', text: '…발타르의 군세가 왜 계곡 안쪽까지 들어와 있죠? 여긴 아직 인형의 나라인데.' },
+      { who: '마몬', text: '손님이 조금 먼저 왔을 뿐일세. 나는 국경을 안 따져 — 값만 따지지.' },
       { who: '마몬', text: '전쟁은 최고의 장사지! 실바린엔 방어구를, 발타르에겐 뼈를 팔았다네. 아 물론 너희들의 뼈를.' },
       { who: '브리아', text: '어머, 동종업계. 근데 나는 선은 안 넘어.' },
       { who: '마몬', text: '계곡 한복판에 내 상점이 있네. 먼저 깃발을 꽂는 쪽에게 팔지 — 기사, 리치, 타나토스, 전부 특별가일세!' },
@@ -934,6 +949,11 @@ export const SYLVARIN_CAMPAIGN: readonly CampaignStage[] = [
     ],
     outro: [
       { who: '카엘', text: '용병 장부를 손에 넣었습니다. …발타르가 사들인 게 뼈만이 아니에요. 「세계수 심장의 열쇠」?' },
+      { who: '엘로윈', text: '뒷장을 넘겨 봐라. …「북쪽 봉우리 — 바람의 둥지, 길 도면」. 마몬이 이것까지 팔았군.' },
+      { who: '카엘', text: '둥지라면… 옛 맹약의 그 둥지 말입니까?' },
+      { who: '엘로윈', text: '그래. 알이 깨어나기 직전이다. 발타르가 그걸 알고 선발대를 보냈다면, 노리는 건 하늘이다.' },
+      { who: '브리아', text: '계곡 안쪽은 이미 저것들 하늘이야. 그대로 밀고 들어가면 머리 위에서 그냥 쏟아붓겠지.' },
+      { who: '엘로윈', text: '계곡은 잠시 둔다. 먼저 봉우리다 — 하늘을 얻어야 계곡을 끝낸다.' },
     ],
   },
   {
@@ -1042,14 +1062,20 @@ export const SYLVARIN_CAMPAIGN: readonly CampaignStage[] = [
       { defId: 'c_wild_blackbird', label: '⚫ 검은새 — 하늘의 왕', atSec: 1800, atXTile: 5, yOffTile: -2, neutral: true },
     ],
     briefing: [
+      { who: '', img: '/assets/cutscenes/cs25_nest.png',
+        text: '계곡을 등지고 사흘을 올랐다. 구름이 발밑으로 내려가고, 바람이 이름을 부르듯 울었다.\n봉우리 꼭대기의 둥지에는 금이 간 알 하나가 희미하게 뛰고 있었다 — 그리고 산 아래에선, 이미 뼈들이 올라오고 있었다.' },
       { who: '엘로윈', text: '높은 봉우리의 옛 맹약을 깨울 때다. 와이번은 긍지가 높다 — 명령하지 말고 부탁해라.' },
-      { who: '카엘', text: '(와이번에게) …함께 날아 주겠어? (나무지기·와이번·유니콘·페어리 합류!)' },
+      { who: '카엘', text: '(와이번에게) …함께 날아 주겠어? (와이번·유니콘·페어리 합류!)' },
       { who: '티아', text: '둥지 입구에 수호수들이 자리를 잡았어요! 하지만 냄새를 맡고 온 게… 망자만이 아니에요.' },
       { who: '엘로윈', text: '세 갈래다. 능선의 망자, 골짜기의 야수, 그리고 발타르의 선발대. 알이 깨어날 때까지 — 둥지를 지켜라.' },
     ],
     outro: [
+      { who: '', text: '마지막 뼈가 무너진 자리에서, 금 간 껍질이 안쪽부터 갈라졌다.' },
       { who: '티아', text: '유니콘이 카엘을 태워줬어요! 유니콘은 아무나 안 태우는데!' },
       { who: '브리아', text: '어련하시겠어.' },
+      { who: '엘로윈', text: '맹약은 지켜졌다. 하늘은 다시 우리 것이다.' },
+      { who: '카엘', text: '그럼 돌아갑니다 — 계곡으로. 마몬에게 장부값을 받아야죠.' },
+      { who: '브리아', text: '이자까지 쳐서.' },
     ],
   },
   {
@@ -1073,8 +1099,14 @@ export const SYLVARIN_CAMPAIGN: readonly CampaignStage[] = [
       'p_hound', 'p_bone_thrower', 'p_headless_knight',
       'p_lich', 'p_corpse_golem', 'p_thanatos', 'p_wraith', 'p_banshee',
     ],
-    // 리치·타나토스·시체 골렘·밴시가 주력으로 쏟아진다 (x8 가중, 상한 없음)
+    // 리치·타나토스·시체 골렘·밴시가 주력으로 쏟아진다 (x8 가중)
     enemyPreferredUnits: ['p_banshee', 'p_lich', 'p_thanatos', 'p_corpse_golem'],
+    // 와이번 조합에 적 지상군이 일방적으로 녹아 판이 너무 쉬웠다 —
+    // 5턴부터 매 턴 밴시 1기를 확정 편입해 하늘을 다투게 한다.
+    // 편성은 누적이라 한 번 들어가면 이후 매 턴 그만큼 계속 출정한다.
+    growth: [{ defId: 'p_banshee', label: '밴시 증원', fromWave: 5 }],
+    // 팀 합산 15기 상한 — 봇 구매분까지 합쳐 세므로 후반에 하늘이 밴시로만 덮이진 않는다
+    enemyUnitCaps: { p_banshee: 15 },
     // 적 경제: 시작 1000원 + 인컴 52부터 (기본 30의 174% — 인컴업도 비례로 오른다)
     enemyStartMoney: 1000,
     enemyIncomePct: 174,
@@ -1107,7 +1139,7 @@ export const SYLVARIN_CAMPAIGN: readonly CampaignStage[] = [
     // 아군 봇을 두면 팀 인원(2명)으로 출정 로테이션이 돌아 내 부대가 한 턴 걸러
     // 나갔다 — 마차 곁을 계속 지켜야 하는 판에서 그 공백이 그대로 상실이 됐다.
     // 병력 보강은 엘로윈이 데려오는 부대와 출현 이벤트가 맡는다.
-    allowedUnits: U11, enemies: ['pandemonium', 'pandemonium'], allies: [], botDifficulty: 'normal',
+    allowedUnits: U13, enemies: ['pandemonium', 'pandemonium'], allies: [], botDifficulty: 'normal',
     /*
      * 편성 합치기 — 물량이 쌓이면 알아서 상위 유닛으로 접힌다.
      * 후반에 잡졸이 무한히 늘어 화면이 뒤덮이는 것을 막으면서 전투력은 올린다.
@@ -1346,6 +1378,7 @@ export const SYLVARIN_CAMPAIGN: readonly CampaignStage[] = [
       { who: '', img: '/assets/cutscenes/cs13_cart.png',
         text: '새벽, 생명수를 실은 마차가 숲의 문을 나섰다. 300년 만의 첫 반격이 — 이 낡은 바퀴 위에 실려 있다.' },
       { who: '엘로윈', text: '뿌리 마디마다 생명수를 부어 오염을 씻어야 한다 — 다섯 군데, 하나도 거를 수 없다.' },
+      { who: '엘로윈', text: '뿌리를 지키던 나무지기들이 깨어나 마차를 따라붙었다. 상점에서 바로 세울 수 있다. (나무지기 합류!)' },
       { who: '', img: '/assets/cutscenes/cs13_camp.png',
         text: '마디마다 옛 국경 수비대의 캠프가 남아 있다. 잿더미가 된 줄 알았던 그곳에서 — 모닥불이 하나둘 다시 타오르기 시작했다.' },
       { who: '티아', img: '', text: '마차가 마디에 서 있는 동안 제가 의식을 올릴게요. 1분이면 돼요. 근처에 부대가 함께 있어야 해요!' },

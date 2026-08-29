@@ -556,6 +556,29 @@ function nudgeOntoPath(g: Game, e: Entity): void {
   else e.y = cy;
 }
 
+/**
+ * 두 점 사이가 마스크상 「직선으로 걸어서」 이어지는가 (거친 샘플).
+ *
+ * 정밀한 시야 판정이 아니라 「이대로 밀어붙이면 벽에 낀다」만 걸러낸다.
+ * moveToward 의 벽 미끄러짐은 한 틱 이동거리의 4배까지만 옆을 훑으므로,
+ * 몇 타일 떨어진 우회로(다리·길목)는 못 찾는다 — 그건 흐름장의 몫이다.
+ *
+ * 결정론: 정수 나눗셈 샘플 + 고정 개수.
+ */
+function walkLineClear(m: Game['map'], x0: number, y0: number, x1: number, y1: number): boolean {
+  if (!m.mask) return true;
+  const dx = x1 - x0;
+  const dy = y1 - y0;
+  const len = isqrt(dx * dx + dy * dy);
+  if (len <= 0) return true;
+  // 마스크 칸보다 촘촘하게, 다만 24 샘플을 넘지 않게 (추격 사거리는 길어야 8타일)
+  let n = idiv(len, tiles(4) / 10) + 1;
+  if (n > 24) n = 24;
+  for (let i = 1; i < n; i++) {
+    if (!isWalkable(m, x0 + idiv(dx * i, n), y0 + idiv(dy * i, n))) return false;
+  }
+  return true;
+}
 function moveToward(
   g: Game, e: Entity, d: EntityDef, tx: number, ty: number, slowed: boolean,
   /** 추가 이속 보정(%) — 고립 도주처럼 이 이동에만 붙는 값. */
@@ -1190,7 +1213,7 @@ function spawnGuardian(g: Game, team: TeamId, x: number, y: number): void {
   // 캠페인 테마 보스: 적 팀 수호자를 스테이지가 지정한 것으로 교체할 수 있다
   const defId = team === 1 && g.enemyGuardian ? g.enemyGuardian : GUARDIAN_OF[team];
   spawnBattleEntity(g, defId, team, -1, x, y);
-  g.events.push({ tick: g.tick, kind: 'guardianSpawn', team });
+  g.events.push({ tick: g.tick, kind: 'guardianSpawn', team, defId });
 }
 
 // ── 디멘터 「오라」 ────────────────────────────────────────────────────────
@@ -1792,10 +1815,18 @@ export function stepCombat(g: Game): void {
     if (target && target.alive && d.weapon) {
       const td = def(target);
       const reach = rangeOf(g, e, d) + d.radius + td.radius;
-      if (dist2(e.x, e.y, target.x, target.y) > reach * reach) {
+      if (dist2(e.x, e.y, target.x, target.y) <= reach * reach) continue; // 사거리 안 — 제자리에서 쏜다
+      /*
+       * 마스크 지형에서는 「보이는 적」이 「갈 수 있는 적」이 아니다.
+       * 13 「세계수 뿌리 탈환」의 x17 개울(폭 1타일, 건널 곳은 남쪽 다리 하나)
+       * 건너편 적이 사거리 밖에서 보이면, 부대가 물가로 직진해 줄줄이 굳었다.
+       * 사이가 막혔으면 추격을 접고 아래 진군(흐름장)에 맡긴다 — 다리를 건너
+       * 다시 보이면 그때 문다.
+       */
+      if (!blockedByTerrain(g, d) || walkLineClear(g.map, e.x, e.y, target.x, target.y)) {
         moveToward(g, e, d, target.x, target.y, slowed);
+        continue;
       }
-      continue;
     }
 
     if (d.leashed) {

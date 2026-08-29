@@ -3293,10 +3293,13 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
         const bw = sp.width * 0.66;
         const bh = sp.height * 0.6;
         const bcy = py - sp.height * 0.45;
-        fx.ellipse(px, bcy, bw, bh).fill({ color: 0x8fd8ff, alpha: 0.1 + pulse * 0.09 });
-        fx.ellipse(px, bcy, bw, bh).stroke({ color: 0xbfeaff, width: 2, alpha: 0.45 + pulse * 0.45 });
-        fx.ellipse(px, shadowY, 13, 5.5).stroke({ color: 0x8fd8ff, width: 2, alpha: 0.55 + pulse * 0.35 });
-        fx.ellipse(px, shadowY, 9, 3.8).stroke({ color: 0xfff2c8, width: 1, alpha: 0.35 + pulse * 0.3 });
+        // 몸을 덮던 하늘빛 채움은 뺐다 — 축복받은 부대가 뭉치면 방패가 겹쳐
+        // 한 덩어리 파란 얼룩이 되어 어느 유닛이 어느 유닛인지 안 보였다.
+        // 몸에 남는 건 가는 윤곽선 하나뿐이고, 「누가 축복받았나」는 스프라이트를
+        // 가리지 않는 발밑 이중 링이 맡는다.
+        fx.ellipse(px, bcy, bw, bh).stroke({ color: 0xbfeaff, width: 1, alpha: 0.14 + pulse * 0.13 });
+        fx.ellipse(px, shadowY, 13, 5.5).stroke({ color: 0x8fd8ff, width: 2, alpha: 0.5 + pulse * 0.32 });
+        fx.ellipse(px, shadowY, 9, 3.8).stroke({ color: 0xfff2c8, width: 1, alpha: 0.32 + pulse * 0.28 });
         // 방패를 타고 천천히 떠오르는 빛 알갱이 2개 (개체마다 위상이 어긋난다)
         for (let k = 0; k < 2; k++) {
           const ph = ((now * 0.0009 + e.id * 0.37 + k * 0.5) % 1);

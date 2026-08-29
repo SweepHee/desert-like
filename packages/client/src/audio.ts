@@ -44,6 +44,9 @@ const SFX: Record<string, readonly string[]> = {
   cast_skill: ['/assets/sfx/cast_skill1.mp3'],
   // 마법 속성별 시전음 — render 가 스킬의 fxZone/kind 로 고른다
   cast_fire: ['/assets/sfx/cast_fire1.mp3'],
+  // 엘로윈 「메테오 스트라이크」 — 대기권을 찢는 낙하 예고와 대형 착탄음
+  cast_meteor: ['/assets/sfx/cast_meteor1.mp3'],
+  meteor_impact: ['/assets/sfx/meteor_impact1.mp3', '/assets/sfx/meteor_impact2.mp3'],
   cast_ice: ['/assets/sfx/cast_ice1.mp3'],
   cast_quake: ['/assets/sfx/cast_quake1.mp3'],
   // 도약 강습 — 뛰어오르는 바람소리 + 흙바닥에 꽂히는 둔탁한 착지

@@ -1396,6 +1396,9 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
       if (t) zoneTex.set(kind, t);
     }),
   );
+  // 메테오는 일반 장판과 달리 대형 낙하체와 전용 착탄 데칼을 따로 쓴다.
+  const meteorTex = await loadTex('/assets/fx/fx_meteor_large.png');
+  const meteorZoneTex = await loadTex('/assets/fx/zone_meteor.png');
   // 스킬 시전 이펙트 그림 — 시전 위치에 잠깐 떴다 커지며 사라진다
   const castFxTex = new Map<string, Texture>();
   await Promise.all(
@@ -1454,6 +1457,8 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
   /** 시체 연출 없이 지울 유닛 id (대피한 주민). */
   const quietIds = new Set<number>();
   const units = new Container();
+  // 하늘에서 떨어지는 운석은 유닛보다 위, 섬광·UI보다 아래에 그린다.
+  const meteorLayer = new Container();
   units.sortableChildren = true;
   /** 맵 경계 장식 (렌더 전용 — 심 엔티티가 아니라 밸런스 영향 없음). */
   let mapDecos: Sprite[] = [];
@@ -1574,7 +1579,7 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
   const bars = new Graphics();
   world.addChild(
     groundTiles, scorchedTiles, groundProps, ground,
-    zonesGr, zoneLayer, shadows, corpseLayer, units, fx, projLayer, bars,
+    zonesGr, zoneLayer, shadows, corpseLayer, units, meteorLayer, fx, projLayer, bars,
     cloudLayer, // 구름은 모든 것 위로 흐른다 (반투명)
   );
   app.stage.addChild(world);
@@ -2210,6 +2215,10 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
   const spriteTeam = new Map<number, 0 | 1 | 2>();
   const charmedIds = new Set<number>();
   const zoneSprites = new Map<number, { sp: Sprite; born: number }>();
+  const meteorCraterSprites = new Map<number, { sp: Sprite; born: number }>();
+  const meteorSprites = new Map<string, Sprite>();
+  /** true=직전 프레임에 낙하 중. true→false 전환이 실제 착탄 순간이다. */
+  const meteorWasFalling = new Map<string, boolean>();
   const prevPos = new Map<number, { x: number; y: number }>();
   /** 보급 마차 이동 추적 (캠페인 레이어가 심 밖에서 움직여서 별도 추적). */
   const cartMotion = new Map<number, { x: number; until: number }>();
@@ -2296,8 +2305,7 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
     if (a?.kind === 'critAura') return 'cast_bless';
     if (a?.kind === 'slowFoe' || a?.kind === 'timelock') return 'cast_ice';
     if (a?.kind === 'burrow') return 'cast_quake';
-    // 메테오는 불 계열 시전 모션을 그대로 쓴다 (전용 모션이 생기면 갈아 끼운다)
-    if (a?.kind === 'meteor') return 'cast_fire';
+    if (a?.kind === 'meteor') return 'cast_meteor';
     if (z === 'blaze' || z === 'hellfire' || z === 'fireburst') return 'cast_fire';
     if (z === 'frost' || a?.kind === 'freeze') return 'cast_ice';
     if (z === 'quake' || a?.kind === 'slowfield') return 'cast_quake';
@@ -2597,6 +2605,8 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
     // ── 장판 ──
     zonesGr.clear();
     const zoneSeen = new Set<number>();
+    const meteorZoneSeen = new Set<number>();
+    const meteorSpriteSeen = new Set<string>();
     for (const z of g.zones) {
       /*
        * 지형 해저드(진흙길·덩굴길)는 그림을 그리지 않는다.
@@ -2637,35 +2647,103 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
         /** 「화면 가로」로 d 픽셀 (불꼬리를 살짝 비껴 그린다). */
         const side = (bx: number, by: number, d: number): [number, number] =>
           (vert ? [bx, by + d] : [bx + d, by]);
-        zonesGr.ellipse(cx, cy, vert ? r : r, vert ? r : r * sq).fill({ color: 0x3a1c10, alpha: 0.3 * fade });
-        zonesGr.ellipse(cx, cy, r, r * sq).stroke({ color: 0xff5a2e, width: 2, alpha: 0.5 * fade });
-        const COUNT = 14; // 최소 10개 이상이 늘 하늘에 떠 있도록
+        meteorZoneSeen.add(z.id);
+        // 픽셀랩 착탄 데칼: 룬 경고진 + 검게 탄 바닥 + 중심부 용암 균열.
+        if (meteorZoneTex) {
+          let mz = meteorCraterSprites.get(z.id);
+          if (!mz) {
+            const sp = new Sprite(meteorZoneTex);
+            sp.anchor.set(0.5);
+            mz = { sp, born: now };
+            meteorCraterSprites.set(z.id, mz);
+            zoneLayer.addChild(sp);
+          }
+          const age = now - mz.born;
+          const appear = Math.min(1, age / 260);
+          const scale = (r * 2.25) / meteorZoneTex.width;
+          mz.sp.x = cx;
+          mz.sp.y = cy;
+          // 세로 맵에서는 월드 회전을 되감아 룬 문양이 눕지 않게 한다.
+          mz.sp.rotation = vert ? Math.PI / 2 : 0;
+          mz.sp.scale.set(scale * appear, scale * (vert ? 1 : 0.9) * appear);
+          mz.sp.alpha = fade * (0.72 + 0.18 * pulse);
+        }
+        // 데칼 아래에 깔리는 넓은 위험 범위와 맥동하는 외곽 경고선.
+        zonesGr.ellipse(cx, cy, r, r * sq).fill({ color: 0x210907, alpha: 0.24 * fade });
+        zonesGr.ellipse(cx, cy, r * (0.96 + pulse * 0.04), r * sq * (0.96 + pulse * 0.04))
+          .stroke({ color: 0xff3d18, width: 3.2, alpha: 0.62 * fade });
+        zonesGr.ellipse(cx, cy, r * 0.74, r * sq * 0.74)
+          .stroke({ color: 0xffb13b, width: 1.6, alpha: 0.42 * pulse * fade });
+
+        // 작은 불티 14개 대신, 화면을 가르는 큼지막한 운석 7개를 쏟아 붓는다.
+        const COUNT = 7;
         for (let k = 0; k < COUNT; k++) {
           const ang = rnd(k * 4) * Math.PI * 2;
           const rad = Math.sqrt(rnd(k * 4 + 1)) * r;
           const tx = cx + Math.cos(ang) * rad;
           const ty = cy + Math.sin(ang) * rad * sq;
-          const period = 700 + rnd(k * 4 + 2) * 650;
+          const period = 920 + rnd(k * 4 + 2) * 760;
           const t = (((now + rnd(k * 4 + 3) * period) % period) / period);
-          if (t < 0.62) {
-            // 낙하 — 화면 위에서 착탄점으로 내리꽂힌다 (뒤로 불꼬리)
-            const p = t / 0.62;
-            const [mx, my] = up(tx, ty, (1 - p) * (r * 1.5 + 90));
-            const size = 2.6 + 2.4 * p;
-            const [tlx0, tly0] = up(mx, my, 22);
-            const [tlx, tly] = side(tlx0, tly0, -5);
-            zonesGr.moveTo(tlx, tly)
-              .lineTo(mx, my)
-              .stroke({ color: 0xffb45a, width: 2.2, alpha: 0.55 * fade });
-            fx.circle(mx, my, size).fill({ color: 0xff7a2e, alpha: 0.95 * fade });
-            const [hx0, hy0] = up(mx, my, 0.8);
-            const [hx, hy] = side(hx0, hy0, -0.8);
-            fx.circle(hx, hy, size * 0.5).fill({ color: 0xffe9a8, alpha: 0.9 * fade });
-          } else if (t < 0.82) {
-            // 착탄 — 짧게 번지는 충격 고리
-            const p = (t - 0.62) / 0.2;
-            fx.ellipse(tx, ty, 4 + 22 * p, (4 + 22 * p) * sq)
-              .stroke({ color: 0xffc46a, width: 2.5 * (1 - p), alpha: 0.85 * (1 - p) * fade });
+          const key = `${z.id}:${k}`;
+          const falling = t < 0.66;
+          const wasFalling = meteorWasFalling.get(key);
+          meteorWasFalling.set(key, falling);
+          if (falling) {
+            // 낙하 — 큰 스프라이트가 멀리서는 작고, 착탄 직전에는 화면을 덮을 만큼 커진다.
+            const p = t / 0.66;
+            const eased = p * p * (3 - 2 * p);
+            const [mx, my] = up(tx, ty, (1 - eased) * (r * 1.75 + 150));
+            const [mx2, my2] = side(mx, my, (1 - p) * -22);
+            if (meteorTex) {
+              meteorSpriteSeen.add(key);
+              let sp = meteorSprites.get(key);
+              if (!sp) {
+                sp = new Sprite(meteorTex);
+                sp.anchor.set(0.5);
+                meteorSprites.set(key, sp);
+                meteorLayer.addChild(sp);
+              }
+              const pxSize = (k === 0 ? 76 : 46 + rnd(k * 9 + 5) * 24) * (0.55 + eased * 0.75);
+              const sc = pxSize / meteorTex.width;
+              sp.visible = true;
+              sp.x = mx2;
+              sp.y = my2;
+              // 원본은 ↘ 방향. 화면 아래로 꽂히도록 회전하고 세로 맵의 월드 회전을 보정한다.
+              sp.rotation = Math.PI / 4 + (vert ? Math.PI / 2 : 0);
+              sp.scale.set(sc);
+              sp.alpha = fade;
+            }
+            // 거대한 불꼬리 뒤로 흩날리는 백열 파편.
+            const [tlx0, tly0] = up(mx2, my2, 42 + eased * 22);
+            const [tlx, tly] = side(tlx0, tly0, -10);
+            zonesGr.moveTo(tlx, tly).lineTo(mx2, my2)
+              .stroke({ color: 0xff8a24, width: 6 + eased * 5, alpha: 0.26 * fade });
+            zonesGr.moveTo(tlx, tly).lineTo(mx2, my2)
+              .stroke({ color: 0xffe39a, width: 2.2 + eased * 2, alpha: 0.7 * fade });
+          } else {
+            const sp = meteorSprites.get(key);
+            if (sp) sp.visible = false;
+            if (t < 0.86) {
+              // 착탄 — 중심 백열 섬광, 용암색 충격파, 검은 잔해가 차례로 퍼진다.
+              const p = (t - 0.66) / 0.2;
+              const ringR = 12 + r * 0.32 * p;
+              fx.ellipse(tx, ty, ringR, ringR * sq)
+                .stroke({ color: 0xffd27a, width: 7 * (1 - p), alpha: 0.92 * (1 - p) * fade });
+              fx.circle(tx, ty, 18 * (1 - p) + 4)
+                .fill({ color: p < 0.45 ? 0xffffff : 0xff6a20, alpha: 0.9 * (1 - p) * fade });
+              for (let q = 0; q < 6; q++) {
+                const qa = rnd(k * 40 + q) * Math.PI * 2;
+                const qd = (10 + 38 * p) * (0.65 + rnd(k * 40 + q + 10) * 0.5);
+                fx.circle(tx + Math.cos(qa) * qd, ty + Math.sin(qa) * qd * sq, 2.5 * (1 - p))
+                  .fill({ color: q % 2 ? 0x2a1710 : 0xff7a2e, alpha: 0.8 * (1 - p) * fade });
+              }
+            }
+            // 한 낙하가 착탄으로 넘어가는 바로 그 프레임에만 소리와 큰 충격파를 예약한다.
+            if (wasFalling === true && t < 0.86) {
+              sfx('meteor_impact', tx, k === 0 ? 1 : 0.68);
+              impacts.push({ x: tx, y: ty, start: now, radius: k === 0 ? 92 : 58, color: 0xfff0c0 });
+              impacts.push({ x: tx, y: ty, start: now + 70, radius: k === 0 ? 124 : 78, color: 0xff5a22 });
+            }
           }
         }
         continue;
@@ -2731,6 +2809,19 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
       if (!zoneSeen.has(id)) {
         zs.sp.destroy();
         zoneSprites.delete(id);
+      }
+    }
+    for (const [id, mz] of meteorCraterSprites) {
+      if (!meteorZoneSeen.has(id)) {
+        mz.sp.destroy();
+        meteorCraterSprites.delete(id);
+      }
+    }
+    for (const [key, sp] of meteorSprites) {
+      if (!meteorSpriteSeen.has(key)) {
+        sp.destroy();
+        meteorSprites.delete(key);
+        meteorWasFalling.delete(key);
       }
     }
     const seen = new Set<number>();

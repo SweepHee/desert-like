@@ -2213,21 +2213,32 @@ reg(D({
   regenPerSec: 18, // 시체를 먹으며 아문다 — 화력을 모아 한 번에 끊어야 한다
   speed: tilesPerSecond(1.7), radius: tiles(0.85), acquireRange: tiles(7),
   weapon: { damage: 88, bonus: { cloth: 24 }, cooldown: seconds(1.2), range: tiles(1.5), targets: 'ground', splash: tiles(2.0) },
-  actives: [{
-    name: '시체의 손아귀', desc: '넓은 범위의 공중 유닛을 땅으로 끌어내린다 — 10초간 지상 판정',
-    kind: 'ground', cooldown: seconds(20), durTicks: seconds(10), castRange: tiles(8), splash: tiles(3.2),
-  }],
+  actives: [
+    {
+      name: '적에게 달려들기', desc: '6타일 안 원거리 유닛을 최우선으로 덮친다',
+      kind: 'leap', leapAim: 'ranged', cooldown: seconds(14), castRange: tiles(6),
+    },
+    {
+      name: '시체의 손아귀', desc: '넓은 범위의 공중 유닛을 땅으로 끌어내린다 — 10초간 지상 판정',
+      kind: 'ground', cooldown: seconds(20), durTicks: seconds(10), castRange: tiles(8), splash: tiles(3.2),
+    },
+  ],
 }));
 
 // 14 스테이지 — 성에서 이따금 내려오는 뼈 용. 재주는 없고 그저 단단하다.
 // 본드래곤과 같은 그림을 쓰지만 뼈 무덤 부활도, 흡혈도 없다.
 reg(D({
   id: 'c_skullrender', race: null, name: '스컬렌더', tier: 'guardian', summonOnly: true,
-  cost: 0, supply: 0, maxHp: 8000, armor: 15, tags: ['plate', 'massive', 'undead'], flying: true,
+  cost: 0, supply: 0, maxHp: 20000, armor: 15, tags: ['plate', 'massive', 'undead'], flying: true,
   regenPerSec: 15,
   immovable: true, // 덩치로 버틴다 — 밀어내도 자리를 내주지 않는다
   speed: tilesPerSecond(2.0), radius: tiles(0.75), acquireRange: tiles(6),
   weapon: { damage: 60, cooldown: seconds(1.3), range: tiles(1.4), targets: 'both', splash: tiles(1.1) },
+  actives: [{
+    name: '지상 불태우기', desc: '지상의 적 무리 아래에 반경 4타일 불길을 남긴다',
+    kind: 'zone', cooldown: seconds(20), castRange: tiles(8), targets: 'ground', zoneAtTarget: true,
+    zone: { kind: 'blaze', radius: tiles(4), ticks: seconds(10) },
+  }],
 }));
 
 

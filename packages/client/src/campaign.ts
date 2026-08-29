@@ -1414,14 +1414,16 @@ export const SYLVARIN_CAMPAIGN: readonly CampaignStage[] = [
     enemySkin: 'bone',
     noTowers: true,
     enemyStartTech: 3,
+    // 발타르 성의 관짝지기: 구매분 + 5턴부터 확정 편입분을 합쳐 최대 30기.
+    enemyUnitCaps: { p_coffin_bearer: 30 },
     // 이 판에 나올 수 있는 판데모니엄 유닛 (거점별 구간 제한이 이 안에서 다시 걸린다)
     enemyAllowedUnits: [
       'p_hound', 'p_bone_thrower', 'p_summoner', 'p_headless_knight', 'p_lich',
       'p_corpse_golem', 'p_coffin_bearer', 'p_thanatos', 'p_dementor', 'p_wraith', 'p_banshee',
       'p_demilich', 'p_bone_dragon',
     ],
-    // 성 전용으로 디멘터·데미리치·본드래곤을 푼다 (전역 잠금 해제)
-    unlockEnemyUnits: ['p_dementor', 'p_demilich', 'p_bone_dragon'],
+    // 이 스테이지 전용 상급진을 전역 잠금에서 푼다.
+    unlockEnemyUnits: ['p_coffin_bearer', 'p_dementor', 'p_demilich', 'p_bone_dragon'],
     // 두 갈래 — 빈 땅을 누르면 그쪽으로 부대를 보낸다.
     // 판은 「가운데 대기」로 시작한다 (길을 고르기 전엔 야영지에 병력을 모은다)
     deployStartHold: true,
@@ -1436,15 +1438,16 @@ export const SYLVARIN_CAMPAIGN: readonly CampaignStage[] = [
         startIncome: 5, startMoney: 500, spendAll: true,
         phases: [
           { fromWave: 1, units: ['p_hound', 'p_bone_thrower'] },
-          { fromWave: 5, units: ['p_hound', 'p_bone_thrower', 'p_headless_knight'], preferred: ['p_headless_knight'] },
-          { fromWave: 10, units: ['p_headless_knight', 'p_bone_thrower', 'p_corpse_golem', 'p_banshee'], preferred: ['p_banshee', 'p_corpse_golem'] },
-          { fromWave: 18, units: ['p_thanatos', 'p_banshee', 'p_bone_dragon', 'p_demilich'] },
-          { fromWave: 22, units: ['p_thanatos', 'p_banshee', 'p_bone_dragon', 'p_demilich', 'p_dementor'] },
+          { fromWave: 5, units: ['p_hound', 'p_bone_thrower', 'p_headless_knight', 'p_coffin_bearer'], preferred: ['p_headless_knight', 'p_coffin_bearer'] },
+          { fromWave: 10, units: ['p_headless_knight', 'p_bone_thrower', 'p_corpse_golem', 'p_banshee', 'p_coffin_bearer'], preferred: ['p_banshee', 'p_corpse_golem', 'p_coffin_bearer'] },
+          { fromWave: 14, units: ['p_thanatos', 'p_banshee', 'p_bone_dragon', 'p_demilich', 'p_coffin_bearer'] },
+          { fromWave: 18, units: ['p_thanatos', 'p_banshee', 'p_bone_dragon', 'p_demilich', 'p_dementor', 'p_coffin_bearer'] },
         ],
         // 상위 편성을 당긴 만큼 확정 편입도 함께 당긴다.
         forcedGrowth: [
-          { fromWave: 18, units: ['p_thanatos', 'p_banshee', 'p_bone_dragon', 'p_demilich'], perWave: 2 },
-          { fromWave: 22, units: ['p_dementor'], perWave: 1 },
+          { fromWave: 5, units: ['p_coffin_bearer'], perWave: 1 },
+          { fromWave: 14, units: ['p_thanatos', 'p_banshee', 'p_bone_dragon', 'p_demilich'], perWave: 2 },
+          { fromWave: 18, units: ['p_dementor'], perWave: 1 },
         ],
       },
       {
@@ -1490,14 +1493,15 @@ export const SYLVARIN_CAMPAIGN: readonly CampaignStage[] = [
       { defId: 'c_alice_hero', label: '🎭 인형사 앨리스 참전!', fromSec: 840, everySec: 200,
         concurrentCap: 1, respawnAfterDeathSec: 200, atXTile: 9, friendly: true },
       // ── A~D 증원: 80초마다 「출현」. 거점이 무너지면 그쪽은 영구히 끊긴다 ──
-      { defId: 'p_skeleton', label: '전초 A 증원', count: 2, everySec: 80, untilSec: 840,
-        atXTile: 42.2, yOffTile: -8.3, whileCampSlot: 1 },
-      { defId: 'p_bone_thrower', label: '전초 A 증원', count: 3, everySec: 80, untilSec: 840,
-        atXTile: 42.2, yOffTile: -8.3, whileCampSlot: 1 },
-      { defId: 'p_skeleton', label: '전초 B 증원', count: 2, everySec: 80, untilSec: 840,
-        atXTile: 41.5, yOffTile: 10.3, whileCampSlot: 2 },
-      { defId: 'p_bone_thrower', label: '전초 B 증원', count: 3, everySec: 80, untilSec: 840,
-        atXTile: 41.5, yOffTile: 10.3, whileCampSlot: 2 },
+      // A·B: 1턴부터 스켈레톤 4·리치 3. 7턴까지 매 턴 +1, 이후 그 수량 유지.
+      { defId: 'p_skeleton', label: '전초 A 해골 증원', count: 4, countAdd: 1, countMax: 10, atSec: 0, everySec: 60,
+        atXTile: 42.2, yOffTile: -8.3, whileCampSlot: 1, quiet: true },
+      { defId: 'p_lich', label: '전초 A 리치 증원', count: 3, countAdd: 1, countMax: 9, atSec: 0, everySec: 60,
+        atXTile: 42.2, yOffTile: -8.3, whileCampSlot: 1, quiet: true },
+      { defId: 'p_skeleton', label: '전초 B 해골 증원', count: 4, countAdd: 1, countMax: 10, atSec: 0, everySec: 60,
+        atXTile: 41.5, yOffTile: 10.3, whileCampSlot: 2, quiet: true },
+      { defId: 'p_lich', label: '전초 B 리치 증원', count: 3, countAdd: 1, countMax: 9, atSec: 0, everySec: 60,
+        atXTile: 41.5, yOffTile: 10.3, whileCampSlot: 2, quiet: true },
       { defId: 'p_skeleton', label: '전방기지 C 증원', count: 2, everySec: 80, untilSec: 840,
         atXTile: 29.8, yOffTile: -9.0, whileCampSlot: 3 },
       { defId: 'p_bone_thrower', label: '전방기지 C 증원', count: 3, everySec: 80, untilSec: 840,
@@ -1507,10 +1511,6 @@ export const SYLVARIN_CAMPAIGN: readonly CampaignStage[] = [
       { defId: 'p_bone_thrower', label: '전방기지 D 증원', count: 3, everySec: 80, untilSec: 840,
         atXTile: 29.5, yOffTile: 10.3, whileCampSlot: 4 },
       // ── 8턴부터: 네 거점 모두 리치가 매 턴 한 기씩 더 붙는다 ──
-      { defId: 'p_lich', label: '전초 A 리치 증원', count: 2, countAdd: 1, fromSec: 420, everySec: 60,
-        atXTile: 42.2, yOffTile: -8.3, whileCampSlot: 1, quiet: true },
-      { defId: 'p_lich', label: '전초 B 리치 증원', count: 2, countAdd: 1, fromSec: 420, everySec: 60,
-        atXTile: 41.5, yOffTile: 10.3, whileCampSlot: 2, quiet: true },
       { defId: 'p_lich', label: '전방기지 C 리치 증원', count: 2, countAdd: 1, fromSec: 420, everySec: 60,
         atXTile: 29.8, yOffTile: -9.0, whileCampSlot: 3, quiet: true },
       { defId: 'p_lich', label: '전방기지 D 리치 증원', count: 2, countAdd: 1, fromSec: 420, everySec: 60,
@@ -1534,29 +1534,34 @@ export const SYLVARIN_CAMPAIGN: readonly CampaignStage[] = [
         atXTile: 29.5, yOffTile: 10.3, whileCampSlot: 4 },
       { defId: 'p_bone_thrower', label: '전방기지 D 증원', count: 5, everySec: 80, fromSec: 840,
         atXTile: 29.5, yOffTile: 10.3, whileCampSlot: 4 },
-      { defId: 'p_headless_knight', label: '전초 A 정예', count: 2, everySec: 80, fromSec: 840,
-        atXTile: 42.2, yOffTile: -8.3, whileCampSlot: 1 },
-      { defId: 'p_wraith', label: '전초 A 정예', count: 2, everySec: 80, fromSec: 840,
-        atXTile: 42.2, yOffTile: -8.3, whileCampSlot: 1 },
-      { defId: 'p_headless_knight', label: '전초 B 정예', count: 2, everySec: 80, fromSec: 840,
-        atXTile: 41.5, yOffTile: 10.3, whileCampSlot: 2 },
-      { defId: 'p_wraith', label: '전초 B 정예', count: 2, everySec: 80, fromSec: 840,
-        atXTile: 41.5, yOffTile: 10.3, whileCampSlot: 2 },
-      // ── 15턴부터: A·B 정예가 매 턴 한 기씩 누적 증편된다 ──
+      // A·B: 8~14턴은 밴시·관짝지기 1기부터 매 턴 +1 (1→7).
       ...([1, 2] as const).flatMap((slot) => {
         const west = slot === 1;
         const atXTile = west ? 42.2 : 41.5;
         const yOffTile = west ? -8.3 : 10.3;
         const side = west ? 'A' : 'B';
         return [
-          { defId: 'p_corpse_golem', label: `전초 ${side} 시체 골렘`, count: 1, countAdd: 1, fromSec: 840, everySec: 60, atXTile, yOffTile, whileCampSlot: slot, quiet: true },
-          { defId: 'p_coffin_bearer', label: `전초 ${side} 관짝지기`, count: 1, countAdd: 1, fromSec: 840, everySec: 60, atXTile, yOffTile, whileCampSlot: slot, quiet: true },
-          { defId: 'p_thanatos', label: `전초 ${side} 타나토스`, count: 1, countAdd: 1, fromSec: 840, everySec: 60, atXTile, yOffTile, whileCampSlot: slot, quiet: true },
+          { defId: 'p_banshee', label: `전초 ${side} 밴시`, count: 1, countAdd: 1, fromSec: 420, untilSec: 840, everySec: 60, atXTile, yOffTile, whileCampSlot: slot, quiet: true },
+          { defId: 'p_coffin_bearer', label: `전초 ${side} 관짝지기`, count: 1, countAdd: 1, fromSec: 420, untilSec: 840, everySec: 60, atXTile, yOffTile, whileCampSlot: slot, quiet: true },
+          // 15턴부터 직전 7기에 이어 9기, 이후 매 턴 +2, 한 번에 최대 22기.
+          { defId: 'p_banshee', label: `전초 ${side} 밴시 총공세`, count: 9, countAdd: 2, countMax: 22, fromSec: 840, everySec: 60, atXTile, yOffTile, whileCampSlot: slot, quiet: true },
+          { defId: 'p_coffin_bearer', label: `전초 ${side} 관짝지기 총공세`, count: 9, countAdd: 2, countMax: 22, fromSec: 840, everySec: 60, atXTile, yOffTile, whileCampSlot: slot, quiet: true },
         ];
       }),
-      // ── 전방기지가 무너지면 그 자리에서 구울 군주가 기어 나온다 ──
-      { defId: 'c_ghoul_lord', label: '💀 구울 군주', onCampDown: 3, atXTile: 29.8, yOffTile: -9.0 },
-      { defId: 'c_ghoul_lord', label: '💀 구울 군주', onCampDown: 4, atXTile: 29.5, yOffTile: 10.3 },
+      // A·B 파괴 역습: 구울 군주 1·데미리치 5·밴시 10.
+      ...([1, 2] as const).flatMap((slot) => {
+        const west = slot === 1;
+        const atXTile = west ? 42.2 : 41.5;
+        const yOffTile = west ? -8.3 : 10.3;
+        return [
+          { defId: 'c_ghoul_lord', label: '💀 구울 군주', count: 1, onCampDown: slot, atXTile, yOffTile },
+          { defId: 'p_demilich', label: '💀 데미리치 수비대', count: 5, onCampDown: slot, atXTile, yOffTile },
+          { defId: 'p_banshee', label: '👻 밴시 수비대', count: 10, onCampDown: slot, atXTile, yOffTile },
+        ];
+      }),
+      // C·D 파괴 역습: 구울 군주 3기.
+      { defId: 'c_ghoul_lord', label: '💀 구울 군주 무리', count: 3, onCampDown: 3, atXTile: 29.8, yOffTile: -9.0 },
+      { defId: 'c_ghoul_lord', label: '💀 구울 군주 무리', count: 3, onCampDown: 4, atXTile: 29.5, yOffTile: 10.3 },
       // ── 성에서 이따금 내려오는 뼈 용 ──
       { defId: 'c_skullrender', label: '🐉 스컬렌더', everySec: 180, fromSec: 840, atXTile: 53, concurrentCap: 2,
         onFirstDialogue: [

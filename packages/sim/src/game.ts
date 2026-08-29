@@ -1001,6 +1001,14 @@ export function stepGame(g: Game): void {
         for (let k = 0; k < per; k++) {
           // 배열을 순서대로 돌며 고른다 (결정론 — rng 를 쓰지 않는다)
           const id = fg.units[(g.waveIndex * per + k) % fg.units.length]!;
+          // 구매 상한이 있는 유닛은 확정 편입도 같은 팀 합산 상한을 지킨다.
+          // 그렇지 않으면 「매 턴 1기 확정 + 최대 30기」 같은 구성이 상한을 뚫는다.
+          const cap = g.waveIndex < g.enemyCapsUntilWave ? g.enemyUnitCaps[id] : undefined;
+          if (cap !== undefined) {
+            let owned = 0;
+            for (const q of g.players) if (q.team === 1) owned += q.comp[id] ?? 0;
+            if (owned >= cap) continue;
+          }
           p.comp[id] = (p.comp[id] ?? 0) + 1;
         }
         mergeComp(g, p);   // 확정 편입분도 합치기 대상이다

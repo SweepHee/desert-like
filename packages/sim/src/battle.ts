@@ -2592,9 +2592,12 @@ export function stepCombat(g: Game): void {
              */
             const jumpTo = a.leapAim === 'nearest'
               ? pick(() => true)
-              : pick((v) => def(v).tags.includes('support'))
-                ?? pick((v) => (def(v).weapon?.range ?? 0) >= tiles(2))
-                ?? pick(() => true);
+              : a.leapAim === 'ranged'
+                ? pick((v) => (def(v).weapon?.range ?? 0) >= tiles(2))
+                  ?? pick(() => true)
+                : pick((v) => def(v).tags.includes('support'))
+                  ?? pick((v) => (def(v).weapon?.range ?? 0) >= tiles(2))
+                  ?? pick(() => true);
             if (jumpTo) {
               const jd = def(jumpTo);
               e.x = clamp(jumpTo.x - (jd.radius + d.radius), 0, g.map.length);

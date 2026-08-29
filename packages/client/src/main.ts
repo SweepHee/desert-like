@@ -1018,6 +1018,16 @@ function showEnhanceScreen(): void {
   const slots = boonSlots();
 
   const TIER_STARS: Record<string, number> = { novice: 1, basic: 1, mid: 2, air: 2, high: 3, supreme: 4, final: 5 };
+  /*
+   * 별점 예외 — tier 는 전투 규칙(매혹 등급·수호자 면역)에 쓰는 값이라
+   * 함부로 못 바꾼다. 상점에서 체감하는 무게만 여기서 손본다.
+   *  · 나무지기: 테크 2 로 내려왔다 (high 지만 별 2개)
+   *  · 와이번·유니콘·페어리: air 지만 테크 3 상급이다 (별 3개)
+   */
+  const STAR_FIX: Record<string, number> = {
+    s_treekeeper: 2, s_wyvern: 3, s_unicorn: 3, s_fairy: 3,
+  };
+  const starsOf = (id: string, tier: string): number => STAR_FIX[id] ?? TIER_STARS[tier] ?? 2;
   const TIER_KO: Record<string, string> = { novice: '견습', basic: '기본', mid: '중급', air: '공중', high: '상급', supreme: '최상급', final: '최종' };
   const KIND_TILE: Record<string, string> = {
     stat: 'linear-gradient(180deg,#3e6e96,#1d3a55)',
@@ -1716,16 +1726,16 @@ function heroOwnSpent(hero: string, alloc: Record<string, number>): number {
       const pct = capped ? 100 : Math.min(100, Math.round(tp.into / tp.need * 100));
       // 다음 고비 안내
       const nextMile = TREE_MILESTONES.find(([lv]) => lv > tp.level);
+      // 반복 클리어 안내는 늘 띄우지 않고 EXP 에 걸어 둔다 (마우스를 올리면 보인다)
+      const xpTip = capped
+        ? '상한에 닿았다 — 다음 스테이지를 클리어하면 상한이 오른다.'
+        : `상한 Lv ${tp.cap}까지는 반복 클리어로 레벨업할 수 있다.`;
       xpBox.innerHTML =
-        `<div class="row"><span>세계수 레벨</span><b>${capped ? '최대 (다음 스테이지를 깨면 상한이 오른다)' : `EXP ${tp.into} / ${tp.need}`}</b></div>`
+        `<div class="row"><span>세계수 레벨</span><b class="xphint" title="${xpTip}">`
+        + `${capped ? '최대 (다음 스테이지를 깨면 상한이 오른다)' : `EXP ${tp.into} / ${tp.need}`} ⓘ</b></div>`
         + `<div class="track"><i style="width:${pct}%"></i><span>${capped ? '' : `다음 레벨까지 EXP ${tp.need - tp.into}`}</span></div>`
         + `<div class="next">레벨마다: 시작 자금 +5 · 축복 포인트 +1${tp.level >= 10 ? ' · 수급량 +0.5%' : ''}`
         + (nextMile ? `<br/>Lv ${nextMile[0]} 고비: ${nextMile[1]}` : '') + '</div>';
-      // 상한과 「거기까지는 반복 클리어로 채울 수 있다」만 짧게
-      xpBox.innerHTML += `<div class="tip">🔁 ${capped
-        ? '<b>상한 도달</b> — 다음 스테이지를 클리어하면 상한이 열린다.'
-        : `<b>상한 Lv ${tp.cap}</b> 까지는 이미 깬 스테이지를 반복 클리어해서 올릴 수 있다.`
-      }</div>`;
       left.appendChild(xpBox);
 
       // 총 효과 (자동 + 포인트 합산)
@@ -1845,7 +1855,7 @@ function heroOwnSpent(hero: string, alloc: Record<string, number>): number {
         if (filter !== 'all' && tierGroup(d0.tier) !== filter) continue;
         const el = document.createElement('div');
         el.className = 'eh-card' + (c.id === selected ? ' sel' : '') + (c.open ? '' : ' lock');
-        const stars = TIER_STARS[d0.tier] ?? 2;
+        const stars = starsOf(c.id, d0.tier);
         const icon = assetIconUrl(c.id) ?? `/assets/units/${c.id}.png`;
         const nBoons = (chosenAll[c.id] ?? []).slice(0, slots).length;
         el.innerHTML =
@@ -1867,7 +1877,7 @@ function heroOwnSpent(hero: string, alloc: Record<string, number>): number {
       const d = selected ? DEFS[selected] : undefined;
       const cur = selected ? (chosenAll[selected] ?? []).slice(0, slots) : [];
       if (d && selected) {
-        const stars = TIER_STARS[d.tier] ?? 2;
+        const stars = starsOf(selected, d.tier);
         const hd = document.createElement('div');
         hd.id = 'eh2-hero';
         hd.innerHTML =

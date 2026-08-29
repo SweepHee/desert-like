@@ -1550,13 +1550,8 @@
     #tree-xp .track i { position: absolute; inset: 0; width: 0; background: linear-gradient(180deg, #8cc763, #3f6b2e); }
     #tree-xp .track span { position: relative; display: block; text-align: center; font-size: 10px; line-height: 16px; color: #fff; text-shadow: 0 1px 2px #000; }
     #tree-xp .next { color: var(--dim); font-size: 11px; margin-top: 6px; text-align: center; word-break: keep-all; }
-    /* 반복 클리어 안내 — 「상한까지는 갈아서 올릴 수 있다」를 축복 탭에서 알려 준다 */
-    #tree-xp .tip {
-      margin-top: 8px; padding: 7px 9px; border-radius: 8px;
-      background: rgba(140,199,99,.10); border: 1px solid rgba(140,199,99,.28);
-      color: var(--dim); font-size: 11px; line-height: 1.55; word-break: keep-all;
-    }
-    #tree-xp .tip b { color: #b6dd8f; }
+    /* EXP 에 걸린 설명 — 마우스를 올리면 상한·반복 클리어 안내가 뜬다 */
+    #tree-xp .xphint { cursor: help; border-bottom: 1px dotted rgba(214,178,90,.5); }
     /* 잠긴 탭에 붙는 자물쇠 */
     #eh-nav button .eh-lock {
       position: absolute; top: 3px; right: 5px;

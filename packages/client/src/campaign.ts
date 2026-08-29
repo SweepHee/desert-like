@@ -1530,7 +1530,20 @@ export const SYLVARIN_CAMPAIGN: readonly CampaignStage[] = [
         concurrentCap: 1, respawnAfterDeathSec: 170, atXTile: 9, friendly: true },
       // 15턴에 합류하는 신규 영웅 — 200초마다 야영지에서 다시 나선다
       { defId: 'c_alice_hero', label: '🎭 인형사 앨리스 참전!', fromSec: 840, everySec: 200,
-        concurrentCap: 1, respawnAfterDeathSec: 200, atXTile: 9, friendly: true },
+        concurrentCap: 1, respawnAfterDeathSec: 200, atXTile: 9, friendly: true,
+        /*
+         * 첫 등장에 한 번 말을 시킨다.
+         * 토스트 한 줄만 띄우면 15턴에 갑자기 여왕이 서 있어서 「얘 왜 나왔지」가 된다 —
+         * 12 에서 맺은 동맹이 여기서 회수된다는 걸 대사로 짚어 준다.
+         */
+        onFirstDialogue: [
+          { who: '', text: '숲길 저편에서 태엽 소리가 밀려왔다. 실바린의 것이 아닌, 인형들의 발소리였다.' },
+          { who: '앨리스', text: '늦었네. 국경 정리하고 오느라.' },
+          { who: '카엘', text: '…여왕이 직접 오실 줄은 몰랐습니다.' },
+          { who: '앨리스', text: '동맹이라고 했잖아. 인형은 약속은 안 해도, 거래는 지켜.' },
+          { who: '앨리스', text: '게다가 이 길 끝에 내 오빠가 있어. …남한테 맡길 일이 아니지.' },
+          { who: '엘로윈', text: '(작게) 오웬… 이 아이도 300년을 기다렸군.' },
+        ] },
       // ── A~D 증원: 80초마다 「출현」. 거점이 무너지면 그쪽은 영구히 끊긴다 ──
       // A·B: 1턴부터 스켈레톤 4·리치 3. 7턴까지 매 턴 +1, 이후 그 수량 유지.
       { defId: 'p_skeleton', label: '전초 A 해골 증원', count: 4, countAdd: 1, countMax: 10, atSec: 0, everySec: 60,

@@ -568,7 +568,7 @@ const ASSET_SIZE_MUL: Record<string, number> = {
   c_balthar_general: 1.5, // 12 보스 — 슬리피 할로우급 거구
   c_ghoul_lord: 1.5,      // 14 보스 — 카르가스급 덩치
   c_elf_watchtower: 1.25, // 야영지 망루 — 작은 망루라 아담하게
-  c_skullrender: 1.45,    // 14 보스 — 본드래곤보다 한 뼘 크게
+  c_skullrender: 2.175,   // 14 보스 — 기존 1.45의 정확히 1.5배
   // 호위전 소품: 나무는 반경보다 훨씬 크게 — 숲이 우거진 인상
   c_burning_tree: 1.35, c_ember_tree: 1.3, c_ember_tree2: 1.35, c_burning_log: 0.95, c_supply_cart: 1.15,
   s_fairy: 1.9, // 거대 나비(radius 0.42)보다 커 보이게 — 요정 여왕의 위용
@@ -916,6 +916,23 @@ function sy(y: number): number {
   const sq = curMap.vertical ? 1 : Y_SQUASH;
   return ((y + renderHalfH()) / FP) * TILE * sq + PAD_TOP;
 }
+
+/*
+ * 화면 기준 오프셋 → 월드 좌표.
+ *
+ * 세로 맵은 월드가 -90도 돌아 있다 (world.rotation = -PI/2): 월드 +x 가 화면
+ * 위쪽, 월드 +y 가 화면 오른쪽이다. 「위로 떠오른다」·「아래로 떨어진다」처럼
+ * 화면 기준으로 읽혀야 하는 연출은 반드시 이 자를 거쳐 그린다.
+ */
+function ovx(bx: number, dx: number, dy: number): number {
+  return curMap.vertical ? bx - dy : bx + dx;
+}
+function ovy(by: number, dx: number, dy: number): number {
+  return curMap.vertical ? by + dx : by + dy;
+}
+/** 화면 기준 타원 반지름(가로 w · 세로 h) → 월드 반지름. */
+function ovw(w: number, h: number): number { return curMap.vertical ? h : w; }
+function ovh(w: number, h: number): number { return curMap.vertical ? w : h; }
 
 const RANGED_THRESHOLD = tiles(2);
 
@@ -2605,30 +2622,49 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
           const v = Math.sin(z.id * 127.1 + n * 311.7) * 43758.5453;
           return v - Math.floor(v);
         };
-        zonesGr.ellipse(cx, cy, r, r * 0.62).fill({ color: 0x3a1c10, alpha: 0.3 * fade });
-        zonesGr.ellipse(cx, cy, r, r * 0.62).stroke({ color: 0xff5a2e, width: 2, alpha: 0.5 * fade });
+        /*
+         * 세로 맵은 월드가 -90도 돌아 있다 (world.rotation = -PI/2) — 월드 +x 가
+         * 화면의 「위」, 월드 +y 가 화면의 「오른쪽」이 된다. 운석은 화면 기준으로
+         * 위에서 떨어져야 하므로 낙하 축을 맵 방향에 맞춰 돌린다.
+         * (이걸 안 하면 세로 맵에서 운석이 옆에서 날아든다 — 14 「걸어가는 숲」)
+         * 그을린 자국도 마찬가지다: 세로 맵은 원근 압축(Y_SQUASH)을 안 쓰므로 동그랗다.
+         */
+        const vert = curMap.vertical === true;
+        const sq = vert ? 1 : 0.62;
+        /** 착탄점에서 「화면 위쪽」으로 d 픽셀. */
+        const up = (bx: number, by: number, d: number): [number, number] =>
+          (vert ? [bx + d, by] : [bx, by - d]);
+        /** 「화면 가로」로 d 픽셀 (불꼬리를 살짝 비껴 그린다). */
+        const side = (bx: number, by: number, d: number): [number, number] =>
+          (vert ? [bx, by + d] : [bx + d, by]);
+        zonesGr.ellipse(cx, cy, vert ? r : r, vert ? r : r * sq).fill({ color: 0x3a1c10, alpha: 0.3 * fade });
+        zonesGr.ellipse(cx, cy, r, r * sq).stroke({ color: 0xff5a2e, width: 2, alpha: 0.5 * fade });
         const COUNT = 14; // 최소 10개 이상이 늘 하늘에 떠 있도록
         for (let k = 0; k < COUNT; k++) {
           const ang = rnd(k * 4) * Math.PI * 2;
           const rad = Math.sqrt(rnd(k * 4 + 1)) * r;
           const tx = cx + Math.cos(ang) * rad;
-          const ty = cy + Math.sin(ang) * rad * 0.62;
+          const ty = cy + Math.sin(ang) * rad * sq;
           const period = 700 + rnd(k * 4 + 2) * 650;
           const t = (((now + rnd(k * 4 + 3) * period) % period) / period);
           if (t < 0.62) {
-            // 낙하 — 위에서 착탄점으로 내리꽂힌다 (뒤로 불꼬리)
+            // 낙하 — 화면 위에서 착탄점으로 내리꽂힌다 (뒤로 불꼬리)
             const p = t / 0.62;
-            const my = ty - (1 - p) * (r * 1.5 + 90);
+            const [mx, my] = up(tx, ty, (1 - p) * (r * 1.5 + 90));
             const size = 2.6 + 2.4 * p;
-            zonesGr.moveTo(tx - 5, my - 22)
-              .lineTo(tx, my)
+            const [tlx0, tly0] = up(mx, my, 22);
+            const [tlx, tly] = side(tlx0, tly0, -5);
+            zonesGr.moveTo(tlx, tly)
+              .lineTo(mx, my)
               .stroke({ color: 0xffb45a, width: 2.2, alpha: 0.55 * fade });
-            fx.circle(tx, my, size).fill({ color: 0xff7a2e, alpha: 0.95 * fade });
-            fx.circle(tx - 0.8, my - 0.8, size * 0.5).fill({ color: 0xffe9a8, alpha: 0.9 * fade });
+            fx.circle(mx, my, size).fill({ color: 0xff7a2e, alpha: 0.95 * fade });
+            const [hx0, hy0] = up(mx, my, 0.8);
+            const [hx, hy] = side(hx0, hy0, -0.8);
+            fx.circle(hx, hy, size * 0.5).fill({ color: 0xffe9a8, alpha: 0.9 * fade });
           } else if (t < 0.82) {
             // 착탄 — 짧게 번지는 충격 고리
             const p = (t - 0.62) / 0.2;
-            fx.ellipse(tx, ty, 4 + 22 * p, (4 + 22 * p) * 0.62)
+            fx.ellipse(tx, ty, 4 + 22 * p, (4 + 22 * p) * sq)
               .stroke({ color: 0xffc46a, width: 2.5 * (1 - p), alpha: 0.85 * (1 - p) * fade });
           }
         }
@@ -3282,9 +3318,27 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
         // 구조물은 팀 색으로 물들인다 (양 팀이 같은 그림이라 편 구분이 안 됐다).
         // 전용 스킨을 쓰는 건물은 생김새로 이미 구분되므로 원색 그대로 둔다.
         : d.tier === 'structure' && !skinnedStructure ? STRUCTURE_TEAM_TINT[e.team as 0 | 1] : 0xffffff;
+      /*
+       * ── 상태 표시의 좌표 자 ──
+       *
+       * 세로 맵은 월드가 -90도 돌아 있다 (world.rotation = -PI/2): 월드 +x 가
+       * 화면 위쪽, 월드 +y 가 화면 오른쪽이다. 아래의 표시들은 전부 「머리 위」
+       * 「발밑」처럼 화면 기준으로 읽혀야 하는 것들이라, 화면 오프셋을 월드로
+       * 옮겨 주는 자를 두고 그것만 쓴다. (안 쓰면 세로 맵에서 죄다 옆으로 눕는다)
+       *   ex/ey(dx, dy) — 유닛에서 화면 오른쪽 dx · 화면 아래 dy
+       *   ow/oh(w, h)   — 화면 기준 가로 w · 세로 h 인 타원의 월드 반지름
+       *   erect(...)    — 화면 기준 사각형
+       */
+      const vertM = curMap.vertical === true;
+      const ex = (dx: number, dy: number): number => (vertM ? px - dy : px + dx);
+      const ey = (dx: number, dy: number): number => (vertM ? py + dx : py + dy);
+      const ow = (w: number, h: number): number => (vertM ? h : w);
+      const oh = (w: number, h: number): number => (vertM ? w : h);
+      const erect = (dx: number, dy: number, w: number, h: number): [number, number, number, number] =>
+        (vertM ? [px - dy - h, py + dx, h, w] : [px + dx, py + dy, w, h]);
       // 뿌리박기류: 지속 중 발밑에 갈색 뿌리 링
       if (buffedNow && sbSkill?.holdGround) {
-        fx.ellipse(px, shadowY, 12, 5.5).stroke({ color: 0x8a6a3d, width: 2, alpha: 0.8 });
+        fx.ellipse(px, shadowY, ow(12, 5.5), oh(12, 5.5)).stroke({ color: 0x8a6a3d, width: 2, alpha: 0.8 });
       }
       // 「가호」 지속 중: 하늘빛 방어막을 두른다 — 12초 내내 누가 축복받았는지
       // 한눈에 보이게 발밑 이중 링 + 몸을 감싸는 맥동 방패 + 떠오르는 성광
@@ -3292,19 +3346,20 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
         const pulse = 0.5 + 0.32 * Math.sin(now * 0.006 + e.id);
         const bw = sp.width * 0.66;
         const bh = sp.height * 0.6;
-        const bcy = py - sp.height * 0.45;
+        const bcx = ex(0, -sp.height * 0.45);
+        const bcy = ey(0, -sp.height * 0.45);
         // 몸을 덮던 하늘빛 채움은 뺐다 — 축복받은 부대가 뭉치면 방패가 겹쳐
         // 한 덩어리 파란 얼룩이 되어 어느 유닛이 어느 유닛인지 안 보였다.
         // 몸에 남는 건 가는 윤곽선 하나뿐이고, 「누가 축복받았나」는 스프라이트를
         // 가리지 않는 발밑 이중 링이 맡는다.
-        fx.ellipse(px, bcy, bw, bh).stroke({ color: 0xbfeaff, width: 1, alpha: 0.14 + pulse * 0.13 });
-        fx.ellipse(px, shadowY, 13, 5.5).stroke({ color: 0x8fd8ff, width: 2, alpha: 0.5 + pulse * 0.32 });
-        fx.ellipse(px, shadowY, 9, 3.8).stroke({ color: 0xfff2c8, width: 1, alpha: 0.32 + pulse * 0.28 });
+        fx.ellipse(bcx, bcy, ow(bw, bh), oh(bw, bh)).stroke({ color: 0xbfeaff, width: 1, alpha: 0.14 + pulse * 0.13 });
+        fx.ellipse(px, shadowY, ow(13, 5.5), oh(13, 5.5)).stroke({ color: 0x8fd8ff, width: 2, alpha: 0.5 + pulse * 0.32 });
+        fx.ellipse(px, shadowY, ow(9, 3.8), oh(9, 3.8)).stroke({ color: 0xfff2c8, width: 1, alpha: 0.32 + pulse * 0.28 });
         // 방패를 타고 천천히 떠오르는 빛 알갱이 2개 (개체마다 위상이 어긋난다)
         for (let k = 0; k < 2; k++) {
           const ph = ((now * 0.0009 + e.id * 0.37 + k * 0.5) % 1);
           const ang = (e.id * 1.7 + k * Math.PI) % (Math.PI * 2);
-          fx.circle(px + Math.cos(ang) * bw * 0.8, shadowY - ph * bh * 2.1, 1.6)
+          fx.circle(ex(Math.cos(ang) * bw * 0.8, -ph * bh * 2.1), ey(Math.cos(ang) * bw * 0.8, -ph * bh * 2.1), 1.6)
             .fill({ color: 0xfff0b0, alpha: (1 - ph) * 0.8 });
         }
       }
@@ -3327,14 +3382,15 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
         // 본색 ↔ 검정 사이를 오간다
         const col = mix(base[0]!, 0x101014, tri * 0.85);
         const glow = mix(base[1]!, 0x000000, tri * 0.7);
-        fx.ellipse(px, shadowY, 12, 5).fill({ color: glow, alpha: 0.2 + tri * 0.12 });
-        fx.ellipse(px, shadowY, 12, 5).stroke({ color: col, width: 2, alpha: 0.6 + tri * 0.3 });
-        fx.ellipse(px, shadowY, 7.5, 3).stroke({ color: col, width: 1, alpha: 0.35 + tri * 0.3 });
+        fx.ellipse(px, shadowY, ow(12, 5), oh(12, 5)).fill({ color: glow, alpha: 0.2 + tri * 0.12 });
+        fx.ellipse(px, shadowY, ow(12, 5), oh(12, 5)).stroke({ color: col, width: 2, alpha: 0.6 + tri * 0.3 });
+        fx.ellipse(px, shadowY, ow(7.5, 3), oh(7.5, 3)).stroke({ color: col, width: 1, alpha: 0.35 + tri * 0.3 });
       }
       // 보호막(재의 장막): 남아 있는 동안 몸을 감싸는 옅은 재빛 껍질
       if (e.shieldHp > 0 && !propInvuln) {
         const sh = 0.4 + 0.25 * Math.sin(now * 0.005 + e.id);
-        fx.ellipse(px, py - sp.height * 0.45, sp.width * 0.6, sp.height * 0.52)
+        fx.ellipse(ex(0, -sp.height * 0.45), ey(0, -sp.height * 0.45),
+          ow(sp.width * 0.6, sp.height * 0.52), oh(sp.width * 0.6, sp.height * 0.52))
           .stroke({ color: 0xe8dcc8, width: 2, alpha: sh });
       }
       // 디멘터: 발밑에 검은 안개가 늘 깔려 감돈다 (오라 유무와 무관한 고유 연출)
@@ -3342,19 +3398,21 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
         for (let k = 0; k < 5; k++) {
           const a2 = now * 0.0007 + e.id * 0.5 + (k * Math.PI * 2) / 5;
           const rr = 11 + Math.sin(now * 0.0016 + k * 1.7) * 4;
-          fx.ellipse(px + Math.cos(a2) * rr, shadowY + Math.sin(a2) * rr * 0.42, 7.5, 3.4)
+          fx.ellipse(ex(Math.cos(a2) * rr, Math.sin(a2) * rr * 0.42), ey(Math.cos(a2) * rr, Math.sin(a2) * rr * 0.42),
+            ow(7.5, 3.4), oh(7.5, 3.4))
             .fill({ color: k % 2 === 0 ? 0x1a1a26 : 0x2e2440, alpha: 0.3 });
         }
       }
       // 무적 (인비저블): 금색 보호막 링 (맥동)
       if (invulnNow) {
         const shim = 0.55 + 0.3 * Math.sin(now * 0.012);
-        fx.ellipse(px, py - sp.height * 0.45, sp.width * 0.62, sp.height * 0.55)
+        fx.ellipse(ex(0, -sp.height * 0.45), ey(0, -sp.height * 0.45),
+          ow(sp.width * 0.62, sp.height * 0.55), oh(sp.width * 0.62, sp.height * 0.55))
           .stroke({ color: 0xffd86a, width: 2, alpha: shim });
       }
       // 매혹(서큐버스): 머리 위에서 분홍 하트 세 개가 빙글빙글
       if (g.tick < e.seducedUntil) {
-        const hy = py - sp.height - 8;
+        const hd = -sp.height - 8;   // 머리 위 (화면 기준)
         const spin = now * 0.005;
         for (let k = 0; k < 3; k++) {
           const a = spin + (k * Math.PI * 2) / 3;
@@ -3362,49 +3420,56 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
           const oy = Math.sin(a) * 3;
           const r = 2.2 + Math.sin(a) * 0.6;
           // 작은 하트: 원 두 개 + 아래 꼭짓점 삼각형
-          fx.circle(px + ox - r * 0.5, hy + oy - r * 0.3, r * 0.62).fill({ color: 0xff7ac8, alpha: 0.9 });
-          fx.circle(px + ox + r * 0.5, hy + oy - r * 0.3, r * 0.62).fill({ color: 0xff7ac8, alpha: 0.9 });
-          fx.poly([px + ox - r, hy + oy, px + ox + r, hy + oy, px + ox, hy + oy + r * 1.3])
+          const hl: [number, number] = [ox - r * 0.5, hd + oy - r * 0.3];
+          const hr: [number, number] = [ox + r * 0.5, hd + oy - r * 0.3];
+          fx.circle(ex(...hl), ey(...hl), r * 0.62).fill({ color: 0xff7ac8, alpha: 0.9 });
+          fx.circle(ex(...hr), ey(...hr), r * 0.62).fill({ color: 0xff7ac8, alpha: 0.9 });
+          fx.poly([ex(ox - r, hd + oy), ey(ox - r, hd + oy), ex(ox + r, hd + oy), ey(ox + r, hd + oy),
+            ex(ox, hd + oy + r * 1.3), ey(ox, hd + oy + r * 1.3)])
             .fill({ color: 0xff7ac8, alpha: 0.9 });
         }
       }
       // 혼란: 머리 위에서 별 세 개가 빙글빙글 (기절 만화 연출)
       if (confusedNow) {
-        const hy = py - sp.height - 8;
+        const hd = -sp.height - 8;
         const spin = now * 0.005;
         for (let k = 0; k < 3; k++) {
           const a = spin + (k * Math.PI * 2) / 3;
           const ox = Math.cos(a) * 8;
           const oy = Math.sin(a) * 3; // 납작한 궤도 = 원근감
           const r = 1.6 + Math.sin(a) * 0.5; // 뒤로 갈수록 작게
-          fx.circle(px + ox, hy + oy, r).fill({ color: 0xffe14d, alpha: 0.55 + Math.sin(a) * 0.35 });
+          fx.circle(ex(ox, hd + oy), ey(ox, hd + oy), r).fill({ color: 0xffe14d, alpha: 0.55 + Math.sin(a) * 0.35 });
         }
       }
       // 빙결: 유닛을 감싸는 얼음 결정 (육각 스파이크 링)
       if (frozenNow) {
-        const icy = py - sp.height * 0.45;
+        const icd = -sp.height * 0.45;
         for (let k = 0; k < 6; k++) {
           const a = (k * Math.PI) / 3 + 0.3;
           const rx = Math.cos(a) * sp.width * 0.55;
           const ry = Math.sin(a) * sp.height * 0.5;
-          fx.moveTo(px + rx * 0.6, icy + ry * 0.6).lineTo(px + rx, icy + ry)
+          fx.moveTo(ex(rx * 0.6, icd + ry * 0.6), ey(rx * 0.6, icd + ry * 0.6))
+            .lineTo(ex(rx, icd + ry), ey(rx, icd + ry))
             .stroke({ color: 0xcfeeff, width: 2, alpha: 0.85 });
         }
-        fx.ellipse(px, icy, sp.width * 0.58, sp.height * 0.52)
+        fx.ellipse(ex(0, icd), ey(0, icd),
+          ow(sp.width * 0.58, sp.height * 0.52), oh(sp.width * 0.58, sp.height * 0.52))
           .stroke({ color: 0x9fdcff, width: 1.5, alpha: 0.7 });
       }
       // 가시 봉제 (공격 반사) 지속 중: 붉은 가시 링이 회전한다
       if (g.tick < e.reflectUntil) {
-        const ry = py - sp.height * 0.45;
+        const rd = -sp.height * 0.45;
         const spin = now * 0.003;
         for (let k = 0; k < 8; k++) {
           const a = spin + (k * Math.PI) / 4;
           const rx = Math.cos(a) * sp.width * 0.6;
           const rz = Math.sin(a) * sp.height * 0.55;
-          fx.moveTo(px + rx * 0.78, ry + rz * 0.78).lineTo(px + rx * 1.12, ry + rz * 1.12)
+          fx.moveTo(ex(rx * 0.78, rd + rz * 0.78), ey(rx * 0.78, rd + rz * 0.78))
+            .lineTo(ex(rx * 1.12, rd + rz * 1.12), ey(rx * 1.12, rd + rz * 1.12))
             .stroke({ color: 0xff5a4d, width: 2, alpha: 0.85 });
         }
-        fx.ellipse(px, ry, sp.width * 0.62, sp.height * 0.56)
+        fx.ellipse(ex(0, rd), ey(0, rd),
+          ow(sp.width * 0.62, sp.height * 0.56), oh(sp.width * 0.62, sp.height * 0.56))
           .stroke({ color: 0xff5a4d, width: 1.5, alpha: 0.5 + 0.2 * Math.sin(now * 0.01) });
       }
       /*
@@ -3420,9 +3485,9 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
           const period = 900;
           for (let k = 0; k < 3; k++) {
             const t2 = ((now + k * (period / 3) + e.id * 130) % period) / period;
-            const lx = px + Math.sin((t2 + k) * 6.2) * sp.width * 0.32;
-            const ly = py - t2 * sp.height * 0.95;
-            fx.circle(lx, ly, 1.8 * (1 - t2 * 0.4))
+            const ldx = Math.sin((t2 + k) * 6.2) * sp.width * 0.32;
+            const ldy = -t2 * sp.height * 0.95;
+            fx.circle(ex(ldx, ldy), ey(ldx, ldy), 1.8 * (1 - t2 * 0.4))
               .fill({ color: 0x8ce06a, alpha: 0.75 * (1 - t2) });
           }
         }
@@ -3434,11 +3499,13 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
         if (taunting) {
           const spin = now * 0.0022;
           const rr = sp.width * 0.95;
-          fx.ellipse(px, py - 2, rr, rr * 0.42)
+          fx.ellipse(ex(0, -2), ey(0, -2), ow(rr, rr * 0.42), oh(rr, rr * 0.42))
             .stroke({ color: 0x9ad66a, width: 2, alpha: 0.5 + 0.25 * Math.sin(now * 0.008) });
           for (let k = 0; k < 6; k++) {
             const a = spin + (k * Math.PI * 2) / 6;
-            fx.circle(px + Math.cos(a) * rr, py - 2 + Math.sin(a) * rr * 0.42, 2.4)
+            const tdx = Math.cos(a) * rr;
+            const tdy = -2 + Math.sin(a) * rr * 0.42;
+            fx.circle(ex(tdx, tdy), ey(tdx, tdy), 2.4)
               .fill({ color: 0xd8f0a0, alpha: 0.8 });
           }
         }
@@ -3446,107 +3513,114 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
         if (invulnNow) {
           const domeR = sp.width * 0.78;
           const puls = 0.5 + 0.28 * Math.sin(now * 0.009);
-          const dy2 = py - sp.height * 0.45;
-          fx.ellipse(px, dy2, domeR, domeR * 0.92)
+          const dd = -sp.height * 0.45;
+          fx.ellipse(ex(0, dd), ey(0, dd), ow(domeR, domeR * 0.92), oh(domeR, domeR * 0.92))
             .fill({ color: 0xffe9a8, alpha: 0.12 + puls * 0.06 });
-          fx.ellipse(px, dy2, domeR, domeR * 0.92)
+          fx.ellipse(ex(0, dd), ey(0, dd), ow(domeR, domeR * 0.92), oh(domeR, domeR * 0.92))
             .stroke({ color: 0xffd86a, width: 2.5, alpha: 0.45 + puls * 0.4 });
           // 나무 문장 — 줄기 하나에 가지 넷
-          fx.moveTo(px, dy2 + domeR * 0.45).lineTo(px, dy2 - domeR * 0.35)
+          fx.moveTo(ex(0, dd + domeR * 0.45), ey(0, dd + domeR * 0.45))
+            .lineTo(ex(0, dd - domeR * 0.35), ey(0, dd - domeR * 0.35))
             .stroke({ color: 0xfff2c0, width: 2, alpha: 0.5 + puls * 0.3 });
           for (let k = 0; k < 4; k++) {
-            const up = dy2 - domeR * (0.05 + k * 0.1);
+            const up = dd - domeR * (0.05 + k * 0.1);
             const wdt = domeR * (0.3 - k * 0.05);
-            fx.moveTo(px, up).lineTo(px - wdt, up - wdt * 0.7)
+            fx.moveTo(ex(0, up), ey(0, up)).lineTo(ex(-wdt, up - wdt * 0.7), ey(-wdt, up - wdt * 0.7))
               .stroke({ color: 0xfff2c0, width: 1.5, alpha: 0.45 + puls * 0.25 });
-            fx.moveTo(px, up).lineTo(px + wdt, up - wdt * 0.7)
+            fx.moveTo(ex(0, up), ey(0, up)).lineTo(ex(wdt, up - wdt * 0.7), ey(wdt, up - wdt * 0.7))
               .stroke({ color: 0xfff2c0, width: 1.5, alpha: 0.45 + puls * 0.25 });
           }
         }
         // 가시 껍질(반사) 지속: 몸 둘레에 초록 가시가 돋는다 (공용 붉은 가시 위에 덧댄다)
         if (g.tick < e.reflectUntil) {
-          const ry2 = py - sp.height * 0.45;
+          const rd2 = -sp.height * 0.45;
           const spin2 = -now * 0.0026;
           for (let k = 0; k < 10; k++) {
             const a = spin2 + (k * Math.PI * 2) / 10;
             const rx = Math.cos(a) * sp.width * 0.58;
             const rz = Math.sin(a) * sp.height * 0.52;
-            fx.moveTo(px + rx, ry2 + rz)
-              .lineTo(px + rx * 1.28, ry2 + rz * 1.28)
+            fx.moveTo(ex(rx, rd2 + rz), ey(rx, rd2 + rz))
+              .lineTo(ex(rx * 1.28, rd2 + rz * 1.28), ey(rx * 1.28, rd2 + rz * 1.28))
               .stroke({ color: 0x7ac04a, width: 2, alpha: 0.8 });
           }
         }
       }
       // 전향(인형의 실): 머리 위 분홍 실에 매달린 하트 표식
       if (charmedIds.has(e.id)) {
-        const hy = py - sp.height - 12;
+        const hd = -sp.height - 12;
         const sway = Math.sin(now * 0.004 + e.id) * 2;
-        fx.moveTo(px + sway, hy - 6).lineTo(px, hy + 1).stroke({ color: 0xff9ad0, width: 1, alpha: 0.8 });
-        fx.circle(px - 1.4, hy + 2.4, 1.7).fill({ color: 0xff7ab8, alpha: 0.95 });
-        fx.circle(px + 1.4, hy + 2.4, 1.7).fill({ color: 0xff7ab8, alpha: 0.95 });
-        fx.moveTo(px - 3, hy + 3).lineTo(px, hy + 6.5).lineTo(px + 3, hy + 3)
+        fx.moveTo(ex(sway, hd - 6), ey(sway, hd - 6)).lineTo(ex(0, hd + 1), ey(0, hd + 1))
+          .stroke({ color: 0xff9ad0, width: 1, alpha: 0.8 });
+        fx.circle(ex(-1.4, hd + 2.4), ey(-1.4, hd + 2.4), 1.7).fill({ color: 0xff7ab8, alpha: 0.95 });
+        fx.circle(ex(1.4, hd + 2.4), ey(1.4, hd + 2.4), 1.7).fill({ color: 0xff7ab8, alpha: 0.95 });
+        fx.moveTo(ex(-3, hd + 3), ey(-3, hd + 3)).lineTo(ex(0, hd + 6.5), ey(0, hd + 6.5))
+          .lineTo(ex(3, hd + 3), ey(3, hd + 3))
           .stroke({ color: 0xff7ab8, width: 2.4, alpha: 0.95 });
       }
       // 공포: 머리 위에서 떨리는 보라 느낌표
       if (fearedNow) {
-        const hy = py - sp.height - 9;
+        const hd = -sp.height - 9;
         const jit = Math.sin(now * 0.03 + e.id * 3) * 1.4;
-        fx.rect(px - 1.2 + jit, hy - 6, 2.4, 6).fill({ color: 0xb06ad0, alpha: 0.95 });
-        fx.circle(px + jit, hy + 3, 1.4).fill({ color: 0xb06ad0, alpha: 0.95 });
+        fx.rect(...erect(-1.2 + jit, hd - 6, 2.4, 6)).fill({ color: 0xb06ad0, alpha: 0.95 });
+        fx.circle(ex(jit, hd + 3), ey(jit, hd + 3), 1.4).fill({ color: 0xb06ad0, alpha: 0.95 });
       }
       // 수면: 머리 위로 떠오르는 Z (세 개가 시차를 두고 위로 흘러간다)
       if (asleepNow) {
-        const hy = py - sp.height - 6;
+        const hd = -sp.height - 6;
         for (let k = 0; k < 3; k++) {
           const t = ((now * 0.0006 + k / 3) % 1);
-          const zx = px + 5 + t * 7;
-          const zy = hy - t * 13;
+          const zx = 5 + t * 7;
+          const zy = hd - t * 13;
           const s = 2.4 + t * 1.6;
           const al = 0.85 * (1 - t);
-          fx.moveTo(zx - s, zy - s).lineTo(zx + s, zy - s)
-            .lineTo(zx - s, zy + s).lineTo(zx + s, zy + s)
+          fx.moveTo(ex(zx - s, zy - s), ey(zx - s, zy - s)).lineTo(ex(zx + s, zy - s), ey(zx + s, zy - s))
+            .lineTo(ex(zx - s, zy + s), ey(zx - s, zy + s)).lineTo(ex(zx + s, zy + s), ey(zx + s, zy + s))
             .stroke({ color: 0xdfe8ff, width: 1.4, alpha: al });
         }
       }
       // 약화: 발밑에서 아래로 처지는 보라 화살표
       if (weakenedNow && !asleepNow) {
-        const wy = shadowY - 2 + Math.sin(now * 0.006 + e.id) * 1.2;
-        fx.moveTo(px - 4, wy - 3).lineTo(px, wy + 2).lineTo(px + 4, wy - 3)
+        const wd = -2 + Math.sin(now * 0.006 + e.id) * 1.2;
+        fx.moveTo(ex(-4, wd - 3), ey(-4, wd - 3)).lineTo(ex(0, wd + 2), ey(0, wd + 2))
+          .lineTo(ex(4, wd - 3), ey(4, wd - 3))
           .stroke({ color: 0xb06ad0, width: 1.6, alpha: 0.9 });
       }
       // 넥서스 보호막: 수호자가 살아 있는 동안 청록 방벽이 맥동한다
       if (shieldedNow) {
         const shim = 0.4 + 0.25 * Math.sin(now * 0.004);
-        fx.ellipse(px, py - sp.height * 0.4, sp.width * 0.75, sp.height * 0.68)
+        fx.ellipse(ex(0, -sp.height * 0.4), ey(0, -sp.height * 0.4),
+          ow(sp.width * 0.75, sp.height * 0.68), oh(sp.width * 0.75, sp.height * 0.68))
           .stroke({ color: 0x7ad8ff, width: 2.5, alpha: shim });
       }
       // 군세강화: 머리 위 주황 이중 화살촉
       if (g.tick < e.atkBuffUntil && !confusedNow) {
-        const hy = py - sp.height - 5;
+        const hd = -sp.height - 5;
         const bob = Math.sin(now * 0.008 + e.id) * 1.2;
         for (const o of [0, 4]) {
-          fx.moveTo(px - 4, hy + o + bob).lineTo(px, hy + o - 4 + bob).lineTo(px + 4, hy + o + bob)
+          fx.moveTo(ex(-4, hd + o + bob), ey(-4, hd + o + bob))
+            .lineTo(ex(0, hd + o - 4 + bob), ey(0, hd + o - 4 + bob))
+            .lineTo(ex(4, hd + o + bob), ey(4, hd + o + bob))
             .stroke({ color: 0xff9a3d, width: 1.6, alpha: 0.9 });
         }
       }
       // 숲의 가호: 발밑 연둣빛 점
       if (g.tick < e.forestUntil) {
         const tw = 0.5 + 0.4 * Math.sin(now * 0.006 + e.id * 2.3);
-        fx.circle(px + 7, shadowY - 3, 1.6).fill({ color: 0x9fe86a, alpha: tw });
-        fx.circle(px - 7, shadowY - 5, 1.3).fill({ color: 0x9fe86a, alpha: 1 - tw * 0.6 });
+        fx.circle(ex(7, -3), ey(7, -3), 1.6).fill({ color: 0x9fe86a, alpha: tw });
+        fx.circle(ex(-7, -5), ey(-7, -5), 1.3).fill({ color: 0x9fe86a, alpha: 1 - tw * 0.6 });
       }
       // 회복: 초록 플러스 떠오름
       if (now < vfx.healGlowUntil) {
         const t = 1 - (vfx.healGlowUntil - now) / 450;
-        const hy = py - sp.height - 4 - t * 10;
-        fx.rect(px - 1.2, hy - 4, 2.4, 8).fill({ color: 0x6fe87a, alpha: 0.9 * (1 - t) });
-        fx.rect(px - 4, hy - 1.2, 8, 2.4).fill({ color: 0x6fe87a, alpha: 0.9 * (1 - t) });
+        const hd = -sp.height - 4 - t * 10;
+        fx.rect(...erect(-1.2, hd - 4, 2.4, 8)).fill({ color: 0x6fe87a, alpha: 0.9 * (1 - t) });
+        fx.rect(...erect(-4, hd - 1.2, 8, 2.4)).fill({ color: 0x6fe87a, alpha: 0.9 * (1 - t) });
       }
       // 속박: 발밑에 포획 실 링 표시
       if (g.tick < e.rootedUntil) {
-        fx.ellipse(px, shadowY, 10, 4.5).stroke({ color: 0xf0f0f0, width: 1.5, alpha: 0.85 });
-        fx.moveTo(px - 8, shadowY - 2).lineTo(px + 8, shadowY + 2).stroke({ color: 0xf0f0f0, width: 1, alpha: 0.6 });
-        fx.moveTo(px - 8, shadowY + 2).lineTo(px + 8, shadowY - 2).stroke({ color: 0xf0f0f0, width: 1, alpha: 0.6 });
+        fx.ellipse(px, shadowY, ow(10, 4.5), oh(10, 4.5)).stroke({ color: 0xf0f0f0, width: 1.5, alpha: 0.85 });
+        fx.moveTo(ex(-8, -2), ey(-8, -2)).lineTo(ex(8, 2), ey(8, 2)).stroke({ color: 0xf0f0f0, width: 1, alpha: 0.6 });
+        fx.moveTo(ex(-8, 2), ey(-8, 2)).lineTo(ex(8, -2), ey(8, -2)).stroke({ color: 0xf0f0f0, width: 1, alpha: 0.6 });
       }
       // 공격 애니메이션 재생. 업그레이드 스킨 중엔 스킨 전용 프레임을 사용.
       if (vfx.hasSkin) {
@@ -3842,7 +3916,14 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
       if (t < 0) continue; // 예약된 2차 충격파 (수호자 이중 링) — 아직 시작 전
       fx.circle(im.x, im.y, im.radius * (0.4 + t * 0.6)).stroke({ color: im.color, width: 2, alpha: 1 - t });
     }
-    // ── 치명타: CRITICAL HIT!! 가 솟아올랐다 흩어진다 ──
+    /*
+     * ── 치명타: CRITICAL HIT!! 가 솟아올랐다 흩어진다 ──
+     *
+     * 글자는 월드 레이어(units) 에 붙는데, 세로 맵은 월드가 -90도 돌아 있다.
+     * 그대로 두면 글자가 옆으로 누워 세로로 읽힌다 — 레인 이름표와 같은 방식으로
+     * 되세우고(rotation +90도), 「떠오르는」 축도 화면 위쪽(월드 +x)으로 바꾼다.
+     */
+    const critVert = curMap.vertical === true;
     for (const c of g.crits) {
       let slot = critTexts.find((q) => q.until <= now);
       if (!slot) {
@@ -3856,8 +3937,8 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
         slot = { t, until: 0, x: 0, y: 0, start: 0 };
         critTexts.push(slot);
       }
-      slot.x = sx(c.x);
-      slot.y = sy(c.y) - 18;
+      slot.x = sx(c.x) + (critVert ? 18 : 0);
+      slot.y = sy(c.y) - (critVert ? 0 : 18);
       slot.start = now;
       slot.until = now + 850;
     }
@@ -3865,8 +3946,9 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
       if (q.until <= now) { q.t.visible = false; continue; }
       const k = (now - q.start) / 850;
       q.t.visible = true;
-      q.t.x = q.x;
-      q.t.y = q.y - k * 26;               // 위로 떠오른다
+      q.t.rotation = critVert ? Math.PI / 2 : 0;   // 세로 맵에서 글자를 되세운다
+      q.t.x = q.x + (critVert ? k * 26 : 0);       // 화면 위로 떠오른다
+      q.t.y = q.y - (critVert ? 0 : k * 26);
       q.t.alpha = k < 0.7 ? 1 : 1 - (k - 0.7) / 0.3;
       q.t.scale.set(k < 0.18 ? 0.6 + k * 2.2 : 1);  // 팟 하고 커졌다 유지
     }
@@ -3893,8 +3975,10 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
           const dist = du.r * (0.2 + ease * 1.15) * (k % 3 === 0 ? 1.25 : 0.9);
           const fall = t * t * 18 - Math.sin(t * Math.PI) * 8; // 튀었다가 나풀나풀 낙하
           const spin = ang + t * 5.5;
-          const fx0 = du.x + Math.cos(ang) * dist;
-          const fy0 = du.y + Math.sin(ang) * dist * 0.5 + fall;
+          const fdx = Math.cos(ang) * dist;
+          const fdy = Math.sin(ang) * dist * 0.5 + fall;
+          const fx0 = ovx(du.x, fdx, fdy);
+          const fy0 = ovy(du.y, fdx, fdy);
           const fl = 6.2 * (1 - t * 0.45);
           // 깃털 한 장 = 가늘고 긴 타원 (회전시켜 나풀거림 표현)
           const cos = Math.cos(spin), sin = Math.sin(spin);
@@ -3911,11 +3995,10 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
         const ang = (k / 10) * Math.PI * 2 + du.r * 0.03;
         const dist = du.r * (0.25 + ease * 0.95);
         const hop = Math.sin(t * Math.PI) * 9; // 튀어올랐다 떨어지는 포물선
-        fx.circle(
-          du.x + Math.cos(ang) * dist,
-          du.y + Math.sin(ang) * dist * 0.5 - hop,
-          3.2 * (1 - t) + 0.8,
-        ).fill({ color: k % 3 === 0 ? 0xe8d0a8 : 0xb08c5a, alpha: (1 - t) * 0.85 });
+        const ddx = Math.cos(ang) * dist;
+        const ddy = Math.sin(ang) * dist * 0.5 - hop;
+        fx.circle(ovx(du.x, ddx, ddy), ovy(du.y, ddx, ddy), 3.2 * (1 - t) + 0.8)
+          .fill({ color: k % 3 === 0 ? 0xe8d0a8 : 0xb08c5a, alpha: (1 - t) * 0.85 });
       }
     }
     // ── 스킬 이펙트 그림: 커지며 옅어진다 ──
@@ -4246,11 +4329,13 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
       const colW = 13 * (0.6 + fade * 0.7);
       for (let k = 0; k < 3; k++) {
         const h = 46 - k * 12;
-        fx.ellipse(bb.x, bb.y - h * 0.5, colW * (1 - k * 0.22), h * 0.5)
+        fx.ellipse(ovx(bb.x, 0, -h * 0.5), ovy(bb.y, 0, -h * 0.5),
+          ovw(colW * (1 - k * 0.22), h * 0.5), ovh(colW * (1 - k * 0.22), h * 0.5))
           .fill({ color: k === 0 ? 0xfff6d8 : 0xd8f0ff, alpha: fade * (0.22 - k * 0.05) });
       }
       // 발밑에 고이는 축복의 빛무리
-      fx.ellipse(bb.x, bb.y + 4, 16 * (0.7 + t * 0.5), 6 * (0.7 + t * 0.5))
+      fx.ellipse(ovx(bb.x, 0, 4), ovy(bb.y, 0, 4),
+        ovw(16 * (0.7 + t * 0.5), 6 * (0.7 + t * 0.5)), ovh(16 * (0.7 + t * 0.5), 6 * (0.7 + t * 0.5)))
         .fill({ color: 0xfff2c8, alpha: fade * 0.5 });
       // 사방으로 퍼지며 떠오르는 성광 알갱이 — 오라 반경까지 나아간다
       for (let k = 0; k < 12; k++) {
@@ -4258,11 +4343,10 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
         const ease = 1 - (1 - t) * (1 - t);
         const dist = bb.r * ease * 0.95;
         const rise = t * 22;
-        fx.circle(
-          bb.x + Math.cos(ang) * dist,
-          bb.y + Math.sin(ang) * dist * 0.5 - rise,
-          2.6 * fade + 0.7,
-        ).fill({ color: k % 3 === 0 ? 0xfff0b0 : 0xc8ecff, alpha: fade * 0.95 });
+        const bdx = Math.cos(ang) * dist;
+        const bdy = Math.sin(ang) * dist * 0.5 - rise;
+        fx.circle(ovx(bb.x, bdx, bdy), ovy(bb.y, bdx, bdy), 2.6 * fade + 0.7)
+          .fill({ color: k % 3 === 0 ? 0xfff0b0 : 0xc8ecff, alpha: fade * 0.95 });
       }
     }
     /*

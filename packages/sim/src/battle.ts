@@ -1954,6 +1954,29 @@ export function stepCombat(g: Game): void {
     const npos = m.nexusPos?.[foe];
     const goalY = (!frontier && npos) ? npos[1] : laneCenterY(m, nexusX);
     const distToNexus = dir > 0 ? nexusX - e.x : e.x - nexusX;
+    /*
+     * 두 갈래 출정 경로: 선택한 길의 상단 경유지를 지날 때까지 모든 아군이
+     * 같은 흐름장을 탄다. deployLaneY 만 스폰 위치에 쓰면 공용 넥서스 흐름장이
+     * 가까운 갈래를 다시 골라 부대가 서·동으로 찢어졌다.
+     */
+    if (e.team === 0 && m.deployWaypoints && g.deployLaneY !== 0) {
+      let wp = m.deployWaypoints[0];
+      let best = wp ? (wp.laneY > g.deployLaneY ? wp.laneY - g.deployLaneY : g.deployLaneY - wp.laneY) : 0;
+      for (let i = 1; i < m.deployWaypoints.length; i++) {
+        const cand = m.deployWaypoints[i]!;
+        const delta = cand.laneY > g.deployLaneY ? cand.laneY - g.deployLaneY : g.deployLaneY - cand.laneY;
+        if (delta < best) { wp = cand; best = delta; }
+      }
+      if (wp && e.x < wp.x) {
+        if (d.flying) moveToward(g, e, d, wp.x, wp.y, slowed);
+        else {
+          const cell = flowStepTo(m, wp.x, wp.y, e.x, e.y);
+          if (cell) moveToward(g, e, d, cell.x, cell.y, slowed);
+          else moveToward(g, e, d, wp.x, wp.y, slowed);
+        }
+        continue;
+      }
+    }
     // 격자 마스크 지형: 흐름장이 알려주는 다음 칸으로 간다.
     // 중앙선을 따라가면 굽은 길에서 벽을 향해 걷다 끼어 버린다 (실측: 중앙선
     // 59지점 중 22곳이 마스크상 벽이었다).

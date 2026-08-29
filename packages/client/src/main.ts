@@ -620,6 +620,14 @@ let campaignDenied: readonly string[] = [];
 let campaignLanes: { y: number; label: string; hold?: boolean; x?: number; r?: number }[] | null = null;
 /** true = 판이 열릴 때 「가운데 대기」로 시작한다 (14라운드). */
 let campaignStartHold = false;
+/**
+ * 「가운데 대기」를 고른 상태인가.
+ *
+ * 예전엔 sim 의 deployHold(= 그 턴 출정 자체를 건너뛰고 모아 둔다)로 구현했는데,
+ * 「대기」를 고른 판에서 내 턴에 아무도 안 나와 판이 멈춘 것처럼 보였다.
+ * 지금은 출정은 매 턴 그대로 하고 야영지에 집합시킨다 — 나와서 거점을 지킨다.
+ */
+let campaignHold = false;
 // ── 영웅 출정 (14라운드~) ──
 /** 이번 판에 불러낸 영웅 defId (부른 순서). */
 let heroPicked: string[] = [];
@@ -2171,6 +2179,7 @@ async function startCampaignStage(st: CampaignStage): Promise<void> {
       }))
       : null;
   campaignStartHold = !!st.deployStartHold;
+  campaignHold = false;
   // 두 갈래 맵·마을 방어전에서만 상단 선택 칸을 띄운다
   const laneBtn = document.getElementById('btn-lane');
   if (laneBtn) laneBtn.style.display = campaignLanes ? 'flex' : 'none';
@@ -2222,7 +2231,7 @@ async function startCampaignStage(st: CampaignStage): Promise<void> {
    * 어정쩡한 상태를 만들지 않는다 — 그러면 어느 칸에도 불이 안 들어온다).
    */
   if (game && campaignLanes) {
-    if (campaignStartHold) { setDeployHold(game, true); setHoldRally(true); }
+    if (campaignStartHold) { campaignHold = true; setHoldRally(true); }
     else {
       const first = campaignLanes.find((l) => !l.hold);
       if (first) setDeployLane(game, first.y);
@@ -3319,7 +3328,7 @@ function currentLaneIdx(): number {
   if (campaignLanes[0]?.x !== undefined) {
     return campaignLanes.findIndex((l) => l.x === game!.rallyX);
   }
-  if (game.deployHold) return campaignLanes.findIndex((l) => l.hold);
+  if (campaignHold) return campaignLanes.findIndex((l) => l.hold);
   return campaignLanes.findIndex((l) => !l.hold && l.y === game!.deployLaneY);
 }
 
@@ -3338,15 +3347,12 @@ function chooseLaneAt(idx: number): void {
     syncLaneBtn();
     return;
   }
-  const wasHeld = game.deployHeld;
-  setDeployHold(game, false);
+  campaignHold = false;
   setHoldRally(false);   // 길을 골랐으면 야영지 집합은 푼다
   setDeployLane(game, lane.y);
   audio.play('ui_click');
-  // 길을 골라도 그 자리에서 뛰쳐나가지 않는다 — 다음 턴이 시작될 때 함께 나선다
-  showToast(wasHeld > 0
-    ? `⚔ ${lane.label} — 모아 둔 ${wasHeld + 1}개 부대가 다음 턴에 한꺼번에 나선다!`
-    : `⚔ ${lane.label} 쪽으로 출정한다 (다음 턴부터)`);
+  // 이미 나와 있는 부대도 이 길로 향한다 (집합이 풀리면 진군으로 돌아간다)
+  showToast(`⚔ ${lane.label} 쪽으로 진군한다`);
   syncLaneBtn();
 }
 
@@ -3374,10 +3380,11 @@ function setHoldRally(on: boolean): void {
 
 function chooseHold(): void {
   if (!game) return;
-  setDeployHold(game, true);
+  campaignHold = true;
+  setDeployHold(game, false);   // 출정은 그대로 — 나와서 야영지를 지킨다
   setHoldRally(true);
   audio.play('ui_click');
-  showToast('🛡 야영지에서 대기한다 — 출정하지 않고 병력을 모은다 (둘레의 적은 문다)');
+  showToast('🛡 야영지를 지킨다 — 부대는 매 턴 나오되 진군하지 않는다 (둘레의 적은 문다)');
   syncLaneBtn();
 }
 
@@ -3413,7 +3420,7 @@ function syncLaneBtn(): void {
     sub.textContent = lane.x !== undefined
       ? (i === cur ? '여기로 집합 중' : '여기로 모으기')
       : lane.hold
-        ? (i === cur && game!.deployHeld > 0 ? `${game!.deployHeld}턴 모음` : '출정하지 않음')
+        ? (i === cur ? '야영지 수비 중' : '야영지 지키기')
         : (i === cur ? '이 길로 출정' : '이 길로 바꾸기');
   });
 }

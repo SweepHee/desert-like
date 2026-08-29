@@ -396,6 +396,7 @@ export const PORTRAITS: Record<string, string> = {
   '슬리피 할로우': '/assets/portraits/hollow.png',
   '오웬': '/assets/portraits/hollow.png',
   '사도': '/assets/portraits/apostle.png',
+  '실피': '/assets/portraits/silphy.png',
   '마멋 족장': '/assets/units/s_marmot_icon.png',
   '광대 인형': '/assets/units/m_clown_doll_icon.png',
 };
@@ -1397,7 +1398,10 @@ export const SYLVARIN_CAMPAIGN: readonly CampaignStage[] = [
       { who: '앨리스', text: '…물러갔어. 부서진 몸을 태엽으로 끌면서. 오빠가— 저게 정말 오빠라면, 300년 동안 저기 있었다는 거잖아.' },
       { who: '앨리스', text: '발타르의 성에 오빠의 머리가 있어. 그게 오빠의 기억이야. 숲지기 — 이게 아까 말한 「내 물건」이야. 찾아와 줘.' },
       { who: '티아', text: '…발밑에서, 심장 뛰는 소리가 들렸어요. 뿌리가 살아났어요.' },
-      { who: '사도', text: '(땅에서 일어나며) 뿌리가 기억한다. 아이야, 세계수가 너를 부른다. (숲의 명궁 합류!)' },
+      { who: '사도', text: '(땅에서 일어나며) 뿌리가 기억한다. 아이야, 세계수가 너를 부른다.' },
+      { who: '실피', text: '(나무 위에서 내려서며) 뿌리가 부르는 소리는 우리도 들었어. 이 마디를 지키려고 백 년을 나무 위에 있었거든.' },
+      { who: '카엘', text: '…줄곧 저 위에 계셨습니까?' },
+      { who: '실피', text: '화살 닿는 데까지가 내 숲이야. 이제 그 숲이 걸어가겠다니, 나도 따라가야지. (숲의 명궁 합류!)' },
     ],
   },
   {
@@ -2215,10 +2219,12 @@ export const HERO_UPGRADES: readonly HeroUpgradeDef[] = [
   { id: 'k_vessel', hero: 'c_kael', group: 'skill', name: '생명의 그릇', icon: '🍶', max: 3,
     desc: '내가 받는 회복량이 늘어난다 — 재생·치유가 다 커진다',
     steps: ['없음', '내가 받는 회복 +100%', '내가 받는 회복 +120%', '내가 받는 회복 +140%'] },
-  { id: 'k_shout', hero: 'c_kael', group: 'skill', name: '함성', icon: '🔊', max: 3,
-    desc: '외침으로 주변 아군의 체력을 잠시 회복시킨다',
-    steps: ['없음', '주변 아군 초당 5 재생 (10초 · 쿨 30초)',
-      '주변 아군 초당 7 재생 (10초 · 쿨 30초)', '주변 아군 초당 10 재생 (10초 · 쿨 30초)'] },
+  { id: 'k_shout', hero: 'c_kael', group: 'skill', name: '최후의 함성', icon: '📣', max: 3,
+    desc: '외침이 닿은 아군은 체력을 되찾고, 죽음에 이르는 피해도 버텨낸다',
+    steps: ['없음',
+      '주변 8타일 아군 초당 12 회복 (12초 · 쿨 30초) + 죽음을 30% 확률로 버티고 체력 30% 회복',
+      '초당 18 회복 · 반경 9타일 (12초 · 쿨 26초) + 버팀은 그대로',
+      '초당 25 회복 · 반경 10타일 (12초 · 쿨 22초) + 버팀은 그대로'] },
 
   // ── 신궁 에버그린 ───────────────────────────────────────────────────
   // 기본 스펙 — 전 영웅 공통. 「먼 눈(사거리)」은 에버그린만의 강화라 특수로 옮겼다.
@@ -2257,9 +2263,9 @@ export const HERO_UPGRADES: readonly HeroUpgradeDef[] = [
     steps: ['충전 없음', '부활 1회 충전 — 충전돼 있으면 즉시 부활', '부활 2회까지 충전'] },
   // 영웅 스킬
   { id: 'e_ward', hero: 'c_evergreen', group: 'skill', name: '숲의 가호', icon: '🍀', max: 3,
-    desc: '내 상태이상 면역을 곁의 아군에게도 나눠준다 (판당 1회)',
+    desc: '내 상태이상 면역을 곁의 아군에게도 나눠준다 — 1회 사용 · 부활 시 재충전',
     steps: ['나만 모든 상태이상 면역',
-      '+ 아군 1명에게도 면역 부여 (1회성 — 다시 태어나야 재사용)',
+      '+ 아군 1명에게도 면역 부여 (1회 사용 · 부활 시 재충전)',
       '+ 아군 2명에게 부여', '+ 아군 3명에게 부여'] },
   { id: 'e_flee', hero: 'c_evergreen', group: 'skill', name: '고립 회피', icon: '🏃', max: 2,
     desc: '곁에 아군이 없으면 싸우지 않고 기지로 물러난다',
@@ -2693,10 +2699,22 @@ export function applyHeroUpgrades(base: EntityDef, hero: string): EntityDef {
       return a;
     });
     if (shout > 0) {
+      /*
+       * 「최후의 함성」 — 카엘의 끝판 액티브.
+       * 회복 오라에 「최후의 버팀」(lastStand)이 얹혀 있다: 함성이 닿은 아군은
+       * 죽는 순간 30% 확률로 쓰러지지 않고 최대 체력의 30% 를 되찾는다.
+       * 판정은 sim 의 사망 처리에서 g.rng 로 본다 (battle.ts 「6) 사망 처리」).
+       */
+      const amt = [0, 12, 18, 25][shout]!;
+      const rad = [0, 8, 9, 10][shout]!;
+      const cd = [0, 30, 26, 22][shout]!;
       acts.push({
-        name: '함성', desc: `주변 아군이 초당 ${[0, 5, 7, 10][shout]!} 회복 (10초)`,
-        kind: 'regenAura', cooldown: SEC * 30, durTicks: SEC * 10,
-        damage: [0, 5, 7, 10][shout]!, auraRadius: TILE * 7,
+        name: '최후의 함성',
+        desc: `주변 아군이 초당 ${amt} 회복 (12초)`
+          + ' · 죽음에 이르는 피해를 30% 확률로 버텨내고 체력 30% 회복',
+        kind: 'regenAura', cooldown: SEC * cd, durTicks: SEC * 12,
+        damage: amt, auraRadius: TILE * rad,
+        lastStandPct: 30, lastStandHealPct: 30,
       });
     }
     out.actives = acts;

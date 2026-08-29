@@ -26,7 +26,7 @@ import {
   HEROES, HERO_STORIES, heroOwnPoints, HERO_UPGRADES, HERO_UPGRADES_BY_HERO, heroAlloc, saveHeroAlloc,
   heroPointsSpent, heroUpgradesOpen, HERO_UNLOCK_STAGE, heroGroupCap, heroGroupLeft,
   HERO_DEPLOY_MAX, HERO_PICK_COOLDOWN_SEC, heroGrowth, SHARED_GROUPS,
-  sharedSkillSpentOn, sharedSkillHolders,
+  sharedSkillSpentOn,
   applyHeroUpgrades, kaelRetinue, kaelReviveSec, kaelReviveCharges,
   evergreenRetinue, evergreenReviveSec, evergreenReviveCharges,
   elowynRetinue, elowynReviveSec, elowynReviveCharges,
@@ -1599,19 +1599,14 @@ function heroOwnSpent(hero: string, alloc: Record<string, number>): number {
               : `<span>${GROUP_LABEL[heroTab] ?? heroTab} 포인트${shared ? ' · 전 영웅 공용' : ''}</span>`
                 + `<b>${leftG} / ${capG}</b>`;
             list.appendChild(head);
-            const note = document.createElement('div');
-            note.className = 'eh-groupnote';
-            const holders = shared ? sharedSkillHolders(hAlloc) : [];
-            const nameOf = (id: string): string => HEROES.find((h) => h.id === id)?.name ?? id;
-            note.textContent = heroTab === 'stat'
-              ? '축복 탭의 「⭐ 영웅의 성장」을 하나 사면 공격·방어·체력·이동·공속·회복이 함께 한 단계씩 오른다. 모든 영웅에게 같이 적용된다.'
-              : shared
-                ? (holders.length > 0
-                  ? `같은 스킬에 더 부으면 단계가 오른다. 지금 쓰는 중 — ${holders.map((h) => `${nameOf(h.hero)} ${h.n}P`).join(' · ')}.`
-                    + ' 「−」로 빼서 다른 영웅에게 옮길 수 있다 (무료).'
-                  : '전 영웅이 나눠 쓰는 주머니다. 스테이지를 깰 때마다 1개씩 늘어난다 — 같은 스킬에 더 부으면 단계가 오른다.')
-                : '같은 줄에 포인트를 더 부으면 단계가 오른다. 「−」로 빼서 다른 줄로 옮길 수 있다 (무료).';
-            list.appendChild(note);
+            // 설명은 「기본」 갈래에만 둔다 — 이 값이 축복 탭에서 오른다는 건
+            // 화면만 봐서는 알 수 없다. 특수·영웅·스킬은 줄만 봐도 읽히므로 안 붙인다.
+            if (heroTab === 'stat') {
+              const note = document.createElement('div');
+              note.className = 'eh-groupnote';
+              note.textContent = '축복 탭의 「⭐ 영웅의 성장」을 하나 사면 공격·방어·체력·이동·공속·회복이 함께 한 단계씩 오른다. 모든 영웅에게 같이 적용된다.';
+              list.appendChild(note);
+            }
           }
           if (ups.length === 0) {
             const none = document.createElement('div');
@@ -1726,15 +1721,11 @@ function heroOwnSpent(hero: string, alloc: Record<string, number>): number {
         + `<div class="track"><i style="width:${pct}%"></i><span>${capped ? '' : `다음 레벨까지 EXP ${tp.need - tp.into}`}</span></div>`
         + `<div class="next">레벨마다: 시작 자금 +5 · 축복 포인트 +1${tp.level >= 10 ? ' · 수급량 +0.5%' : ''}`
         + (nextMile ? `<br/>Lv ${nextMile[0]} 고비: ${nextMile[1]}` : '') + '</div>';
-      // 「상한은 다음 판을 깨야 열리지만, 상한까지는 반복 클리어로 채울 수 있다」 —
-      // 스테이지가 막혔을 때 빠져나갈 길이 있다는 걸 여기서 알려 준다
-      xpBox.innerHTML +=
-        '<div class="tip">🔁 <b>반복 클리어로도 레벨이 오른다</b> — 이미 깬 스테이지를 다시 깨도 경험치는 그대로 들어온다.'
-        + ' 레벨 <b>상한</b>은 다음 스테이지를 클리어해야 열린다 (한 판당 +3).'
-        + (capped
-          ? ' 지금은 상한에 닿았다 — 더 올리려면 다음 판을 깨야 한다.'
-          : ` 지금 판이 버겁다면 편한 스테이지를 반복해 <b>상한 Lv ${tp.cap}</b>까지 올려 놓고 다시 도전해도 좋다.`)
-        + '</div>';
+      // 상한과 「거기까지는 반복 클리어로 채울 수 있다」만 짧게
+      xpBox.innerHTML += `<div class="tip">🔁 ${capped
+        ? '<b>상한 도달</b> — 다음 스테이지를 클리어하면 상한이 열린다.'
+        : `<b>상한 Lv ${tp.cap}</b> 까지는 이미 깬 스테이지를 반복 클리어해서 올릴 수 있다.`
+      }</div>`;
       left.appendChild(xpBox);
 
       // 총 효과 (자동 + 포인트 합산)
@@ -2221,7 +2212,7 @@ async function startCampaignStage(st: CampaignStage): Promise<void> {
    * 어정쩡한 상태를 만들지 않는다 — 그러면 어느 칸에도 불이 안 들어온다).
    */
   if (game && campaignLanes) {
-    if (campaignStartHold) setDeployHold(game, true);
+    if (campaignStartHold) { setDeployHold(game, true); setHoldRally(true); }
     else {
       const first = campaignLanes.find((l) => !l.hold);
       if (first) setDeployLane(game, first.y);
@@ -3339,6 +3330,7 @@ function chooseLaneAt(idx: number): void {
   }
   const wasHeld = game.deployHeld;
   setDeployHold(game, false);
+  setHoldRally(false);   // 길을 골랐으면 야영지 집합은 푼다
   setDeployLane(game, lane.y);
   audio.play('ui_click');
   // 길을 골라도 그 자리에서 뛰쳐나가지 않는다 — 다음 턴이 시작될 때 함께 나선다
@@ -3349,11 +3341,33 @@ function chooseLaneAt(idx: number): void {
 }
 
 /** 「가운데 대기」 — 이번 턴 출정을 미루고 병력을 모은다. */
+/**
+ * 「가운데 대기」 동안은 야영지가 집합지가 된다.
+ *
+ * 대기는 「출정만 안 한다」였던 탓에, 영웅과 그 동반 부대(카엘의 출정 유닛 강화 등)는
+ * 대기와 무관하게 그대로 적진으로 걸어 나가 전방기지 C·D 를 두들겼다. 집합지를 걸면
+ * 그 부대들이 야영지 둘레를 지키다가, 표식 둘레에 든 적만 물러 나간다.
+ * 길을 고르는 순간 집합지는 풀린다.
+ */
+function setHoldRally(on: boolean): void {
+  if (!game || !campaignLanes) return;
+  if (campaignLanes[0]?.x !== undefined) return; // 집합지형 판(마을 방어전)은 제 갈래가 따로 있다
+  if (on) {
+    const hx = game.map.spawnX[0] + 2 * FP;
+    game.rallyX = hx;
+    game.rallyY = laneCenterY(game.map, hx);
+  } else {
+    game.rallyX = 0;
+    game.rallyY = 0;
+  }
+}
+
 function chooseHold(): void {
   if (!game) return;
   setDeployHold(game, true);
+  setHoldRally(true);
   audio.play('ui_click');
-  showToast('🛡 가운데에서 대기한다 — 출정하지 않고 병력을 모은다');
+  showToast('🛡 야영지에서 대기한다 — 출정하지 않고 병력을 모은다 (둘레의 적은 문다)');
   syncLaneBtn();
 }
 
@@ -3422,6 +3436,9 @@ function consumeEvents(g: Game): void {
       const gNote = (gd?.flying ?? true) ? ' (대공 유닛만 공격 가능)' : '';
       showToast(`🛡 ${ev.team! + 1}팀 수호자 ${gName} 등장!${gNote}`);
       audio.play('cast_skill', { volume: 1 });
+    } else if (ev.kind === 'lastStand') {
+      // 「최후의 함성」으로 버텨낸 순간 — 그 자리에서 축복 소리가 터진다
+      audio.play('cast_bless', { volume: 0.9, ...(ev.x !== undefined ? { screenX: worldToPxX(ev.x) } : {}) });
     } else if (ev.kind === 'boneRevive') {
       // 뼈 무덤이 부화하는 순간 — 굉음이 울려퍼진다
       audio.play('bone_revive', { volume: 1, ...(ev.x !== undefined ? { screenX: worldToPxX(ev.x) } : {}) });

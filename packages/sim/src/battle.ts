@@ -1171,6 +1171,9 @@ function spawnBattleEntity(g: Game, defId: string, team: CombatTeam, owner: numb
     armorBuffImmuneUntil: 0,
     regenPerSec: 0,
     regenUntil: 0,
+    lastStandUntil: 0,
+    lastStandPct: 0,
+    lastStandHealPct: 0,
     regenImmuneUntil: 0,
     silencedUntil: 0,
     burnUntil: 0,
@@ -2845,6 +2848,12 @@ export function stepCombat(g: Game): void {
               ally.regenPerSec = amt;
               ally.regenUntil = until;
               ally.regenImmuneUntil = g.tick + a.cooldown;
+              // 「최후의 함성」: 회복과 함께 「죽음을 버티는」 가호도 같이 얹는다
+              if (a.lastStandPct) {
+                ally.lastStandUntil = until;
+                ally.lastStandPct = a.lastStandPct;
+                ally.lastStandHealPct = a.lastStandHealPct ?? 30;
+              }
               given++;
             }
             if (given > 0) spendSkill(e, i, a);
@@ -3260,6 +3269,18 @@ export function stepCombat(g: Game): void {
   // 6) 사망 처리
   for (const e of g.entities) {
     if (!e.alive || e.hp > 0) continue;
+    /*
+     * 「최후의 함성」(카엘): 함성이 닿아 있는 동안은 죽는 순간 버텨낼 수 있다.
+     * 체력이 0 밑으로 내려가도 쓰러지지 않고 최대 체력의 일부를 되찾는다.
+     * 확률 판정은 g.rng — 부활(rebirth)보다 먼저 본다.
+     */
+    if (g.tick < e.lastStandUntil && e.lastStandPct > 0 && def(e).tier !== 'structure'
+      && nextChance(g.rng, e.lastStandPct)) {
+      const back = idiv(def(e).maxHp * e.lastStandHealPct, 100);
+      e.hp = back > 0 ? back : 1;
+      g.events.push({ tick: g.tick, kind: 'lastStand', team: e.team as TeamId, x: e.x, y: e.y });
+      continue;
+    }
     // 1회 부활 (검은새): 죽는 대신 쓰러져 있다가 되살아난다
     {
       const rb = def(e).rebirth;

@@ -248,6 +248,14 @@ export interface ActiveSkill {
   readonly holdGround?: boolean;      // 지속 중 이동 불가 (뿌리박기)
   /** reflect: 지속 중 받은 평타 피해의 몇 %를 공격자에게 되돌린다 (마법·독·장판은 제외). */
   readonly reflectPct?: number;
+  /**
+   * regenAura 에 얹는 「최후의 버팀」 — 이 오라가 닿은 아군은 죽는 순간
+   * 이 확률(%)로 쓰러지지 않고, 최대 체력의 lastStandHealPct % 를 되찾는다.
+   * (카엘 「최후의 함성」)
+   */
+  readonly lastStandPct?: number;
+  /** 최후의 버팀이 터졌을 때 되찾는 최대 체력 % (기본 30). */
+  readonly lastStandHealPct?: number;
   readonly overheatSlowTicks?: number; // 종료 직후 둔화 (태엽 감기 과열)
   // allybuff / allyarmor / weaken / cure
   readonly auraRadius?: number; // FP
@@ -638,6 +646,12 @@ export interface Entity {
   /** 체력 재생 버프 (드라이어드) — 초당 회복량과 만료/면역. */
   regenPerSec: number;
   regenUntil: number;
+  /** 이 틱까지 「최후의 버팀」이 걸려 있다 (카엘 「최후의 함성」). */
+  lastStandUntil: number;
+  /** 최후의 버팀이 터질 확률 % (0 이면 없음). */
+  lastStandPct: number;
+  /** 버텨냈을 때 되찾는 최대 체력 %. */
+  lastStandHealPct: number;
   regenImmuneUntil: number;
   /** 침묵 — 액티브 스킬 사용 불가 (엘루리온). */
   silencedUntil: number;
@@ -939,6 +953,7 @@ export interface GameEvent {
     | 'guardianSpawn' // team 의 수호자 젠
     | 'guardianDown'
     | 'boneRevive'    // 「뼈 무덤」에서 본드래곤이 다시 일어섰다 (렌더 연출용)
+    | 'lastStand'     // 「최후의 함성」으로 죽음을 버텨냈다 (렌더 연출용)
     | 'gameOver';
   readonly team?: TeamId;
   readonly slot?: number;
@@ -951,7 +966,7 @@ export interface GameEvent {
    * 「슬리피 할로우 등장」이라고 뜬다.
    */
   readonly defId?: string;
-  /** boneRevive: 되살아난 자리 (FP). */
+  /** boneRevive · lastStand: 그 일이 벌어진 자리 (FP). */
   readonly x?: number;
   readonly y?: number;
 }

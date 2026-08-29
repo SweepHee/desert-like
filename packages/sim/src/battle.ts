@@ -1959,7 +1959,9 @@ export function stepCombat(g: Game): void {
      * 같은 흐름장을 탄다. deployLaneY 만 스폰 위치에 쓰면 공용 넥서스 흐름장이
      * 가까운 갈래를 다시 골라 부대가 서·동으로 찢어졌다.
      */
-    if (e.team === 0 && m.deployWaypoints && g.deployLaneY !== 0) {
+    // rallyX 가 켜졌다면 「야영지 지키기」가 최우선이다. 마지막에 고른 숲길 값은
+    // 다음 출정을 위해 남아 있어도, 이미 나온 부대는 아래 집결 로직으로 복귀해야 한다.
+    if (e.team === 0 && g.rallyX === 0 && m.deployWaypoints && g.deployLaneY !== 0) {
       let wp = m.deployWaypoints[0];
       let best = wp ? (wp.laneY > g.deployLaneY ? wp.laneY - g.deployLaneY : g.deployLaneY - wp.laneY) : 0;
       for (let i = 1; i < m.deployWaypoints.length; i++) {

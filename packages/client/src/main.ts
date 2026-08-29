@@ -2733,10 +2733,17 @@ function buildHeroShop(): void {
 /** 영웅 칸의 남은 쿨·상태를 지금 값으로 맞춘다 (매 프레임). */
 function syncHeroShop(): void {
   const box = document.getElementById('hero-shop');
-  if (!box || heroPickable.length === 0 || box.classList.contains('hidden')) return;
+  if (!box || heroPickable.length === 0) return;
   const now = campNowSec();
   const waitLeft = Math.max(0, Math.ceil(heroNextPickSec - now));
   const full = heroPicked.length >= HERO_DEPLOY_MAX;
+  const hasUnpicked = heroPickable.some((id) => !heroPicked.includes(id));
+  // 첫 영웅 뒤 쿨이 끝났고, 3명 제한 안에서 실제로 더 고를 수 있을 때만 알린다.
+  const nextReady = heroPicked.length > 0 && !full && hasUnpicked && waitLeft === 0;
+  const heroTab = document.querySelector<HTMLButtonElement>('#shop-tabs button[data-tab="hero"]');
+  heroTab?.classList.toggle('hero-ready', nextReady && shopTab !== 'hero');
+  if (heroTab) heroTab.title = nextReady ? '다음 영웅이 준비됐어요' : '';
+  if (box.classList.contains('hidden')) return;
 
   const note = box.querySelector('.hs-note');
   if (note) {
@@ -2795,6 +2802,7 @@ function syncShopTabs(): void {
     document.getElementById('hero-shop')?.classList.add('hidden');
     document.getElementById('shop')?.classList.remove('hidden');
     document.getElementById('coach')?.classList.add('hidden');
+    document.querySelector('#shop-tabs button[data-tab="hero"]')?.classList.remove('hero-ready');
     shopTab = 'unit';
     return;
   }

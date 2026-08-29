@@ -354,6 +354,28 @@
       content: 'NEW'; margin-left: 6px; font-size: 9px; letter-spacing: .08em;
       color: #1a1206; background: #ffd070; border-radius: 4px; padding: 1px 4px;
     }
+    /* 호출 쿨이 끝났을 때, 다른 탭을 보고 있어도 다음 선택을 놓치지 않게 한다. */
+    #shop-tabs button.hero-ready { position: relative; border-color: rgba(130,220,145,.72); }
+    #shop-tabs button.hero-ready::before {
+      content: '다음 영웅이 준비됐어요';
+      position: absolute; left: 50%; bottom: calc(100% + 8px);
+      transform: translateX(-50%); width: max-content; max-width: 190px;
+      padding: 7px 10px; border: 1px solid rgba(130,220,145,.62); border-radius: 7px;
+      background: rgba(18,31,24,.96); color: #b9f0bd;
+      box-shadow: 0 5px 16px rgba(0,0,0,.5); font-size: 11px; font-weight: 700;
+      pointer-events: none; z-index: 20;
+      animation: hero-ready-bob 1.5s ease-in-out infinite;
+    }
+    #shop-tabs button.hero-ready::after {
+      content: ''; position: absolute; left: 50%; bottom: calc(100% + 3px);
+      width: 8px; height: 8px; transform: translateX(-50%) rotate(45deg);
+      background: rgba(18,31,24,.96); border-right: 1px solid rgba(130,220,145,.62);
+      border-bottom: 1px solid rgba(130,220,145,.62); pointer-events: none; z-index: 21;
+    }
+    @keyframes hero-ready-bob {
+      0%, 100% { margin-bottom: 0; }
+      50% { margin-bottom: 3px; }
+    }
     #shop {
       flex: 1; display: flex; gap: 8px; flex-wrap: wrap; align-content: flex-start;
       overflow-y: auto; overscroll-behavior: contain; padding: 2px; min-height: 0;

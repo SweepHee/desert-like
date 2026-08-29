@@ -397,15 +397,16 @@ export const PORTRAITS: Record<string, string> = {
   '오웬': '/assets/portraits/hollow.png',
   '사도': '/assets/portraits/apostle.png',
   '실피': '/assets/portraits/silphy.png',
-  // 15 신규 화자 — 전용 포트레이트가 나오기 전까지는 유닛 아이콘을 쓴다
-  '하르간': '/assets/units/k_grandshaman_icon.png',
+  // 15 신규 화자 — 카르자 부족장과 에메랄드 숲 암살자 대장
+  '하르간': '/assets/portraits/hargan.png',
+  '아샤': '/assets/portraits/asha.png',
   '마멋 족장': '/assets/units/s_marmot_icon.png',
   '광대 인형': '/assets/units/m_clown_doll_icon.png',
 };
 
 /** 적/중립 진영 화자 — 대화창에서 오른쪽에 선다. */
 const RIGHT_SIDE = new Set(['쿠르가', '마몬', '발타르', '슬리피 할로우', '앨리스', '광대 인형', '마멋 족장',
-  '하르간', '이르사']);
+  '하르간', '아샤']);
 export function speakerSide(who: string): 'left' | 'right' {
   return RIGHT_SIDE.has(who) ? 'right' : 'left';
 }
@@ -1718,11 +1719,11 @@ export const SYLVARIN_CAMPAIGN: readonly CampaignStage[] = [
       { who: '엘로윈', text: '문은 두드리는 게 아니라 열고 들어가는 거다. …에메랄드 숲으로 가자.' },
       { who: '티아', text: '에메랄드 숲이요? 거긴 엘프인데 실바린이 아니라고… 300년 동안 한 번도 안 도왔다면서요.' },
       { who: '엘로윈', text: '돕지 않았지. 대신 값을 받으면 움직인다. 그들은 자물쇠를 여는 일에 관해서는 대륙 최고다.' },
-      { who: '이르사', text: '(나무 그늘에서) 오랜만이군, 현자. 여전히 공짜로 남의 칼을 빌리려 드는가?' },
+      { who: '아샤', text: '(나무 그늘에서) 오랜만이군, 현자. 여전히 공짜로 남의 칼을 빌리려 드는가?' },
       { who: '카엘', text: '…언제부터 거기 계셨습니까.' },
-      { who: '이르사', text: '너희가 숲에 들어선 순간부터. 값은 금이다 — 고원의 금. 그것도 우리가 쓰는 것으로.' },
+      { who: '아샤', text: '너희가 숲에 들어선 순간부터. 값은 금이다 — 고원의 금. 그것도 우리가 쓰는 것으로.' },
       { who: '브리아', text: '고원의 금? 그거 지금 카르자가 앉아서 캐고 있는데.' },
-      { who: '이르사', text: '알고 있다. 그러니 값인 거지. 쉬웠으면 벌써 우리가 캤을 테니.' },
+      { who: '아샤', text: '알고 있다. 그러니 값인 거지. 쉬웠으면 벌써 우리가 캤을 테니.' },
       { who: '', text: '고원의 능선은 좁고 굽어 있었다. 바위 사이로 난 길마다 채굴 캠프가 앉아 있고,\n그 너머 붉은 천막에서 북소리가 들려왔다.' },
       { who: '하르간', text: '숲 것들이 고원까지 올라왔군. 여긴 우리가 백 년을 걸어 찾은 땅이다. 돌아가라.' },
       { who: '엘로윈', text: '우리도 물러설 곳이 없소. 뒤에 숲이 마르고 있어서.' },
@@ -1738,7 +1739,7 @@ export const SYLVARIN_CAMPAIGN: readonly CampaignStage[] = [
       { who: '하르간', text: '(오래 침묵한다) …이름이 뭐냐, 숲의 아이.' },
       { who: '카엘', text: '카엘입니다.' },
       { who: '하르간', text: '기억해 두마. 카르자는 빚을 잊지 않는다 — 갚을 때가 오면 북을 울리지.' },
-      { who: '이르사', text: '(광석을 손에 굴리며) 값은 받았다. 문 하나. 그 이상은 묻지 마라.' },
+      { who: '아샤', text: '(광석을 손에 굴리며) 값은 받았다. 문 하나. 그 이상은 묻지 마라.' },
       { who: '엘로윈', text: '그거면 충분하오.' },
     ],
   },

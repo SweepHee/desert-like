@@ -62,21 +62,6 @@ function isShielded(g: Game, t: Entity): boolean {
   return t.defId === 'nexus' && !g.guardianDown[t.team as TeamId];
 }
 
-/**
- * 주술 결계 — 결계 원 밖에 선 자는 이 유닛을 노릴 수 없다.
- *
- * 기준은 「공격자가 원 안에 있느냐」다: 갱 안으로 들어가면 원거리도 때릴 수 있고,
- * 밖에서는 사거리가 아무리 길어도 닿지 않는다. 결계를 세운 주술사가 죽으면
- * 캠페인 레이어가 wardUntil 을 지워 한 번에 풀린다.
- * (15 「에메랄드 숲의 값」 — 갱을 밖에서 갉지 못하게 해 근접을 들여보내게 만든다)
- *
- * 결정론: 정수 거리 비교뿐이다.
- */
-function wardBlocks(g: Game, attacker: Entity, t: Entity): boolean {
-  if (g.tick >= t.wardUntil || t.wardR <= 0) return false;
-  return dist2(attacker.x, attacker.y, t.wardX, t.wardY) > t.wardR * t.wardR;
-}
-
 /** 수호자(중간보스)는 모든 상태이상에 면역이다. */
 function isStatusImmune(e: Entity): boolean {
   const d = def(e);
@@ -278,7 +263,7 @@ function findTarget(g: Game, e: Entity, d: EntityDef, skipStructures = false, ra
     if (cdx > coarse || cdx < -coarse) continue;
     const cdy = t.y - origin.y;
     if (cdy > coarse || cdy < -coarse) continue;
-    if (!canHit(g, d, t) || isShielded(g, t) || wardBlocks(g, e, t)) continue;
+    if (!canHit(g, d, t) || isShielded(g, t)) continue;
     const td = def(t);
     if (skipStructures && td.tier === 'structure') continue;
     const reach = acquire + d.radius + td.radius;
@@ -331,7 +316,7 @@ function rallyGuardTarget(g: Game, e: Entity, d: EntityDef): number {
   for (const t of g.entities) {
     if (!t.alive || t.team === e.team) continue;
     if (def(t).tier === 'structure') continue;
-    if (!canHit(g, d, t) || isShielded(g, t) || wardBlocks(g, e, t)) continue;
+    if (!canHit(g, d, t) || isShielded(g, t)) continue;
     if (dist2(t.x, t.y, g.rallyX, g.rallyY) > gr2) continue;
     const d2 = dist2(e.x, e.y, t.x, t.y);
     if (best === -1 || d2 < bestD2) {
@@ -348,7 +333,7 @@ function findConfusedTarget(g: Game, e: Entity, d: EntityDef): number {
   let bestD2 = -1;
   for (const t of g.entities) {
     if (!t.alive || t.team !== e.team || t.id === e.id) continue;
-    if (!canHit(g, d, t) || isShielded(g, t) || wardBlocks(g, e, t)) continue;
+    if (!canHit(g, d, t) || isShielded(g, t)) continue;
     const td = def(t);
     const reach = d.acquireRange + d.radius + td.radius;
     const d2 = dist2(e.x, e.y, t.x, t.y);
@@ -902,12 +887,6 @@ function applyDamage(g: Game, attacker: Entity, attackerDef: EntityDef, victim: 
     victim.lastAttackerId = attacker.id;
     return;
   }
-  /*
-   * 주술 결계: 결계 밖에서 날아온 것은 닿지 않는다.
-   * 조준에서 이미 걸러지지만, 광역은 조준과 무관하게 번지므로 여기서도 막는다 —
-   * 안 그러면 갱 밖에서 광역만 던져 결계를 우회할 수 있다.
-   */
-  if (wardBlocks(g, attacker, victim)) return;
   const w = attackerDef.weapon!;
   const vd = def(victim);
   // 은신 중에는 어떤 평타도 맞지 않는다 (이미 날아온 투사체 포함)
@@ -1192,10 +1171,6 @@ function spawnBattleEntity(g: Game, defId: string, team: CombatTeam, owner: numb
     armorBuffImmuneUntil: 0,
     regenPerSec: 0,
     regenUntil: 0,
-    wardUntil: 0,
-    wardX: 0,
-    wardY: 0,
-    wardR: 0,
     lastStandUntil: 0,
     lastStandPct: 0,
     lastStandHealPct: 0,
@@ -1636,10 +1611,7 @@ export function stepCombat(g: Game): void {
     let valid = false;
     // cur.team 체크: 혼란 중 조준했던 "자기 편"이 회복 후에도 타겟으로 남아
     // 유닛이 아군만 영원히 따라다니는 바보 상태를 막는다
-    if (cur && cur.alive && cur.team !== e.team && canHit(g, d, cur)
-      // 결계 밖으로 나갔으면 물고 있던 것도 놓는다 — 안 그러면 계속 쏘면서
-      // 피해는 0 이라 「때리는데 안 죽는」 그림이 된다 (15 금광 고원)
-      && !wardBlocks(g, e, cur)) {
+    if (cur && cur.alive && cur.team !== e.team && canHit(g, d, cur)) {
       const origin = acquireOrigin(e, d);
       const cd = def(cur);
       // 이미 문 대상은 탐지 거리의 1.3배까지 따라간다 (수호자는 앵커 기준 유지).

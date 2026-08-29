@@ -1310,6 +1310,36 @@ function unlockSage(g: Game, sage: Entity): void {
 
 {
   /*
+   * 15 「에메랄드 숲의 값」 지형 계약.
+   * 새 그림의 가로 공간과 광산 격리를 수치로 잠가, 좌표를 다시 좁혀 옛 문제가
+   * 돌아오지 않게 한다. 가장 가까운 두 광산도 17타일보다 멀어야 한다.
+   */
+  const m = MAPS['goldmine']!;
+  ok(m.length === tiles(74) && m.halfW === tiles(16),
+    '금광 고원: 새 74×32타일 가로형 전장');
+  ok(m.mask?.rows === 148 && m.mask.cols === 64 && m.mask.data.length === 148 * 64,
+    '금광 고원: 148×64 통행 마스크');
+  const mines = [[15.3, -9.2], [36.9, -8.9], [56.8, -9.0],
+                 [16.3, 8.8], [37.3, 8.6], [57.1, 8.7]];
+  const sites = [[5.2, 0], [68.4, 0], [36.9, 0], ...mines];
+  ok(sites.every(([x, y]) => isWalkable(m, tiles(x!), tiles(y!))),
+    '금광 고원: 양 본진·광산 6곳·중앙 집결지가 전부 길 위');
+  let nearest = Infinity;
+  for (let i = 0; i < mines.length; i++) for (let j = i + 1; j < mines.length; j++) {
+    const dx = mines[i]![0]! - mines[j]![0]!;
+    const dy = mines[i]![1]! - mines[j]![1]!;
+    nearest = Math.min(nearest, Math.hypot(dx, dy));
+  }
+  ok(nearest >= 17, `금광 고원: 광산 간 최소 ${nearest.toFixed(1)}타일 (교전 격리)`);
+  const steps = maskStepsOf(m);
+  const enemySpawn = m.spawnPos![1];
+  const idx = maskIndexOf(m, enemySpawn[0], enemySpawn[1]);
+  ok(idx >= 0 && (steps?.[1]?.[idx] ?? -1) >= 0,
+    '금광 고원: 양 본진 사이 지상 경로가 이어진다');
+}
+
+{
+  /*
    * 「올빼미 성채」(5스테이지) 지형 계약 — 절벽·언덕·계단 판.
    *
    * 이 판의 근거가 전부 지형에 있다. 마스크는 작가 지형에서 굽는 것이라

@@ -665,8 +665,6 @@ let goldOwner: number[] = [];
 let goldHold: number[] = [];
 /** 갱에 배치된 광부 엔티티 id. */
 let goldMiners: number[][] = [];
-/** 갱마다 결계를 세운 카르자 주술사 id (-1 = 이미 끊겼다). */
-let goldWardId: number[] = [];
 /** 다음 광부를 내보낼 시각(초) — 죽자마자 갱에서 튀어나오지 않게 한다. */
 let goldMinerNext: number[] = [];
 /** 모은 금 (우리 / 카르자). 이 판의 승패는 이 둘로만 난다. */
@@ -2235,7 +2233,6 @@ async function startCampaignStage(st: CampaignStage): Promise<void> {
   goldOwner = [];
   goldHold = [];
   goldMiners = [];
-  goldWardId = [];
   goldMinerNext = [];
   goldAlly = 0;
   goldFoe = 0;
@@ -2320,7 +2317,6 @@ async function startCampaignStage(st: CampaignStage): Promise<void> {
     goldOwner = gr.mines.map(() => 1);
     goldHold = gr.mines.map(() => 0);
     goldMiners = gr.mines.map(() => []);
-    goldWardId = gr.mines.map(() => -1);
     goldMinerNext = gr.mines.map(() => 0);
     gr.mines.forEach((m, i) => {
       const c = at(m.xTile, m.yOffTile);
@@ -2332,15 +2328,6 @@ async function startCampaignStage(st: CampaignStage): Promise<void> {
           const q = at(m.xTile + (k % 4 - 1.5) * 0.7, m.yOffTile + (Math.floor(k / 4) - 0.5) * 0.7);
           spawnGarrison(game!, row.defId, 1, q.x, q.y, Math.floor(gr.radiusTiles * FP));
         }
-      }
-      /*
-       * 결계 주술사 — 갱마다 하나. 이 자가 서 있는 동안 갱 안의 카르자는
-       * 갱 밖에서 오는 공격에 닿지 않는다. 근접을 들여보내 이 자를 끊어야
-       * 갱이 열린다 (원거리로 밖에서 갉는 길을 막는다).
-       */
-      {
-        const w = spawnGarrison(game!, 'k_shaman', 1, c.x, c.y, Math.floor(gr.radiusTiles * FP));
-        goldWardId[i] = w.id;
       }
       // 카르자 광부 — 이미 캐고 있다
       spawnGoldMiners(i, 1);
@@ -2581,38 +2568,6 @@ function tickGoldRace(): void {
       }
     }
     syncGoldMiners(i);
-  }
-
-  /*
-   * ── 주술 결계 ──
-   *
-   * 갱마다 선 카르자 주술사가 살아 있는 동안, 그 갱 안의 카르자는 갱 밖에서
-   * 오는 공격에 닿지 않는다. 주술사를 끊어야 갱이 열린다.
-   */
-  for (let i = 0; i < gr.mines.length; i++) {
-    const wid = goldWardId[i] ?? -1;
-    if (wid < 0) continue;
-    const w = game.entities.find((q) => q.id === wid);
-    if (!w || !w.alive) {
-      goldWardId[i] = -1;
-      showToast(`✨ ${gr.mines[i]!.label}의 결계가 풀렸다 — 이제 원거리도 닿는다`);
-      audio.play('cast_bless', { volume: 0.95 });
-      continue;
-    }
-    const c = goldMineAt(i);
-    if (!c) continue;
-    const wr = Math.floor(gr.radiusTiles * FP);
-    const wr2 = wr * wr;
-    for (const e of game.entities) {
-      if (!e.alive || e.team !== 1) continue;
-      const dx = e.x - c.x;
-      const dy = e.y - c.y;
-      if (dx * dx + dy * dy > wr2) continue;
-      e.wardUntil = game.tick + 40;   // 2초 — 매 틱 갱신되므로 나가면 곧 풀린다
-      e.wardX = c.x;
-      e.wardY = c.y;
-      e.wardR = wr;
-    }
   }
 
   /*
@@ -4358,8 +4313,6 @@ function tick(deltaMS: number): void {
           x: c?.x ?? 0, y: c?.y ?? 0,
           owner: goldOwner[i] ?? -1,
           hold: (goldHold[i] ?? 0) / need,
-          // 결계 주술사가 살아 있으면 그 반경(타일)을 넘긴다 — 0 이면 결계 없음
-          ward: (goldWardId[i] ?? -1) >= 0 ? gr.radiusTiles : 0,
         };
       }));
     } else {

@@ -648,17 +648,6 @@ export interface Entity {
   /** 체력 재생 버프 (드라이어드) — 초당 회복량과 만료/면역. */
   regenPerSec: number;
   regenUntil: number;
-  /**
-   * 주술 결계 — 이 틱까지, 아래 원 **밖에 선 적은 이 유닛을 노릴 수 없다**.
-   *
-   * 15 「에메랄드 숲의 값」의 갱마다 카르자 주술사가 걸어 둔 것이다. 원거리로
-   * 갱을 밖에서 갉는 것을 막아, 근접을 들여보내 주술사를 끊게 만든다.
-   * (주술사가 죽으면 캠페인 레이어가 이 값을 지운다)
-   */
-  wardUntil: number;
-  wardX: number;
-  wardY: number;
-  wardR: number;
   /** 이 틱까지 「최후의 버팀」이 걸려 있다 (카엘 「최후의 함성」). */
   lastStandUntil: number;
   /** 최후의 버팀이 터질 확률 % (0 이면 없음). */

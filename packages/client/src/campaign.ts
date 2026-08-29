@@ -1662,18 +1662,18 @@ export const SYLVARIN_CAMPAIGN: readonly CampaignStage[] = [
     startMoney: 500,
     goldRace: {
       target: 20000,
-      // 갱 여섯 — gen_goldmine.py 가 「벽에서 가장 먼 점」으로 잰 갱구 자리
+      // 새 가로형 고원의 갱 여섯. 인접 광산도 17타일 이상 떨어져 교전이 섞이지 않는다.
       mines: [
-        { xTile: 16.2, yOffTile: -9.5, label: '북서 갱' },
-        { xTile: 28.2, yOffTile: -8.4, label: '북중 갱' },
-        { xTile: 40.0, yOffTile: -9.4, label: '북동 갱' },
-        { xTile: 16.5, yOffTile: 8.8, label: '남서 갱' },
-        { xTile: 28.5, yOffTile: 8.6, label: '남중 갱' },
-        { xTile: 39.7, yOffTile: 9.1, label: '남동 갱' },
+        { xTile: 15.3, yOffTile: -9.2, label: '북서 갱' },
+        { xTile: 36.9, yOffTile: -8.9, label: '북중 갱' },
+        { xTile: 56.8, yOffTile: -9.0, label: '북동 갱' },
+        { xTile: 16.3, yOffTile: 8.8, label: '남서 갱' },
+        { xTile: 37.3, yOffTile: 8.6, label: '남중 갱' },
+        { xTile: 57.1, yOffTile: 8.7, label: '남동 갱' },
       ],
       // 갱 말고 부대를 세울 수 있는 자리 — 사잇길을 잡으면 양쪽 갱을 다 받친다
       midpoints: [
-        { xTile: 28.2, yOffTile: 0.2, label: '가운데 사잇길' },
+        { xTile: 36.9, yOffTile: 0.0, label: '가운데 사잇길' },
       ],
       radiusTiles: 4.5,
       captureSec: 10,
@@ -1693,8 +1693,8 @@ export const SYLVARIN_CAMPAIGN: readonly CampaignStage[] = [
       ],
       workerDefIds: ['c_elf_miner'],
       workersPerMine: 3,
-      // 적 요새(x50.2)는 못 친다 — 마지막 갱 너머로는 진군하지 않는다
-      holdLineXTile: 44,
+      // 적 요새는 못 친다 — 마지막 갱 너머로는 진군하지 않는다
+      holdLineXTile: 62,
     },
     // 카르자 본진은 갱을 되찾으러 계속 밀어낸다
     enemyAllowedUnits: [
@@ -1714,11 +1714,11 @@ export const SYLVARIN_CAMPAIGN: readonly CampaignStage[] = [
     },
     spawns: [
       { defId: 'c_kael', label: '🛡 숲지기 카엘 참전!', heroPick: true, everySec: 110,
-        concurrentCap: 1, respawnAfterDeathSec: 110, atXTile: 7, friendly: true },
+        concurrentCap: 1, respawnAfterDeathSec: 110, atXTile: 8, friendly: true },
       { defId: 'c_elowyn', label: '🧙 현자 엘로윈 참전!', heroPick: true, everySec: 240,
-        concurrentCap: 1, respawnAfterDeathSec: 240, atXTile: 7, friendly: true },
+        concurrentCap: 1, respawnAfterDeathSec: 240, atXTile: 8, friendly: true },
       { defId: 'c_evergreen', label: '🏹 신궁 에버그린 참전!', heroPick: true, everySec: 170,
-        concurrentCap: 1, respawnAfterDeathSec: 170, atXTile: 7, friendly: true },
+        concurrentCap: 1, respawnAfterDeathSec: 170, atXTile: 8, friendly: true },
       // 후반 압박 — 카르자가 갱을 되찾으러 정예를 보낸다
       { defId: 'k_highlander', label: '🐎 고원 기마전사', atSec: 480, everySec: 150, concurrentCap: 3 },
       { defId: 'k_sandgiant', label: '🗿 모래 거인', atSec: 720, everySec: 200, concurrentCap: 2 },
@@ -1758,7 +1758,7 @@ export const SYLVARIN_CAMPAIGN: readonly CampaignStage[] = [
       { who: '엘로윈', text: '갱 여섯을 하나씩 걷어내라. 뺏을수록 우리는 빨라지고 저쪽은 느려진다.',
       },
       { who: '아린', text: '적 요새까지는 못 갑니다 — 길이 막혀 있어요. 이 판은 갱으로만 결판납니다.' },
-      { who: '브리아', text: '그리고 갱마다 주술사가 결계를 쳐 뒀어. 밖에서 쏴 봐야 한 대도 안 들어가 — 안으로 밀고 들어가서 주술사부터 끊어. 그래야 갱이 열려.' },
+      { who: '브리아', text: '갱들은 서로 멀리 떨어져 있어. 한 곳을 치는 부대가 다른 갱까지 건드리진 못해 — 어디부터 뺏을지 정해서 밀어붙여.' },
     ],
     outro: [
       { who: '하르간', text: '(광차가 멎는다) …북이 멎었군. 백 년을 걸어와서, 또 걸어 나가야 하나.' },

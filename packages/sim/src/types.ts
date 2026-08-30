@@ -30,6 +30,13 @@ export type BotDifficulty = 'easy' | 'normal' | 'hard';
  */
 export type BotStyle = 'fastTech' | 'rushThenGreedy' | 'balanced' | 'finalOnly';
 
+/** 적 봇의 턴별 생산 로스터. 가장 늦게 시작한 구간 하나만 적용된다. */
+export interface EnemyUnitPhase {
+  readonly fromWave: number;
+  readonly units: readonly string[];
+  readonly preferred?: readonly string[];
+}
+
 export type Tier =
   | 'basic' | 'novice' | 'mid' | 'high' | 'air' | 'supreme' | 'final'
   | 'structure' | 'guardian';
@@ -124,6 +131,13 @@ export interface Weapon {
   readonly dotDps?: number;
   readonly dotTicks?: number;
   readonly dotChance?: number;
+  /** 명중 시 실명 (공격 불가, 이동은 가능). wardTicks 동안 재감염 없음. */
+  readonly blindTicks?: number;
+  readonly blindChance?: number;
+  readonly blindWardTicks?: number;
+  /** 명중 시 「폭산」 표식 — 이대로 죽으면 제 편에게 최대 체력의 %만큼 터진다. */
+  readonly deathBombPct?: number;
+  readonly deathBombTicks?: number;
   /** 명중 시 속박 (이동 불가, 공격은 가능). */
   readonly rootTicks?: number;
   readonly rootChance?: number;
@@ -227,7 +241,9 @@ export interface ActiveSkill {
     | 'debuffZone'   // 오베론 — 지속딜 + 공속·사거리 감소 장판
     | 'puppetShow'   // 앨리스 「인형극」 — 주변 아군 기물을 복제
     | 'curtainCall'  // 앨리스 「커튼콜」 — 적을 빨아들였다 무대 밖으로 치운다
-    | 'meteor';      // 엘로윈 「메테오 스트라이크」 — 넓은 지역에 운석 낙하 (화상·질식)
+    | 'meteor'       // 엘로윈 「메테오 스트라이크」 — 넓은 지역에 운석 낙하 (화상·질식)
+    | 'snipe'        // 아샤 「저격」 — 제자리에 서서 먼 후열 하나를 쏜다 (맞으면 취소)
+    | 'massCharm';   // 아샤 「환술」 — 반경 안의 적을 통째로 우리 편으로 돌린다
   // strike: 스킬 피해 (방어 적용). executeBelowPct 가 있으면
   // 대상 체력이 그 % 이하일 때만 발동하고 executeBonus 를 더한다.
   readonly damage?: number;
@@ -309,6 +325,34 @@ export interface ActiveSkill {
    * 지원가 > 원거리 > 지금 체력이 가장 적은 적 순으로 목표를 다시 고른다.
    */
   readonly assassinate?: boolean;
+  /** 은신 중 공격 속도 가산 %. */
+  readonly stealthAtkSpeedPct?: number;
+  /** 은신 중 지상 평타가 이 반경으로 번진다 (아샤 「잠행」). */
+  readonly stealthSplash?: number;
+  /** 은신 중 태그별 추가 피해 — 천·가죽은 얇게, 판금은 깊게 벤다. */
+  readonly stealthBonus?: Partial<Record<BonusKey, number>>;
+  /**
+   * 은신 중 처형: 이 태그를 단 적이 체력 belowPct% 이하이면 chancePct% 로 즉사.
+   * 갑옷 틈을 찾아 넣는 한 방이라 판금에만 건다.
+   */
+  readonly stealthExecute?: {
+    readonly tag: BonusKey; readonly belowPct: number; readonly chancePct: number;
+  };
+  /** 은신 중에는 몸싸움을 하지 않는다. */
+  readonly stealthPhase?: boolean;
+  /** 시전 순간 둘레에 터지는 독 — 반경 안의 적에게 피해 + 중독. */
+  readonly burstDot?: {
+    readonly radius: number; readonly damage: number;
+    readonly dps: number; readonly ticks: number;
+  };
+  // ── snipe 전용 (아샤 「저격」) ──
+  /** 시전에 걸리는 틱. 이 동안 못 움직이고, 맞으면 취소된다. */
+  readonly channelTicks?: number;
+  /** 이 거리 안에 적 근접이 있으면 시전하지 않는다. */
+  readonly abortIfMeleeWithin?: number;
+  // ── allybuff 확장 (아샤 「그림자 장막」) ──
+  /** 이 시간 동안 아군에게 평타 회피 %를 빌려준다. */
+  readonly grantDodgePct?: number;
 }
 
 export interface HealAbility {
@@ -451,6 +495,10 @@ export interface EntityDef {
   readonly wardGrant?: number;
   /** 평타 회피 확률 % (캠페인 강화). 마법·스킬·장판은 회피하지 못한다. */
   readonly dodgePct?: number;
+  /** 가만히 둬도 everyTicks 마다 ticks 동안 저절로 은신한다 (아샤). */
+  readonly autoStealth?: { readonly everyTicks: number; readonly ticks: number };
+  /** 몸싸움을 아예 하지 않는다 (강화로 켜지는 영구 패시브). */
+  readonly noCollide?: boolean;
   /**
    * 사망 시 1회 부활: delayTicks 동안 쓰러져 있다가 (무적·행동불능)
    * 최대 체력의 hpPct% 로 되살아난다 (검은새).
@@ -533,6 +581,37 @@ export interface Entity {
    * 「치유 = 잠깐의 면역」이라야 늪 위에서 부대를 끌고 갈 수 있다.
    */
   poisonWardUntil: number;
+  /**
+   * 이 틱까지 「실명」 — 공격을 하지 못한다 (이동·시전은 된다).
+   *
+   * 아샤의 단검에 발린 것이 눈을 태운다. 독과 달리 한 번 걸린 자는
+   * blindWardUntil 동안 다시 걸리지 않는다 — 안 그러면 평타마다 갱신돼
+   * 영영 못 움직이는 적이 나온다.
+   */
+  blindUntil: number;
+  /** 이 틱까지 실명에 다시 걸리지 않는다. */
+  blindWardUntil: number;
+  /**
+   * 이 틱까지 「폭산(爆散)」 표식 — 이대로 죽으면 5타일 안의 제 편에게
+   * 최대 체력의 deathBombPct% 만큼 터진다. 영웅·네임드에겐 안 붙는다.
+   */
+  deathBombUntil: number;
+  deathBombPct: number;
+  /** 폭산을 새긴 쪽의 팀 — 터질 때 이 팀은 다치지 않는다. */
+  deathBombTeam: number;
+  /** 이 틱까지 회피를 빌려 받는다 (아샤 「그림자 장막」). */
+  dodgeGrantUntil: number;
+  dodgeGrantPct: number;
+  /** 저격 시전이 끝나는 틱 (0 = 시전 중 아님). 맞으면 취소된다. */
+  snipeUntil: number;
+  /** 저격을 시작할 때의 체력 — 이보다 줄면 맞은 것이라 취소한다. */
+  snipeHp: number;
+  /** 저격이 노리는 대상 id. */
+  snipeTargetId: number;
+  /** 다음 자동 은신이 도는 틱 (아샤 — 7초마다 2초). */
+  autoStealthNextTick: number;
+  /** 이 틱까지 몸싸움을 하지 않는다 (은신·강화 패시브). */
+  noCollideUntil: number;
   /** 이 틱까지 속박 (이동 불가). */
   rootedUntil: number;
   /** 이 틱까지 기절 (이동+공격 불가). 유닛엔 아직 미배정, 엔진 지원만. */
@@ -851,6 +930,8 @@ export interface GameConfig {
   readonly allyUnitCaps?: Readonly<Record<string, number>>;
   /** 팀 2 유닛별 최소 등장 웨이브 — 이 턴이 되기 전엔 봇이 구매할 수 없다. */
   readonly enemyUnitMinWave?: Readonly<Record<string, number>>;
+  /** 턴 구간별 적 생산 목록. 후반에 저티어 생산을 끊고 정예 편성으로 전환할 때 쓴다. */
+  readonly enemyUnitPhases?: readonly EnemyUnitPhase[];
   /** 이 웨이브부터 enemyUnitCaps 가 전부 해제된다 (후반 총력전). 생략 시 영구. */
   readonly enemyCapsUntilWave?: number;
   /** 팀 2 봇의 성격 강제 (캠페인 스테이지 디자인용). 생략 시 시드 무작위. */
@@ -956,6 +1037,8 @@ export interface GameEvent {
     | 'guardianDown'
     | 'boneRevive'    // 「뼈 무덤」에서 본드래곤이 다시 일어섰다 (렌더 연출용)
     | 'lastStand'     // 「최후의 함성」으로 죽음을 버텨냈다 (렌더 연출용)
+    | 'deathBomb'     // 아샤의 표식이 찍힌 자가 제 편 한가운데서 터졌다
+    | 'snipe'         // 아샤의 저격이 후열에 닿았다
     | 'gameOver';
   readonly team?: TeamId;
   readonly slot?: number;
@@ -1025,6 +1108,8 @@ export interface Game {
   readonly enemyIncomePct: number;
   /** 팀 2 유닛별 최소 등장 웨이브. 빈 객체 = 제한 없음. */
   readonly enemyUnitMinWave: Readonly<Record<string, number>>;
+  /** 현재 턴에 따라 적 구매 풀을 교체하는 생산 구간. */
+  readonly enemyUnitPhases: readonly EnemyUnitPhase[];
   /** 이 웨이브부터 수량 상한 해제. Infinity = 영구 적용. */
   readonly enemyCapsUntilWave: number;
   /** 팀 2 수호자 defId 오버라이드 (null = 기본). */

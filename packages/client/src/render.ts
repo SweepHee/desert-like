@@ -215,6 +215,11 @@ export const ASSET_UNITS: Record<string, string | string[]> = {
   c_elowyn: '/assets/units/s_sage.png',
   c_evergreen: '/assets/units/c_evergreen.png',
   c_kael: '/assets/units/c_kael.png',
+  c_asha: '/assets/units/c_asha.png?v=1',
+  c_asha_chaser: '/assets/units/c_asha_chaser.png?v=1',
+  c_asha_venom: '/assets/units/c_asha_venom.png?v=1',
+  c_asha_butcher: '/assets/units/c_asha_butcher.png?v=1',
+  c_asha_sniper: '/assets/units/c_asha_sniper.png?v=1',
   c_bone_cannon: '/assets/units/c_bone_cannon.png',
   c_sage_watchtower: '/assets/units/c_sage_watchtower.png',
   c_sage_watchtower_s: '/assets/units/c_sage_watchtower_s.png',
@@ -318,6 +323,11 @@ const ASSET_ICONS: Record<string, string> = {
   s_sage: '/assets/units/s_sage_icon.png',
   c_evergreen: '/assets/units/c_evergreen_icon.png',
   c_kael: '/assets/units/c_kael_icon.png',
+  c_asha: '/assets/units/c_asha_icon.png?v=1',
+  c_asha_chaser: '/assets/units/c_asha_chaser_icon.png?v=1',
+  c_asha_venom: '/assets/units/c_asha_venom_icon.png?v=1',
+  c_asha_butcher: '/assets/units/c_asha_butcher_icon.png?v=1',
+  c_asha_sniper: '/assets/units/c_asha_sniper_icon.png?v=1',
   c_bone_cannon: '/assets/units/c_bone_cannon_icon.png',
   m_plushbear: '/assets/units/m_plushbear_icon.png',
   p_bone_dragon: '/assets/units/p_bone_dragon.png',
@@ -405,6 +415,12 @@ const DIR_SPRITE_UNITS: string[] = [
   ...KARJA_DIR_UNITS,
   'c_evergreen',
   'c_kael',
+  'c_asha',
+  // 아샤 별동대 — 4방향 그림이 다 있다
+  'c_asha_chaser',
+  'c_asha_venom',
+  'c_asha_butcher',
+  'c_asha_sniper',
   // 마을 주민 — 상하좌우 그림이 다 있다 (없으면 좌우 반전이라 위/아래가 어색하다)
   'c_villager_child_m', 'c_villager_child_f', 'c_villager_adult_m',
   'c_villager_adult_f', 'c_villager_elder_m', 'c_villager_elder_f',
@@ -2354,6 +2370,8 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
   const galeSongs: { x: number; y: number; start: number; r: number }[] = [];
   /** 하르간 「대지의 가호」 — 황토 룬과 돌조각이 솟는 카르자 전용 연출. */
   const earthBlessings: { x: number; y: number; start: number; r: number }[] = [];
+  /** 아샤 「잠행」 — 발밑에서 부풀어 오르는 독가스 구름. */
+  const venomBursts: { x: number; y: number; start: number; r: number }[] = [];
   const corpses: Corpse[] = [];
 
   // 카메라
@@ -2372,7 +2390,7 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
   };
   // 마법 속성별 시전음 — fxZone/장판 종류가 가장 정확하고, 없으면 스킬 kind 로 가른다
   const castSfxOf = (
-    a: { kind?: string; fxZone?: string; zone?: { kind?: string } } | undefined,
+    a: { name?: string; kind?: string; fxZone?: string; zone?: { kind?: string } } | undefined,
     casterId?: string,
   ): SfxKey => {
     const z = a?.fxZone ?? a?.zone?.kind;
@@ -2388,12 +2406,16 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
     if (a?.kind === 'wardShield' || a?.kind === 'regenAura' || a?.kind === 'selfShield') return 'cast_bark';
     if (a?.kind === 'diveStrike' || a?.kind === 'debuffZone') return 'cast_moonveil';
     if (a?.kind === 'leap') return 'cast_leap';
+    // 아샤 — 잠행은 독가스가 터지는 소리, 저격은 활시위, 환술은 인형의 실
+    if (a?.kind === 'stealth') return casterId === 'c_asha' ? 'atk_poison' : 'cast_skill';
+    if (a?.kind === 'snipe') return 'atk_bow_triple';
+    if (a?.kind === 'massCharm') return 'cast_puppet';
     if (a?.kind === 'levitate') return 'cast_gravity';
     if (casterId === 'c_kael'
       && (a?.kind === 'taunt' || a?.kind === 'invuln' || a?.kind === 'reflect')) return 'cast_bulwark';
     if (a?.kind === 'hasteAlly') {
       if (casterId === 'c_evergreen') return 'cast_windsong';
-      if (casterId === 'k_grandshaman') return 'cast_karja_earth';
+      if (a.name === '대지의 가호' || casterId === 'k_grandshaman') return 'cast_karja_earth';
       return 'cast_bless';
     }
     if (a?.kind === 'critAura') return 'cast_bless';
@@ -3177,17 +3199,22 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
         }
         // 오라형 스킬(가호 등)은 실제 오라 반경만큼 링을 그려 범위를 보여준다
         const auraR = castSkill?.auraRadius ? (castSkill.auraRadius / FP) * TILE : 0;
-        impacts.push({
-          x: cx, y: cy, start: now,
-          radius: castKind === 'allyarmor' && auraR ? auraR
-            : castKind === 'taunt' ? 34 : castKind === 'reflect' ? 30
-            : strike?.splash ? (strike.splash / FP) * TILE : 18,
-          color: castKind === 'allyarmor' ? 0x8fd8ff // 가호 — 하늘빛 보호 오라
-            : castKind === 'taunt' ? 0xb06ad0
-            : castKind === 'reflect' ? 0xff4d4d
-            : castKind === 'fear' ? 0x7a3de0
-            : strikeTarget ? 0xffd23d : 0x7ddcff,
-        });
+        const isKarjaEarth = castSkill?.name === '대지의 가호' || e.defId === 'k_grandshaman';
+        // 하르간은 아래의 전용 흙먼지/룬 연출만 쓴다. 공용 청록 충격파를 겹치면
+        // 에버그린을 비롯한 실바린 버프와 다시 같은 스킬처럼 보인다.
+        if (!isKarjaEarth) {
+          impacts.push({
+            x: cx, y: cy, start: now,
+            radius: castKind === 'allyarmor' && auraR ? auraR
+              : castKind === 'taunt' ? 34 : castKind === 'reflect' ? 30
+              : strike?.splash ? (strike.splash / FP) * TILE : 18,
+            color: castKind === 'allyarmor' ? 0x8fd8ff // 가호 — 하늘빛 보호 오라
+              : castKind === 'taunt' ? 0xb06ad0
+              : castKind === 'reflect' ? 0xff4d4d
+              : castKind === 'fear' ? 0x7a3de0
+              : strikeTarget ? 0xffd23d : 0x7ddcff,
+          });
+        }
         // ── 확장 로스터 스킬 연출 ──────────────────────────────────────
         // 오라·장막류는 시전자에게서 고리가 퍼지고, 색으로 성격을 구분한다.
         {
@@ -3271,7 +3298,18 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
               impacts.push({ x: cx, y: cy, start: now, radius: gr * 0.4, color: 0xd8ffd0 });
               impacts.push({ x: cx, y: cy, start: now + 110, radius: gr * 0.78, color: 0x9ae86a });
               impacts.push({ x: cx, y: cy, start: now + 230, radius: gr * 1.1, color: 0xe8fff0 });
-            } else if (e.defId === 'k_grandshaman') {
+            } else if (castSkill?.name === '잠행') {
+              /*
+               * 잠행 — 초록 독가스가 확 퍼지고 아샤는 그 안으로 사라진다.
+               * 다른 실바린 연출이 전부 밝은 초록·금빛이라, 이건 탁한 독색으로
+               * 깔아 「몸에 나쁜 것이 터졌다」로 읽히게 한다.
+               */
+              const vr = Math.max(R, 54);
+              venomBursts.push({ x: cx, y: cy, start: now, r: vr });
+              ring(vr * 0.4, 0x9fe86a);
+              ring(vr * 0.75, 0x5fae3a, 120);
+              ring(vr, 0xd8ff9a, 240);
+            } else if (isKarjaEarth) {
               const er = Math.max(R, 48);
               earthBlessings.push({ x: cx, y: cy, start: now, r: er });
               ring(er * 0.42, 0xd98732);
@@ -4656,6 +4694,35 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
       }
     }
     // ── 하르간 「대지의 가호」: 각진 부족 룬 + 솟구치는 돌조각 (1.1초) ──
+    for (let i = venomBursts.length - 1; i >= 0; i--) {
+      const vb = venomBursts[i]!;
+      const t = (now - vb.start) / 1400;
+      if (t >= 1) { venomBursts.splice(i, 1); continue; }
+      if (t < 0) continue;
+      const fade = 1 - t;
+      const ease = 1 - (1 - t) * (1 - t);
+      // 뭉게뭉게 부푸는 덩어리 — 원 하나가 아니라 겹친 방울로 그려야 가스로 보인다
+      for (let k = 0; k < 11; k++) {
+        const a = (k / 11) * Math.PI * 2 + t * 0.9;
+        const dist = vb.r * ease * (0.3 + (k % 3) * 0.26);
+        const rise = ease * 12;
+        const px = vb.x + Math.cos(a) * dist;
+        const py = vb.y + Math.sin(a) * dist * 0.5 - rise;
+        const sz = vb.r * (0.16 + (k % 4) * 0.05) * (0.6 + ease * 0.7);
+        fx.ellipse(px, py, sz, sz * 0.62)
+          .fill({ color: k % 3 === 0 ? 0x7fd44a : k % 3 === 1 ? 0x4e8f33 : 0xbcf07a,
+            alpha: fade * 0.34 });
+      }
+      // 위로 흩어지는 독 알갱이
+      for (let k = 0; k < 16; k++) {
+        const a = (k / 16) * Math.PI * 2 + 0.3;
+        const dist = vb.r * ease * (0.45 + (k % 4) * 0.18);
+        const rise = ease * (16 + (k % 5) * 4);
+        fx.circle(vb.x + Math.cos(a) * dist, vb.y + Math.sin(a) * dist * 0.5 - rise,
+          1.8 + (k % 3) * 0.7)
+          .fill({ color: 0xd6ff8e, alpha: fade * 0.85 });
+      }
+    }
     for (let i = earthBlessings.length - 1; i >= 0; i--) {
       const eb = earthBlessings[i]!;
       const t = (now - eb.start) / 1100;

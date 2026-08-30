@@ -32,6 +32,12 @@ function spawnEntity(g: Game, defId: string, team: CombatTeam, owner: number, x:
     defId, team, owner,
     ...(ov ? { defOv: ov } : {}),
     x, y, garrisonR: 0, lastX: x, lastY: y, stuckTicks: 0, phaseUntil: 0,
+    // 아샤가 쓰는 상태들 — 여기서 빠지면 타입이 먼저 잡아 준다
+    blindUntil: 0, blindWardUntil: 0,
+    deathBombUntil: 0, deathBombPct: 0, deathBombTeam: -1,
+    dodgeGrantUntil: 0, dodgeGrantPct: 0,
+    snipeUntil: 0, snipeHp: 0, snipeTargetId: -1,
+    autoStealthNextTick: 0, noCollideUntil: 0,
     anchorX: x, anchorY: y,
     hp: (ov ?? d).maxHp,
     cooldown: 0,
@@ -162,6 +168,7 @@ export function createGame(cfg: GameConfig): Game {
     curtainCalls: [],
     enemyIncomePct: cfg.enemyIncomePct ?? 0,
     enemyUnitMinWave: cfg.enemyUnitMinWave ?? {},
+    enemyUnitPhases: cfg.enemyUnitPhases ?? [],
     enemyCapsUntilWave: cfg.enemyCapsUntilWave ?? Infinity,
     enemyGuardian: cfg.enemyGuardian ?? null,
     allowedUnits: [...(cfg.allowedUnits ?? [])],
@@ -307,6 +314,13 @@ function basicCutoffOn(g: Game): boolean {
   return g.enemyBasicCutoffWave > 0 && g.waveIndex + 1 >= g.enemyBasicCutoffWave;
 }
 
+/** 현재 출정 턴에 적용되는 전역 적 생산 구간. 배열 순서 그대로, 뒤 구간이 우선한다. */
+function enemyPhaseOf(g: Game): typeof g.enemyUnitPhases[number] | undefined {
+  let hit: typeof g.enemyUnitPhases[number] | undefined;
+  for (const ph of g.enemyUnitPhases) if (g.waveIndex + 1 >= ph.fromWave) hit = ph;
+  return hit;
+}
+
 function campOf(g: Game, p: PlayerState): EnemyCamp | undefined {
   if (p.team !== 1 || g.enemyCamps.length === 0) return undefined;
   return g.enemyCamps.find((c) => c.slot === p.slot);
@@ -373,6 +387,8 @@ export function buyUnit(g: Game, playerIdx: number, defId: string): boolean {
   if (p.isBot && g.enemyDeniedUnits.includes(defId)) return false;
   // 1티어 생산 중단(캠페인): 그 턴부터 적 봇은 기본 유닛을 못 산다
   if (p.team === 1 && p.isBot && basicCutoffOn(g) && techOfUnit(d) <= 1) return false;
+  const globalPhase = p.team === 1 && p.isBot ? enemyPhaseOf(g) : undefined;
+  if (globalPhase && !globalPhase.units.includes(defId)) return false;
   // 거점별 턴 구간 제한 — 지금 구간의 목록에 없으면 생산 불가
   {
     const camp = campOf(g, p);
@@ -814,6 +830,8 @@ function botDecide(g: Game, p: PlayerState): void {
   if (p.team === 1 && basicCutoffOn(g)) {
     pool = pool.filter((d) => techOfUnit(d) > 1);
   }
+  const globalPhase = p.team === 1 ? enemyPhaseOf(g) : undefined;
+  if (globalPhase) pool = pool.filter((d) => globalPhase.units.includes(d.id));
   // 거점 구간 목록 (있으면 그 안에서만 고른다)
   const campHere = campOf(g, p);
   const phaseHere = campHere ? phaseOf(campHere, g.waveIndex) : undefined;
@@ -856,6 +874,7 @@ function botDecide(g: Game, p: PlayerState): void {
     if (counterTarget && countersUnit(d, counterTarget)) w *= 4;
     // 캠페인 스테이지 성향: 적 봇은 지정된 유닛을 압도적으로 선호한다
     if (p.team === 1 && g.enemyPreferredUnits.includes(d.id)) w *= 8;
+    if (globalPhase?.preferred?.includes(d.id)) w *= 8;
     // 거점 구간이 지정한 선호 유닛도 같은 무게로 민다
     if (phaseHere?.preferred?.includes(d.id)) w *= 8;
     return w;

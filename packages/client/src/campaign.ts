@@ -200,6 +200,12 @@ export interface CampaignStage {
     readonly mines: readonly {
       readonly xTile: number; readonly yOffTile: number; readonly label: string;
     }[];
+    /** 각 갱을 빼앗겼을 때 카르자가 병력을 내보내는 인근 매복지. mines와 같은 순서. */
+    readonly ambushSites?: readonly {
+      readonly xTile: number; readonly yOffTile: number;
+    }[];
+    /** 매복 재발동 주기. 한 번에 점령 갱 중 최대 세 곳만 무작위로 고른다. */
+    readonly ambushEverySec?: number;
     /** 갱 말고도 부대를 보낼 수 있는 자리 (사잇길). */
     readonly midpoints: readonly {
       readonly xTile: number; readonly yOffTile: number; readonly label: string;
@@ -267,6 +273,8 @@ export interface CampaignStage {
   readonly enemyIncomePct?: number;
   /** 적 유닛별 최소 등장 웨이브 (이 턴 전엔 구매 불가). */
   readonly enemyUnitMinWave?: Readonly<Record<string, number>>;
+  /** 턴별 적 생산 로스터 — 가장 늦게 시작한 구간만 적용한다. */
+  readonly enemyUnitPhases?: readonly import('@desertlike/sim').EnemyUnitPhase[];
   /** 이 웨이브부터 적 유닛 상한 전부 해제 (후반 총력전). */
   readonly enemyCapsUntilWave?: number;
   /** 적 봇 성격 강제 ('fastTech'|'rushThenGreedy'|'balanced'|'finalOnly'). */
@@ -1647,7 +1655,7 @@ export const SYLVARIN_CAMPAIGN: readonly CampaignStage[] = [
     ],
   },
   {
-    id: 15, act: 3, title: '에메랄드 숲의 값', goal: '💰 금 20,000을 먼저 모아라 — 금광 여섯을 빼앗고 지켜라',
+    id: 15, act: 3, title: '에메랄드 숲의 값', goal: '💰 금 35,000을 먼저 모아라 — 금광 여섯을 빼앗고 지켜라',
     allowedUnits: U15_MINE, botDifficulty: 'normal',
     // 카르자가 이미 고원을 차지하고 캐고 있다. 갱마다 주둔군이 박혀 있다.
     enemies: ['karja', 'karja', 'karja'],
@@ -1670,7 +1678,7 @@ export const SYLVARIN_CAMPAIGN: readonly CampaignStage[] = [
     noEnemyNexus: true,
     startMoney: 500,
     goldRace: {
-      target: 20000,
+      target: 35000,
       home: { xTile: 6, yOffTile: 1, label: '내 기지' },
       // 굽은 고원길의 갱 여섯. 좌표가 아니라 실제 지상 경로로 서로 격리된다.
       mines: [
@@ -1681,6 +1689,16 @@ export const SYLVARIN_CAMPAIGN: readonly CampaignStage[] = [
         { xTile: 68, yOffTile: 15, label: '남중 갱' },
         { xTile: 113, yOffTile: 2, label: '남동 갱' },
       ],
+      // 길 마스크 안쪽의 갱 인근 지점. 점령한 갱 가운데 최대 세 곳에서만 매복한다.
+      ambushSites: [
+        { xTile: 31, yOffTile: -18 },
+        { xTile: 62, yOffTile: -18 },
+        { xTile: 95, yOffTile: -17 },
+        { xTile: 33, yOffTile: 15 },
+        { xTile: 65, yOffTile: 15 },
+        { xTile: 110, yOffTile: 2 },
+      ],
+      ambushEverySec: 180,
       // 갱 말고 부대를 세울 수 있는 자리 — 사잇길을 잡으면 양쪽 갱을 다 받친다
       midpoints: [
         { xTile: 52, yOffTile: 1, label: '폐광 우회로' },
@@ -1713,16 +1731,30 @@ export const SYLVARIN_CAMPAIGN: readonly CampaignStage[] = [
       'k_tribal', 'k_shaman', 'k_falconer', 'k_eagle', 'k_beeswarm', 'k_sandwraith',
     ],
     enemyStartTech: 3,
-    enemyPreferredUnits: ['k_wolf', 'k_wolfrider', 'k_scimitar'],
+    enemyPreferredUnits: [],
+    // 8턴에는 잡졸 생산을 끊고 중급으로, 12턴에는 고급·공중으로 완전히 전환한다.
+    enemyUnitPhases: [
+      { fromWave: 1,
+        units: ['k_scimitar', 'k_hunter', 'k_wolf', 'k_wolfrider'],
+        preferred: ['k_wolf', 'k_wolfrider', 'k_scimitar'] },
+      { fromWave: 8,
+        units: ['k_wolfrider', 'k_apprentice', 'k_tribal'],
+        preferred: ['k_apprentice', 'k_tribal'] },
+      { fromWave: 12,
+        units: ['k_shaman', 'k_falconer', 'k_eagle', 'k_beeswarm', 'k_sandwraith'],
+        preferred: ['k_eagle', 'k_beeswarm', 'k_sandwraith'] },
+    ],
     enemyUnitMinWave: {
       k_apprentice: 3, k_tribal: 4, k_shaman: 6, k_falconer: 7,
       k_eagle: 9, k_beeswarm: 10, k_sandwraith: 12,
     },
     enemyUnitCaps: {
       k_scimitar: 12, k_hunter: 9, k_wolf: 14, k_wolfrider: 7,
-      k_tribal: 5, k_apprentice: 5, k_shaman: 3, k_falconer: 3,
-      k_eagle: 5, k_beeswarm: 4, k_sandwraith: 3,
+      k_shaman: 10, k_falconer: 10,
+      k_eagle: 15, k_beeswarm: 20, k_sandwraith: 10,
     },
+    // 구매 시점 waveIndex 35 = 화면의 36턴. 1~35턴까지만 상한을 적용한다.
+    enemyCapsUntilWave: 35,
     // 본대와 다른 영웅들은 성문 앞에 남는다. 이 판의 영웅 출정은 카엘 단독.
     spawns: [
       { defId: 'c_kael', label: '🛡 숲지기 카엘 참전!', heroPick: true, everySec: 110,
@@ -1755,20 +1787,20 @@ export const SYLVARIN_CAMPAIGN: readonly CampaignStage[] = [
         text: '카엘은 본대를 성문 앞에 남겨 둔 채 에메랄드 숲 깊숙이 들어갔다.\n사흘째 해가 기울 무렵, 오래된 에메랄드 나무 아래에서 마침내 아샤를 찾았다.' },
       { who: '카엘', text: '아샤 님을 찾아왔습니다. 발타르의 성문에 걸린 봉인을 열어 주십시오.' },
       { who: '아샤', text: '현자의 군대와는 거래하지 않는다. 하지만 혼자 여기까지 온 네 말은 들어 주지.' },
-      { who: '아샤', text: '봉인을 여는 값은 고원의 금 2만 골드다. 가져오면 문 하나를 열어 주마.' },
+      { who: '아샤', text: '봉인을 여는 값은 고원의 금 3만 5천 골드다. 가져오면 문 하나를 열어 주마.' },
       { who: '카엘', text: '그 고원은 카르자가 점령하고 있습니다.' },
-      { who: '아샤', text: '알고 있다. 그래서 2만 골드인 거다. 쉬웠다면 벌써 우리가 캤겠지.' },
-      { who: '카엘', text: '좋습니다. 2만 골드를 가지고 이곳으로 돌아오겠습니다.' },
+      { who: '아샤', text: '알고 있다. 그래서 3만 5천 골드인 거다. 쉬웠다면 벌써 우리가 캤겠지.' },
+      { who: '카엘', text: '좋습니다. 3만 5천 골드를 가지고 이곳으로 돌아오겠습니다.' },
       { who: '', img: '/assets/cutscenes/cs31_mines.png',
         text: '카엘의 별동대가 고원에 닿았을 때, 갱 여섯에는 모두 붉은 깃발이 올라 있었다.\n광차는 쉬지 않고 카르자의 성채로 굴러 들어갔다.' },
       { who: '하르간', img: '/assets/cutscenes/cs31_hargan.png',
         text: '숲의 장수가 병력까지 끌고 고원에 기어들었군. 여긴 우리가 백 년을 걸어 찾은 땅이다. 돌아가라.' },
-      { who: '카엘', text: '우리 본대는 오지 않았습니다. 하지만 2만 골드를 얻기 전까지 저도 돌아갈 수 없습니다.' },
+      { who: '카엘', text: '우리 본대는 오지 않았습니다. 하지만 3만 5천 골드를 얻기 전까지 저도 돌아갈 수 없습니다.' },
       { who: '하르간', text: '그 사정이 우리 광맥을 탐낼 명분이라도 되나? 탐욕스러운 숲 것들.' },
-      { who: '하르간', text: '금이 필요하면 와서 빼앗아 봐라. 2만 골드를 채우기 전에 네놈들 피가 먼저 고원을 적실 테니.' },
+      { who: '하르간', text: '금이 필요하면 와서 빼앗아 봐라. 3만 5천 골드를 채우기 전에 네놈들 피가 먼저 고원을 적실 테니.' },
       { who: '', img: '/assets/cutscenes/cs31_miners.png',
         text: '광산을 점령하면 카엘이 데려온 엘프 광부들이 요새에서 출발한다.\n광부는 싸울 수 없으므로 별동대가 광산을 지켜야 한다.' },
-      { who: '카엘', text: '갱들은 서로 멀리 떨어져 있다. 하나씩 확실히 빼앗고 지킨다 — 목표는 적 성채가 아니라 2만 골드다.' },
+      { who: '카엘', text: '갱들은 서로 멀리 떨어져 있다. 하나씩 확실히 빼앗고 지킨다 — 목표는 적 성채가 아니라 3만 5천 골드다.' },
     ],
     outro: [
       { who: '하르간', text: '(광차가 멎는다) 도둑놈들… 백 년 동안 지켜 온 광맥을 끝내 뜯어 가는군.' },
@@ -2339,13 +2371,15 @@ export const HERO_DEPLOY_MAX = 3;
 /** 영웅을 하나 부르고 나서 다음을 부를 수 있게 되기까지 (초). */
 export const HERO_PICK_COOLDOWN_SEC = 300;
 
-export const HEROES: readonly { id: string; name: string; icon: string; blurb: string }[] = [
-  { id: 'c_kael', name: '숲지기 카엘', icon: '🛡',
+export const HEROES: readonly { id: string; name: string; icon: string; blurb: string; unlockStage: number }[] = [
+  { id: 'c_kael', name: '숲지기 카엘', icon: '🛡', unlockStage: 13,
     blurb: '전열을 붙잡는 방패. 쓰러져도 다시 일어선다.' },
-  { id: 'c_elowyn', name: '현자 엘로윈', icon: '🔮',
+  { id: 'c_elowyn', name: '현자 엘로윈', icon: '🔮', unlockStage: 13,
     blurb: '자리를 잡고 마법을 퍼붓는 포대.' },
-  { id: 'c_evergreen', name: '신궁 에버그린', icon: '🏹',
+  { id: 'c_evergreen', name: '신궁 에버그린', icon: '🏹', unlockStage: 13,
     blurb: '부대와 함께 움직이며 전열을 갉는 다중 사격수.' },
+  { id: 'c_asha', name: '에메랄드의 칼 아샤', icon: '🗡', unlockStage: 15,
+    blurb: '그림자에 들어 전선을 지나간다. 독과 실명을 발라 후열을 끊는 암살자.' },
 ];
 
 /**
@@ -2389,6 +2423,15 @@ export const HERO_STORIES: Record<string, HeroStory> = {
       { h: '먼 눈', p: '시위를 당기기 전에 이미 세 걸음 뒤의 표적을 본다. 화살 하나가 날아가는 동안 다음 둘이 시위에 걸린다 — 삼연사는 재주가 아니라 그가 세상을 보는 방식이다.' },
       { h: '노래', p: '그의 활시위는 소리를 낸다. 질풍의 노래가 흐르면 부대의 발이 가벼워지고, 광란의 노래가 오르면 시위가 눈으로 좇을 수 없게 빨라진다. 숲은 그 소리를 듣고 어디를 지켜야 할지 안다.' },
       { h: '잎새의 장막', p: '적이 다가오면 싸우지 않고 거리를 되찾는다. 맞는 순간 잎에 몸을 숨겨 조준에서 사라진다. 앞에 서는 영웅이 아니라, 끝까지 남아 마지막 화살을 쏘는 영웅이다.' },
+    ],
+  },
+  c_asha: {
+    portrait: 'asha', title: '에메랄드 숲의 칼 · 계약의 암살자',
+    quote: '값은 받았다. 이 전쟁이 끝날 때까지 네 별동대에 붙겠다.',
+    sections: [
+      { h: '본대와 말하지 않는 자', p: '아샤는 실바린 본대의 부름에는 답하지 않았다. 카엘이 홀로 에메랄드 숲을 찾아왔을 때에야 모습을 드러냈고, 봉인을 여는 대가로 고원의 금 3만 5천을 요구했다.' },
+      { h: '광맥의 값', p: '카엘의 별동대가 카르자의 여섯 갱을 빼앗아 값을 치르자 약속대로 문을 열었다. 그러나 카엘은 남은 금으로 그녀의 칼까지 고용하겠다고 제안했다.' },
+      { h: '카엘의 별동대', p: '아샤는 전쟁이 끝날 때까지 별동대에 합류하되 명령은 카엘에게서만 듣겠다고 못 박았다. 본대와 거리를 둔 채, 가장 위험한 후열을 먼저 끊는 것이 그녀의 방식이다.' },
     ],
   },
 };
@@ -2471,6 +2514,73 @@ export const HERO_UPGRADES: readonly HeroUpgradeDef[] = [
       '초당 18 회복 · 반경 9타일 (12초 · 쿨 26초) + 버팀은 그대로',
       '초당 25 회복 · 반경 10타일 (12초 · 쿨 22초) + 버팀은 그대로'] },
 
+  // ── 에메랄드의 칼 아샤 (15 클리어 해금) ─────────────────────────────
+  ...commonStats('c_asha', 'a'),
+  // 특수 — 아샤를 아샤로 만드는 것들
+  { id: 'a_venom', hero: 'c_asha', group: 'special', name: '칼에 바른 것', icon: '🧪', max: 3,
+    desc: '단검에 발린 독과 재가 더 독해진다 (중독·실명)',
+    steps: ['독 초당 26 · 7초 / 실명 6초', '독 초당 32 · 8초 / 실명 7초',
+      '독 초당 38 · 9초 / 실명 8초', '독 초당 46 · 10초 / 실명 9초'] },
+  { id: 'a_dodge', hero: 'c_asha', group: 'special', name: '그림자 걸음', icon: '🌑', max: 3,
+    desc: '평타가 닿기 직전에 그림자 속으로 비켜난다',
+    steps: ['평타 회피 30%', '평타 회피 35%', '평타 회피 40%', '평타 회피 45%'] },
+  { id: 'a_veil', hero: 'c_asha', group: 'special', name: '숨은 발', icon: '👣', max: 3,
+    desc: '저절로 도는 은신이 길어진다 — 전선을 지나가기가 쉬워진다',
+    steps: ['7초마다 2초 은신', '7초마다 3초', '7초마다 4초', '7초마다 5초'] },
+  { id: 'a_reach', hero: 'c_asha', group: 'special', name: '벼려진 간격', icon: '📏', max: 3,
+    desc: '단검과 석궁이 모두 조금씩 더 멀리 닿는다',
+    steps: ['지상 1.1 · 공중 4.5타일', '지상 2.1 · 공중 5.5', '지상 3.1 · 공중 6.5',
+      '지상 4.1 · 공중 7.5'] },
+  { id: 'a_bounty', hero: 'c_asha', group: 'special', name: '거물 사냥', icon: '👑', max: 3,
+    desc: '영웅과 네임드 표적에게 더 깊은 상처를 남긴다',
+    steps: ['영웅·네임드 추가 피해 20', '+30', '+40', '+50'] },
+  { id: 'a_crit', hero: 'c_asha', group: 'special', name: '급소 찌르기', icon: '🗡', max: 3,
+    desc: '단검이 급소를 파고들 확률을 높인다',
+    steps: ['치명타 30%', '치명타 35%', '치명타 40%', '치명타 45%'] },
+  { id: 'a_critdmg', hero: 'c_asha', group: 'special', name: '숨통', icon: '🎯',  max: 3,
+    desc: '치명타가 터졌을 때의 배율이 오르고 무작위가 된다',
+    steps: ['치명타 피해 150%', '치명타 피해 150~200% (무작위)',
+      '치명타 피해 170~220% (무작위)', '치명타 피해 200~250% (무작위)'] },
+  // 영웅 능력 (클라가 처리 — 부활·동반 출정) + 아샤 고유 패시브·액티브
+  { id: 'a_revive', hero: 'c_asha', group: 'hero', name: '부활 속도 증가', icon: '⏳', max: 3,
+    desc: '쓰러진 뒤 다시 나오기까지 걸리는 시간이 짧아진다',
+    steps: ['부활 150초', '부활 138초', '부활 126초', '부활 114초'] },
+  { id: 'a_retinue', hero: 'c_asha', group: 'hero', name: '출정 유닛 강화', icon: '👥', max: 3,
+    desc: '별동대를 함께 데려온다 — 상점에는 없는 암살자들이다',
+    steps: ['없음',
+      '추격자2 · 맹독암살자1 · 도살자1 · 저격수1 동반',
+      '추격자4 · 맹독암살자2 · 도살자2 · 저격수2 동반',
+      '추격자5 · 맹독암살자3 · 도살자3 · 저격수4 동반'] },
+  { id: 'a_charge', hero: 'c_asha', group: 'hero', name: '부활 충전', icon: '♻', max: 2,
+    desc: '살아 있는 동안 부활이 미리 채워진다 — 차 있으면 즉시 부활',
+    steps: ['충전 없음',
+      '살아 있는 동안 부활이 1회 충전 — 충전돼 있으면 즉시 부활',
+      '부활 2회까지 충전 (각각 따로 찬다)'] },
+  { id: 'a_ghost', hero: 'c_asha', group: 'hero', name: '그림자의 몸', icon: '👻', max: 1,
+    desc: '누구와도 부딪히지 않는다 — 아군 전열을 그대로 통과해 후열로 간다',
+    steps: ['몸싸움을 한다', '몸싸움이 아예 사라진다 (영구)'] },
+  { id: 'a_bomb', hero: 'c_asha', group: 'hero', name: '폭산', icon: '💥', max: 3,
+    desc: '아샤에게 베인 적은 죽을 때 제 편 한가운데서 터진다 (영웅·네임드 제외)',
+    steps: ['터지지 않는다', '죽을 때 5타일 안 제 편에게 최대 체력의 30%',
+      '40%', '50%'] },
+  // 영웅 스킬
+  { id: 'a_prowl', hero: 'c_asha', group: 'skill', name: '잠행', icon: '🌫', max: 3,
+    desc: '길게 은신하며 발밑에 독 안개를 터뜨린다 — 그동안 칼이 완전히 달라진다',
+    steps: ['은신 15초 · 독안개 40 · 쿨 55초', '은신 17초 · 독안개 60 · 쿨 50초',
+      '은신 19초 · 독안개 85 · 쿨 45초', '은신 22초 · 독안개 115 · 쿨 40초'] },
+  { id: 'a_snipe', hero: 'c_asha', group: 'skill', name: '저격', icon: '🏹', max: 3,
+    desc: '2초간 서서 16타일 밖 후열 하나를 쏜다 (시전 중 맞으면 취소)',
+    steps: ['피해 220 · 쿨 12초', '피해 300 · 쿨 11초', '피해 390 · 쿨 10초',
+      '피해 500 · 쿨 9초'] },
+  { id: 'a_shroud', hero: 'c_asha', group: 'skill', name: '그림자 장막', icon: '🕸', max: 3,
+    desc: '주변 원거리·지원 아군에게 회피를 빌려준다',
+    steps: ['회피 20% · 7초 · 쿨 30초', '회피 25% · 8초 · 쿨 28초',
+      '회피 30% · 9초 · 쿨 26초', '회피 35% · 10초 · 쿨 24초'] },
+  { id: 'a_illusion', hero: 'c_asha', group: 'skill', name: '환술', icon: '🌀', max: 3,
+    desc: '반경 안의 적이 영영 우리 편이 된다 (영웅·네임드 면역)',
+    // 0단계엔 아예 없는 스킬이다 — 찍어야 목록에 생긴다
+    steps: ['아직 쓸 수 없다', '반경 10타일 · 쿨 60초', '반경 12타일 · 쿨 60초',
+      '반경 15타일 · 쿨 60초'] },
   // ── 신궁 에버그린 ───────────────────────────────────────────────────
   // 기본 스펙 — 전 영웅 공통. 「먼 눈(사거리)」은 에버그린만의 강화라 특수로 옮겼다.
   ...commonStats('c_evergreen', 'e'),
@@ -2892,7 +3002,127 @@ function applyCommonStats(base: EntityDef, p: string): EntityDef {
   return out;
 }
 
-const COMMON_PREFIX: Record<string, string> = { c_kael: 'k', c_evergreen: 'e', c_elowyn: 'w' };
+function applyAsha(base: EntityDef): EntityDef {
+  const out: Mutable<EntityDef> = { ...base };
+  const lv = (id: string): number => heroLv(id);
+
+  // ── 특수 ──
+  out.baseCritPct = [30, 35, 40, 45][lv('a_crit')]!;
+  out.dodgePct = [30, 35, 40, 45][lv('a_dodge')]!;
+  out.bonusVsHero = [20, 30, 40, 50][lv('a_bounty')]!;
+  {
+    const r = [undefined, [150, 200], [170, 220], [200, 250]][lv('a_critdmg')];
+    if (r) out.critMulRange = r as [number, number];
+  }
+  // 저절로 도는 은신 — 주기는 그대로, 머무는 시간만 길어진다
+  out.autoStealth = { everyTicks: SEC * 7, ticks: SEC * [2, 3, 4, 5][lv('a_veil')]! };
+  // 몸싸움을 놓는 패시브 (1단계면 끝)
+  if (lv('a_ghost') > 0) out.noCollide = true;
+
+  // ── 평타: 독·실명·사거리·폭산 ──
+  if (base.weapon) {
+    const v = lv('a_venom');
+    const reach = lv('a_reach');
+    const bomb = lv('a_bomb');
+    out.weapon = {
+      ...base.weapon,
+      range: TILE * [1.1, 2.1, 3.1, 4.1][reach]!,
+      airRange: TILE * [4.5, 5.5, 6.5, 7.5][reach]!,
+      dotDps: [26, 32, 38, 46][v]!,
+      dotTicks: SEC * [7, 8, 9, 10][v]!,
+      blindTicks: SEC * [6, 7, 8, 9][v]!,
+      ...(bomb > 0
+        ? { deathBombPct: [0, 30, 40, 50][bomb]!, deathBombTicks: SEC * 8 }
+        : {}),
+    };
+  }
+
+  // ── 스킬 ──
+  if (base.actives) {
+    const pr = lv('a_prowl');
+    const sn = lv('a_snipe');
+    const sh = lv('a_shroud');
+    const il = lv('a_illusion');
+    out.actives = base.actives.map((a) => {
+      if (a.name === '잠행') {
+        return {
+          ...a,
+          durTicks: SEC * [15, 17, 19, 22][pr]!,
+          cooldown: SEC * [55, 50, 45, 40][pr]!,
+          ...(a.burstDot
+            ? { burstDot: { ...a.burstDot, damage: [40, 60, 85, 115][pr]! } }
+            : {}),
+        };
+      }
+      if (a.name === '저격') {
+        return { ...a, damage: [220, 300, 390, 500][sn]!, cooldown: SEC * [12, 11, 10, 9][sn]! };
+      }
+      if (a.name === '그림자 장막') {
+        return {
+          ...a,
+          grantDodgePct: [20, 25, 30, 35][sh]!,
+          durTicks: SEC * [7, 8, 9, 10][sh]!,
+          cooldown: SEC * [30, 28, 26, 24][sh]!,
+        };
+      }
+      return a;
+    });
+    /*
+     * 「환술」은 찍기 전엔 아예 없는 스킬이다 — 기본 정의에 넣어 두면
+     * 0단계에서도 적을 뺏어 오므로, 강화를 찍었을 때 목록에 더한다.
+     */
+    if (il > 0) {
+      out.actives = [...out.actives, {
+        name: '환술',
+        desc: '반경 안의 적이 영영 우리 편이 된다 (영웅·네임드 면역)',
+        kind: 'massCharm' as const,
+        castRange: TILE * [0, 10, 12, 15][il]!,
+        cooldown: SEC * 60,
+      }];
+    }
+  }
+
+  // 설명줄도 실제 수치를 따라간다 — 패널에서 이것만 읽는 사람이 있다
+  {
+    const v = lv('a_venom');
+    out.passiveDesc = [
+      `맹독의 칼날 — 평타가 ${[7, 8, 9, 10][v]!}초간 초당 ${[26, 32, 38, 46][v]!}의 독을 남긴다`,
+      `눈을 태우는 재 — 평타가 ${[6, 7, 8, 9][v]!}초간 실명 (18초간 재감염 없음)`,
+      `그림자 걸음 — 평타를 ${out.dodgePct}% 확률로 회피`,
+      `숨은 발 — 7초마다 ${[2, 3, 4, 5][lv('a_veil')]!}초간 저절로 은신한다`,
+      `급소 찌르기 — ${out.baseCritPct}% 확률로 치명타`,
+      ...(lv('a_ghost') > 0 ? ['그림자의 몸 — 누구와도 부딪히지 않는다'] : []),
+      ...(lv('a_bomb') > 0
+        ? [`폭산 — 베인 적이 죽으면 제 편에게 최대 체력의 ${[0, 30, 40, 50][lv('a_bomb')]!}%`]
+        : []),
+    ];
+  }
+  return out;
+}
+
+/** 아샤의 부활 대기 (초) — 「부활 속도 증가」. */
+export function ashaReviveSec(): number {
+  return [150, 138, 126, 114][heroLv('a_revive')]!;
+}
+/** 아샤가 데리고 나오는 별동대 — 「출정 유닛 강화」 단계별. */
+export function ashaRetinue(): { defId: string; count: number }[] {
+  const t = heroLv('a_retinue');
+  if (t === 0) return [];
+  const n = [[0, 0, 0, 0], [2, 1, 1, 1], [4, 2, 2, 2], [5, 3, 3, 4]][t]!;
+  return [
+    { defId: 'c_asha_chaser', count: n[0]! },
+    { defId: 'c_asha_venom', count: n[1]! },
+    { defId: 'c_asha_butcher', count: n[2]! },
+    { defId: 'c_asha_sniper', count: n[3]! },
+  ];
+}
+/** 아샤 부활 충전 횟수 — 「부활 충전」. */
+export function ashaReviveCharges(): number {
+  return heroLv('a_charge');
+}
+const COMMON_PREFIX: Record<string, string> = {
+  c_kael: 'k', c_evergreen: 'e', c_elowyn: 'w', c_asha: 'a',
+};
 
 export function applyHeroUpgrades(base: EntityDef, hero: string): EntityDef {
   if (!heroUpgradesOpen()) return base;
@@ -2900,6 +3130,7 @@ export function applyHeroUpgrades(base: EntityDef, hero: string): EntityDef {
   const common = prefix ? applyCommonStats(base, prefix) : base;
   if (hero === 'c_evergreen') return applyEvergreen(common);
   if (hero === 'c_elowyn') return applyElowyn(common);
+  if (hero === 'c_asha') return applyAsha(common);
   if (hero !== 'c_kael') return common;
   const lv = (id: string): number => heroLv(id);
 

@@ -2884,6 +2884,120 @@ reg(D({
     },
   ],
 }));
+// ── 아샤 (15 금광전 이후 합류) — 후열을 끊는 에메랄드 숲의 암살자 ──
+/*
+ * 아샤는 「서서 때리는 영웅」이 아니다.
+ *
+ * 7초마다 2초씩 저절로 그림자에 들어(autoStealth) 조준에서 사라지고, 그 사이에
+ * 전선을 지나 후열로 걸어 들어간다. 지상은 단검(근접), 하늘은 석궁(짧은 사거리) —
+ * airRange/airDamage 로 한 무기 안에서 갈린다.
+ * 평타에는 맹독과 실명이 발려 있어, 맞은 자는 녹거나 눈이 먼다.
+ */
+reg(D({
+  id: 'c_asha', race: null, name: '에메랄드의 칼 아샤', tier: 'final', summonOnly: true,
+  cost: 0, supply: 0, maxHp: 760, armor: 3, tags: ['leather', 'bio', 'female'], ...GROUND,
+  speed: tilesPerSecond(2.4), radius: tiles(0.36), acquireRange: tiles(7),
+  baseCritPct: 30, dodgePct: 30, bonusVsHero: 20,
+  autoStealth: { everyTicks: seconds(7), ticks: seconds(2) },
+  weapon: {
+    damage: 68, cooldown: seconds(0.8), range: tiles(1.1), targets: 'both',
+    // 석궁 — 하늘은 조금 멀리서, 대신 얕게
+    airRange: tiles(4.5), airDamage: 52,
+    dotDps: 26, dotTicks: seconds(7), dotChance: 100,
+    blindTicks: seconds(6), blindChance: 100, blindWardTicks: seconds(18),
+  },
+  /*
+   * 「계약의 칼」은 여기 적지 않는다. bonusVsHero 를 기본값으로 가진 유닛은
+   * 아샤뿐이고, 영웅 패널이 그 값으로 「거물 사냥」 행을 따로 뽑아 준다 —
+   * 같이 적으면 한 화면에서 같은 말이 두 번 나온다.
+   */
+  passiveDesc: [
+    '맹독의 칼날 — 평타가 7초간 초당 26의 독을 남긴다',
+    '눈을 태우는 재 — 평타가 6초간 실명 (18초간 재감염 없음)',
+    '그림자 걸음 — 평타를 30% 확률로 회피',
+    '숨은 발 — 7초마다 2초간 저절로 은신한다',
+    '급소 찌르기 — 30% 확률로 치명타',
+  ],
+  actives: [
+    {
+      name: '잠행',
+      desc: '15초간 은신 — 몸싸움이 사라지고, 발밑에 독 안개가 터진다',
+      kind: 'stealth', durTicks: seconds(15), cooldown: seconds(55),
+      stealthDamageAdd: 0, stealthSpeedAdd: 0, assassinate: true,
+      stealthAtkSpeedPct: 50,
+      stealthSplash: tiles(1.6),
+      stealthBonus: { cloth: 20, leather: 20, plate: 60 },
+      stealthExecute: { tag: 'plate', belowPct: 30, chancePct: 30 },
+      stealthPhase: true,
+      burstDot: { radius: tiles(6), damage: 40, dps: 26, ticks: seconds(7) },
+    },
+    {
+      name: '저격',
+      desc: '2초간 서서 16타일 밖 후열 하나를 쏜다 (맞으면 취소)',
+      kind: 'snipe', cooldown: seconds(12), castRange: tiles(16),
+      channelTicks: seconds(2), abortIfMeleeWithin: tiles(3),
+      damage: 220, targets: 'both',
+    },
+    {
+      name: '그림자 장막',
+      desc: '주변 원거리·지원 아군이 7초간 평타를 20% 확률로 회피',
+      kind: 'allybuff', cooldown: seconds(30), auraRadius: tiles(7),
+      durTicks: seconds(7), grantDodgePct: 20,
+    },
+  ],
+}));
+
+/*
+ * 아샤의 별동대 — 「별동대 편성」 강화로만 따라 나오는 캠페인 전용 암살자 넷.
+ * 상점에 안 팔고, 아샤가 출정할 때 함께 선다. 값이 0 인 이유가 그것이다.
+ */
+const ASHA_SQUAD = { race: null, tier: 'mid', summonOnly: true, cost: 0, supply: 0 } as const;
+
+reg(D({
+  // 후드와 마스크로 얼굴을 가린 석궁잡이 — 도망치는 것을 끝까지 따라가 끊는다
+  ...ASHA_SQUAD, id: 'c_asha_chaser', name: '추격자',
+  maxHp: 300, armor: 2, tags: ['leather', 'bio', 'male'], ...GROUND,
+  speed: tilesPerSecond(2.6), radius: tiles(0.3), acquireRange: tiles(7),
+  baseCritPct: 15,
+  weapon: { damage: 34, cooldown: seconds(1.0), range: tiles(5.5), targets: 'both' },
+  passiveDesc: ['추격 — 도망치는 적도 따라붙어 쏜다'],
+}));
+
+reg(D({
+  // 독병을 던지는 암살자 — 혼자서는 약하고, 녹여 놓는 것으로 값을 한다
+  ...ASHA_SQUAD, id: 'c_asha_venom', name: '맹독 암살자',
+  maxHp: 240, armor: 1, tags: ['cloth', 'bio', 'female'], ...GROUND,
+  speed: tilesPerSecond(2.5), radius: tiles(0.3), acquireRange: tiles(6),
+  weapon: {
+    damage: 22, cooldown: seconds(1.3), range: tiles(4.5), targets: 'both',
+    splash: tiles(1.1), dotDps: 20, dotTicks: seconds(6), dotChance: 100,
+  },
+  passiveDesc: ['독병 — 터지는 자리의 적을 6초간 녹인다'],
+}));
+
+reg(D({
+  // 시미터 두 자루로 전열을 써는 근접 — 별동대의 유일한 몸
+  ...ASHA_SQUAD, id: 'c_asha_butcher', name: '도살자',
+  maxHp: 460, armor: 3, tags: ['leather', 'bio', 'female'], ...GROUND,
+  speed: tilesPerSecond(2.7), radius: tiles(0.34), acquireRange: tiles(6),
+  baseCritPct: 20,
+  weapon: {
+    damage: 46, cooldown: seconds(0.75), range: tiles(1.1), targets: 'ground',
+    bonus: { cloth: 14, leather: 10 },
+  },
+  passiveDesc: ['난도질 — 천·가죽을 특히 잘 썬다', '급소 — 20% 확률로 치명타'],
+}));
+
+reg(D({
+  // 장궁으로 후열을 걷어내는 저격수 — 사거리가 별동대에서 가장 길다
+  ...ASHA_SQUAD, id: 'c_asha_sniper', name: '저격수',
+  maxHp: 220, armor: 1, tags: ['leather', 'bio', 'female'], ...GROUND,
+  speed: tilesPerSecond(2.2), radius: tiles(0.3), acquireRange: tiles(10),
+  baseCritPct: 25, critMulRange: [200, 200],
+  weapon: { damage: 58, cooldown: seconds(1.6), range: tiles(9.5), targets: 'both' },
+  passiveDesc: ['한 발 — 25% 확률로 치명타 (피해 2배)'],
+}));
+
 // ── 세이지 망루 (13 캠프 방어 포탑) — 영구 무적으로 스폰돼 조준·마법·끌림 전부 제외 ──
 reg(D({
   id: 'c_sage_watchtower', race: null, name: '숲의 망루', tier: 'structure', summonOnly: true,

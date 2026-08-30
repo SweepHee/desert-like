@@ -13,7 +13,7 @@ import {
   setDeployHold,
   findStructure, nextWaveInfo, hashGame, incomeUpgradeCost, techOfUnit, techUpCost,
   unitsOfRace, upgradesOfUnit,
-  laneCenterY, clampLaneY, spawnUnit, spawnGarrison,
+  laneCenterY, clampLaneY, spawnUnit, spawnGarrison, nextInt,
   type BotDifficulty, type EntityDef, type Game, type RaceId, type TeamId,
 } from '@desertlike/sim';
 import { assetIconUrl, createRenderer, worldToPxX, type Renderer } from './render.ts';
@@ -30,6 +30,7 @@ import {
   applyHeroUpgrades, kaelRetinue, kaelReviveSec, kaelReviveCharges,
   evergreenRetinue, evergreenReviveSec, evergreenReviveCharges,
   elowynRetinue, elowynReviveSec, elowynReviveCharges,
+  ashaRetinue, ashaReviveSec, ashaReviveCharges,
   unlockedBoonUnits, selectedBoonIds,
   deniedUnitsOf,
   type CampaignStage,
@@ -672,6 +673,8 @@ let goldAlly = 0;
 let goldFoe = 0;
 /** 마지막으로 금을 준 틱 — 5초마다 정산한다. */
 let goldLastTick = 0;
+/** 다음 카르자 매복 발동 틱. */
+let goldAmbushNextTick = 0;
 
 // ── 호위전 (13. 페이로드) 상태 ──
 /** 확보한 거점 수 (0..points.length). */
@@ -1080,7 +1083,8 @@ function showEnhanceScreen(): void {
   let selected: string | null = cardUnits.find((c) => c.open)?.id ?? null;
   let filter: 'all' | 'base' | 'air' | 'elite' = 'all';
   let mode: 'hero' | 'unit' | 'perk' = 'unit';
-  const openHeroes = HEROES.filter((h) => (HERO_UPGRADES_BY_HERO.get(h.id) ?? []).length > 0);
+  const openHeroes = HEROES.filter((h) => h.unlockStage <= total
+    && (HERO_UPGRADES_BY_HERO.get(h.id) ?? []).length > 0);
   let selectedHero: string | null = openHeroes[0]?.id ?? null;
   let heroCardsScroll = 0;
   let unitTab: 'boon' | 'trait' = 'boon';
@@ -1385,6 +1389,8 @@ function heroOwnSpent(hero: string, alloc: Record<string, number>): number {
           c_kael: '전열의 방패 · 엘프 영웅',
           c_elowyn: '숲의 현자 · 엘프 영웅',
           c_evergreen: '숲의 명궁 · 엘프 영웅',
+          // 아샤는 본대 소속이 아니다 — 값을 받고 카엘의 별동대에만 붙는다
+          c_asha: '에메랄드 숲의 암살자 엘프 영웅',
         };
         const center = document.createElement('div');
         center.id = 'eh3-center';
@@ -1534,6 +1540,13 @@ function heroOwnSpent(hero: string, alloc: Record<string, number>): number {
             if (ch > 0) spec('🔁 부활 충전', `${ch}회`, true);
             const ret = elowynRetinue();
             if (ret.length > 0) spec('🐾 동반', `${ret.reduce((n, r) => n + r.count, 0)}기`, true, retinueDetail(ret));
+          }
+          if (heroId === 'c_asha') {
+            spec('🔁 부활', `${ashaReviveSec()}초`, ashaReviveSec() !== 150);
+            const ch = ashaReviveCharges();
+            if (ch > 0) spec('🔁 부활 충전', `${ch}회`, true);
+            const ret = ashaRetinue();
+            if (ret.length > 0) spec('🐾 별동대', `${ret.reduce((n, r) => n + r.count, 0)}기`, true, retinueDetail(ret));
           }
         }
         center.appendChild(specBox);
@@ -2168,6 +2181,7 @@ async function startCampaignStage(st: CampaignStage): Promise<void> {
     ...(st.enemyCamps ? { enemyCamps: st.enemyCamps } : {}),
     ...(st.enemyIncomePct !== undefined ? { enemyIncomePct: st.enemyIncomePct } : {}),
     ...(st.enemyUnitMinWave ? { enemyUnitMinWave: st.enemyUnitMinWave } : {}),
+    ...(st.enemyUnitPhases ? { enemyUnitPhases: st.enemyUnitPhases } : {}),
     ...(st.enemyCapsUntilWave !== undefined ? { enemyCapsUntilWave: st.enemyCapsUntilWave } : {}),
     ...(st.enemyBotStyle ? { enemyBotStyle: st.enemyBotStyle } : {}),
     ...(st.allyBotStyle ? { allyBotStyle: st.allyBotStyle } : {}),
@@ -2243,6 +2257,7 @@ async function startCampaignStage(st: CampaignStage): Promise<void> {
   goldAlly = 0;
   goldFoe = 0;
   goldLastTick = 0;
+  goldAmbushNextTick = 0;
   escortFrontier = 0;
   escortProgressTicks = 0;
   escortLoseTicks = 0;
@@ -2533,6 +2548,67 @@ function clearGoldMiners(i: number): void {
 }
 
 /**
+ * 점령한 갱 뒤편에서 솟는 카르자 매복대.
+ * 선택과 편성은 game.rng만 써서 같은 시드에서는 언제나 같은 결과가 난다.
+ */
+function tickGoldAmbush(): void {
+  const gr = campaign?.goldRace;
+  if (!gr?.ambushSites || !gr.ambushEverySec || !game) return;
+  const everyTicks = gr.ambushEverySec * TICK_HZ;
+  if (goldAmbushNextTick <= 0) goldAmbushNextTick = everyTicks;
+  if (game.tick < goldAmbushNextTick) return;
+  while (goldAmbushNextTick <= game.tick) goldAmbushNextTick += everyTicks;
+
+  const candidates: number[] = [];
+  for (let i = 0; i < gr.mines.length; i++) {
+    if (goldOwner[i] === 0 && gr.ambushSites[i]) candidates.push(i);
+  }
+  const nSites = Math.min(3, candidates.length);
+  if (nSites === 0) return;
+
+  const chosen: number[] = [];
+  for (let i = 0; i < nSites; i++) {
+    const pick = nextInt(game.rng, candidates.length);
+    chosen.push(candidates[pick]!);
+    candidates.splice(pick, 1);
+  }
+
+  // 오래 끌수록 정찰대가 정예 매복대로 자란다. 각 항목은 매복지 한 곳 기준이다.
+  const elapsedSec = Math.floor(game.tick / TICK_HZ);
+  const force = [
+    { defId: 'k_scimitar', count: 2 },
+    { defId: 'k_wolf', count: 2 },
+    { defId: 'k_hunter', count: 2 },
+    ...(elapsedSec >= 360 ? [{ defId: 'k_apprentice', count: 2 }] : []),
+    ...(elapsedSec >= 720 ? [{ defId: 'k_wolfrider', count: 2 }] : []),
+    ...(elapsedSec >= 900 ? [{ defId: 'k_shaman', count: 1 }] : []),
+  ];
+
+  for (const mineIdx of chosen) {
+    const site = gr.ambushSites[mineIdx]!;
+    const mine = goldMineAt(mineIdx);
+    const sx0 = Math.floor(site.xTile * FP);
+    const sy0 = laneCenterY(game.map, sx0) + Math.floor(site.yOffTile * FP);
+    let serial = 0;
+    for (const group of force) {
+      for (let k = 0; k < group.count; k++, serial++) {
+        const px = sx0 + ((serial % 3) - 1) * 420;
+        const rawY = sy0 + (Math.floor(serial / 3) - 1) * 420;
+        const py = game.map.mask ? clampLaneY(game.map, px, rawY) : rawY;
+        const e = spawnUnit(game, group.defId, 1, px, py);
+        if (mine) {
+          e.goalX = mine.x;
+          e.goalY = mine.y;
+        }
+      }
+    }
+  }
+  const labels = chosen.map((i) => gr.mines[i]!.label).join(' · ');
+  showToast(`⚠ 카르자 매복! ${labels} 인근에서 적이 나타났다`);
+  audio.play('cast_karja_earth', { volume: 0.95 });
+}
+
+/**
  * 골드 레이스 한 틱.
  *
  *  1) 갱마다 「누가 혼자 서 있나」를 보고 점령 진행을 굴린다
@@ -2544,6 +2620,8 @@ function tickGoldRace(): void {
   if (!gr || !game || campaignDone) return;
   const r2 = Math.floor(gr.radiusTiles * FP) ** 2;
   const holdNeed = gr.captureSec * TICK_HZ;
+
+  tickGoldAmbush();
 
   for (let i = 0; i < gr.mines.length; i++) {
     const c = goldMineAt(i);
@@ -2645,13 +2723,15 @@ function tickGoldRace(): void {
   }
 
   if (goldAlly >= gr.target) campaignFinish(true);
-  else if (goldFoe >= gr.target) campaignFinish(false, '카르자가 먼저 2만 골드를 채웠다');
+  else if (goldFoe >= gr.target) campaignFinish(false, `카르자가 먼저 ${gr.target.toLocaleString()} 골드를 채웠다`);
 }
 
 /** 캠페인 스테이지 종료 처리 — 승리 시 outro 대화 후 저장. */
 function campaignFinish(win: boolean, reason?: string): void {
   if (!campaign || campaignDone) return;
   campaignDone = true;
+  // 결과 대사와 결과창 뒤에서 전투가 계속 돌거나, 긴 방치 동안 병력이 쌓이지 않게 즉시 동결한다.
+  acc = 0;
   const st = campaign;
   const turnAt = game ? game.waveIndex : 0; // 패배 시점 턴 수 표시용
   if (win) {
@@ -2940,7 +3020,8 @@ function campNowSec(): number {
 function heroReviveSec(defId: string): number {
   return defId === 'c_kael' ? kaelReviveSec()
     : defId === 'c_evergreen' ? evergreenReviveSec()
-      : defId === 'c_elowyn' ? elowynReviveSec() : 0;
+      : defId === 'c_elowyn' ? elowynReviveSec()
+        : defId === 'c_asha' ? ashaReviveSec() : 0;
 }
 
 /** 영웅 출정 — 스폰 규칙을 깨워 지금 즉시 야영지에서 나서게 한다. */
@@ -3756,7 +3837,7 @@ function applyDueCmds(): void {
 function tick(deltaMS: number): void {
   if (!game || !renderer) return;
   cameraPanFromKeys(deltaMS);
-  if (!game.over && !paused && !cutscenePause) {
+  if (!game.over && !paused && !cutscenePause && !(campaign && campaignDone)) {
     if (isMp) {
       const target = mpTargetTick();
       acc += Math.min(deltaMS, 250);
@@ -4194,10 +4275,12 @@ function tick(deltaMS: number): void {
         const waitSec = rule.defId === 'c_kael' ? kaelReviveSec()
           : rule.defId === 'c_evergreen' ? evergreenReviveSec()
           : rule.defId === 'c_elowyn' ? elowynReviveSec()
+          : rule.defId === 'c_asha' ? ashaReviveSec()
           : rule.respawnAfterDeathSec;
         const maxCharge = rule.defId === 'c_kael' ? kaelReviveCharges()
           : rule.defId === 'c_evergreen' ? evergreenReviveCharges()
-          : rule.defId === 'c_elowyn' ? elowynReviveCharges() : 0;
+          : rule.defId === 'c_elowyn' ? elowynReviveCharges()
+          : rule.defId === 'c_asha' ? ashaReviveCharges() : 0;
         if (aliveNow2 >= rule.concurrentCap) {
           /*
            * 「숲은 기다린다」: 살아 있는 동안 부활이 충전된다.
@@ -4282,7 +4365,9 @@ function tick(deltaMS: number): void {
           ? evergreenRetinue()
           : rule.defId === 'c_elowyn'
             ? [...(rule.withUnits ?? []), ...elowynRetinue()]
-            : (rule.withUnits ?? []);
+            : rule.defId === 'c_asha'
+              ? [...(rule.withUnits ?? []), ...ashaRetinue()]
+              : (rule.withUnits ?? []);
       for (const w of retinue) {
         for (let k = 0; k < w.count; k++) {
           const ang = ((k * 137) % 360) * Math.PI / 180;

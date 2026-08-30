@@ -13,7 +13,7 @@ import {
 import { dist2, idiv, isqrt, clamp, seconds, tiles, TICK_HZ } from './math.ts';
 import { nextChance, nextInt } from './rng.ts';
 import { isCombatTag } from './types.ts';
-import type { ActiveSkill, CombatTeam, Entity, EntityDef, Game, TeamId } from './types.ts';
+import type { ActiveSkill, BonusKey, CombatTeam, Entity, EntityDef, Game, Tag, TeamId } from './types.ts';
 import { enemyOf } from './types.ts';
 
 function def(e: Entity): EntityDef {
@@ -125,6 +125,9 @@ function swingCooldown(e: Entity, d: EntityDef): number {
   return cd;
 }
 
+/** 폭산이 닿는 반경 (5타일). */
+const DEATH_BOMB_R = tiles(5);
+
 /** 차지 스킬의 기본 연사 간격 (3초). */
 const SEC3 = TICK_HZ * 3;
 
@@ -134,7 +137,8 @@ function hasDebuff(g: Game, e: Entity): boolean {
     || g.tick < e.weakenedUntil || g.tick < e.sleepUntil
     || g.tick < e.frozenUntil || g.tick < e.groundedUntil
     || g.tick < e.chilledUntil || g.tick < e.fearedUntil
-    || g.tick < e.seducedUntil || g.tick < e.burnUntil || g.tick < e.chokedUntil;
+    || g.tick < e.seducedUntil || g.tick < e.burnUntil || g.tick < e.chokedUntil
+    || g.tick < e.blindUntil;
 }
 
 /**
@@ -173,6 +177,7 @@ function clearDebuffs(g: Game, e: Entity): void {
   e.dotDps = 0;
   e.rootedUntil = 0;
   e.stunnedUntil = 0;
+  e.blindUntil = 0;
   e.confusedUntil = 0;
   e.weakenedUntil = 0;
   e.sleepUntil = 0;
@@ -667,6 +672,53 @@ function moveToward(
  * 실제로 자리를 차지하게 만들면, 근접 유닛은 대상 주위 링(6~8자리)을
  * 차지한 유닛만 때릴 수 있고 나머지는 줄을 서게 된다.
  */
+/**
+ * 아샤 전용 매 틱 처리.
+ *
+ *  1) 자동 은신 — 가만히 둬도 7초마다 2초씩 그림자에 든다. 「잠행」이 걸려
+ *     있으면 그쪽이 더 길므로 건드리지 않는다.
+ *  2) 저격 채널 — 서 있는 동안 맞으면 취소(쿨은 안 돈다), 버텨내면 쏜다.
+ *  3) 몸싸움을 놓아 준 유닛은 매 틱 표식을 갱신한다.
+ */
+function ashaPass(g: Game): void {
+  for (const e of g.entities) {
+    if (!e.alive) continue;
+    const d = def(e);
+    if (d.noCollide) e.noCollideUntil = g.tick + 2;
+    // 1) 자동 은신
+    if (d.autoStealth && !isIncapacitated(g, e)) {
+      if (e.autoStealthNextTick === 0) e.autoStealthNextTick = g.tick + d.autoStealth.everyTicks;
+      if (g.tick >= e.autoStealthNextTick) {
+        e.autoStealthNextTick = g.tick + d.autoStealth.everyTicks;
+        const until = g.tick + d.autoStealth.ticks;
+        if (until > e.stealthUntil) e.stealthUntil = until;
+      }
+    }
+    // 2) 저격 채널
+    if (e.snipeUntil > 0) {
+      const skills = d.actives;
+      const idx = skills ? skills.findIndex((a) => a.kind === 'snipe') : -1;
+      const sk = idx >= 0 ? skills![idx]! : undefined;
+      // 맞았거나 행동불능이 되면 취소 — 쿨은 그대로 두어 곧 다시 시도한다
+      if (!sk || e.hp < e.snipeHp || isIncapacitated(g, e) || g.tick < e.blindUntil) {
+        e.snipeUntil = 0;
+        e.snipeTargetId = -1;
+      } else if (g.tick >= e.snipeUntil) {
+        const t = g.entities.find((v) => v.id === e.snipeTargetId);
+        if (t && t.alive && t.team !== e.team && !isShielded(g, t)) {
+          applyStrike(g, e, sk, t);
+          g.events.push({
+            tick: g.tick, kind: 'snipe', team: e.team as TeamId, x: t.x, y: t.y,
+          });
+        }
+        if (idx >= 0) spendSkill(e, idx, sk);
+        e.snipeUntil = 0;
+        e.snipeTargetId = -1;
+      }
+    }
+  }
+}
+
 function separate(g: Game): void {
   for (let iter = 0; iter < 3; iter++) separatePass(g);
   // 격자 마스크 지형: 밀려나다 벽 안으로 들어간 유닛을 길 위로 되돌린다.
@@ -791,6 +843,12 @@ function separatePass(g: Game): void {
       const db = def(b);
       // 유령 통행(보급 마차): 누구와도 몸싸움하지 않는다
       if (da.ghost || db.ghost) continue;
+      /*
+       * 몸싸움을 놓아 준 유닛 — 아샤의 잠행 중이거나, 강화로 영구히 얻었다.
+       * 암살자가 아군 전열에 걸려 후열까지 못 가면 이 영웅이 성립하지 않는다.
+       */
+      if (da.noCollide || db.noCollide) continue;
+      if (g.tick < a.noCollideUntil || g.tick < b.noCollideUntil) continue;
       // 「바람의 춤」 중인 유닛도 누구와도 부딪히지 않는다 — 물러설 길이 막히면
       // 거리를 되찾는다는 스킬 자체가 성립하지 않는다
       if (da.kiteDance || db.kiteDance) continue;
@@ -893,10 +951,19 @@ function applyDamage(g: Game, attacker: Entity, attackerDef: EntityDef, victim: 
   if (g.tick < victim.stealthUntil) return;
   if (g.tick < victim.buriedUntil) return; // 「토끼굴」 땅속
   if (g.tick < victim.vanishUntil) return; // 「커튼콜」 무대 밖
-  // 회피 (캠페인 강화): 평타만 피한다 — 마법·스킬·장판·독은 회피 불가
-  if (vd.dodgePct && nextChance(g.rng, vd.dodgePct)) {
-    victim.lastAttackerId = attacker.id;
-    return;
+  /*
+   * 회피 (캠페인 강화): 평타만 피한다 — 마법·스킬·장판·독은 회피 불가.
+   * 아샤가 빌려준 「그림자 장막」도 여기 얹는다. 둘 다 걸렸으면 높은 쪽 한 번만
+   * 굴린다 — 두 번 굴리면 확률이 곱해져 후열이 사실상 안 맞게 된다.
+   */
+  {
+    const own = vd.dodgePct ?? 0;
+    const lent = g.tick < victim.dodgeGrantUntil ? victim.dodgeGrantPct : 0;
+    const pct = own > lent ? own : lent;
+    if (pct > 0 && nextChance(g.rng, pct)) {
+      victim.lastAttackerId = attacker.id;
+      return;
+    }
   }
   /*
    * 「잎새의 장막」(에버그린): 얻어맞는 순간 잎에 몸을 숨긴다.
@@ -927,6 +994,29 @@ function applyDamage(g: Game, attacker: Entity, attackerDef: EntityDef, victim: 
   // 「소환으로만 나오는 최종 티어」 = 캠페인 네임드·영웅이다.
   if (attackerDef.bonusVsHero && vd.tier === 'final' && vd.summonOnly) {
     dmg += attackerDef.bonusVsHero;
+  }
+  /*
+   * 잠행 중의 칼 — 갑옷 종류로 값이 갈린다.
+   * 천·가죽은 그냥 얇게 베이고, 판금은 틈을 찾아 깊게 넣는다.
+   * 그 틈이 크게 벌어져 있으면(체력이 얼마 안 남았으면) 한 번에 끝낸다.
+   */
+  {
+    const hid = hidden(g, attacker, attackerDef);
+    if (hid) {
+      if (hid.stealthBonus) {
+        for (const t of vd.tags) {
+          const add = hid.stealthBonus[t as BonusKey];
+          if (add) dmg += add;
+        }
+      }
+      const ex = hid.stealthExecute;
+      if (ex && vd.tags.includes(ex.tag as Tag)
+        && victim.hp * 100 <= vd.maxHp * ex.belowPct
+        && !(vd.tier === 'final' && vd.summonOnly)
+        && nextChance(g.rng, ex.chancePct)) {
+        dmg += vd.maxHp; // 처형 — 남은 체력을 확실히 넘긴다
+      }
+    }
   }
   // 제물 흡수 (인큐버스): 스택당 공격력 +10%
   if (attacker.sacrificeStacks > 0) dmg = idiv(dmg * (100 + attacker.sacrificeStacks * 10), 100);
@@ -1041,6 +1131,32 @@ function applyDamage(g: Game, attacker: Entity, attackerDef: EntityDef, victim: 
     const until = g.tick + w.chillTicks;
     if (until > victim.chilledUntil) victim.chilledUntil = until;
   }
+
+  /*
+   * 실명 — 눈이 타서 공격을 못 한다 (걷기는 된다).
+   *
+   * 독과 달리 방지막이 「걸린 직후부터」 돈다. 아샤의 공속이면 실명 시간보다
+   * 평타 간격이 훨씬 짧아서, 재감염을 막지 않으면 한 번 걸린 적은 죽을 때까지
+   * 눈을 못 뜬다 — 그건 상태이상이 아니라 처형이다.
+   */
+  if (w.blindTicks && g.tick >= victim.blindWardUntil) {
+    const apply = w.blindChance === undefined || nextChance(g.rng, w.blindChance);
+    if (apply) {
+      const until = g.tick + w.blindTicks;
+      if (until > victim.blindUntil) victim.blindUntil = until;
+      victim.blindWardUntil = g.tick + (w.blindWardTicks ?? w.blindTicks * 3);
+    }
+  }
+
+  /*
+   * 폭산 표식 — 이대로 죽으면 제 편에게 터진다.
+   * 영웅·네임드는 안 걸린다 (보스가 자기 부대를 쓸어버리면 판이 이상해진다).
+   */
+  if (w.deathBombPct && w.deathBombTicks && !(vd.tier === 'final' && vd.summonOnly)) {
+    victim.deathBombUntil = g.tick + w.deathBombTicks;
+    victim.deathBombPct = w.deathBombPct;
+    victim.deathBombTeam = attacker.team;
+  }
 }
 
 /**
@@ -1127,6 +1243,18 @@ function spawnBattleEntity(g: Game, defId: string, team: CombatTeam, owner: numb
     dotUntil: 0,
     dotDps: 0,
     poisonWardUntil: 0,
+    blindUntil: 0,
+    blindWardUntil: 0,
+    deathBombUntil: 0,
+    deathBombPct: 0,
+    deathBombTeam: -1,
+    dodgeGrantUntil: 0,
+    dodgeGrantPct: 0,
+    snipeUntil: 0,
+    snipeHp: 0,
+    snipeTargetId: -1,
+    autoStealthNextTick: 0,
+    noCollideUntil: 0,
     rootedUntil: 0,
     stunnedUntil: 0,
     skillCds: d.actives?.map(() => 0) ?? [],
@@ -2085,6 +2213,9 @@ export function stepCombat(g: Game): void {
   // 3-b) 덩치 보스 패시브 — 공중 끌어당기기 + 몸에 붙은 적 갈아내기
   bossFieldPass(g);
 
+  // 3-c) 아샤: 저절로 도는 은신 · 저격 채널 · 영구 몸싸움 면제
+  ashaPass(g);
+
   // 4) 공격 (+ 액티브 시전)
   for (const e of g.entities) {
     if (!e.alive) continue;
@@ -2483,9 +2614,24 @@ export function stepCombat(g: Game): void {
             if (inCombat) {
               const r = a.auraRadius ?? tiles(5);
               const until = g.tick + (a.durTicks ?? 0);
+              const lend = a.grantDodgePct ?? 0;
               for (const ally of g.entities) {
                 if (!ally.alive || ally.team !== e.team) continue;
                 if (dist2(e.x, e.y, ally.x, ally.y) > r * r) continue;
+                /*
+                 * 「그림자 장막」(아샤) — 공속이 아니라 회피를 빌려준다.
+                 * 받는 쪽은 후열뿐이다: 원거리·지원가만. 전열이 이걸 받으면
+                 * 앞에서 버티는 판이 되어 버려, 후열을 지킨다는 뜻이 사라진다.
+                 */
+                if (lend > 0) {
+                  const ad = def(ally);
+                  const backline = isSupportFoe(ad)
+                    || (ad.weapon !== undefined && ad.weapon.range > tiles(2));
+                  if (!backline || ad.tier === 'structure') continue;
+                  if (until > ally.dodgeGrantUntil) ally.dodgeGrantUntil = until;
+                  if (lend > ally.dodgeGrantPct) ally.dodgeGrantPct = lend;
+                  continue;
+                }
                 if (until > ally.atkBuffUntil) ally.atkBuffUntil = until;
               }
               spendSkill(e, i, a);
@@ -2637,12 +2783,94 @@ export function stepCombat(g: Game): void {
             }
             break;
           }
-          case 'stealth': // 「은신」(인큐버스) 6초간 조준·피해에서 완전히 사라진다
-            if (inCombat) {
-              e.stealthUntil = g.tick + (a.durTicks ?? 120); // 기본 6초
-              spendSkill(e, i, a);
+          case 'stealth': { // 「은신」(인큐버스) 6초간 조준·피해에서 완전히 사라진다
+            if (!inCombat) break;
+            const until = g.tick + (a.durTicks ?? 120); // 기본 6초
+            /*
+             * 아샤는 2초짜리 자동 은신이 따로 돈다. 그게 먼저 끝나 버리면
+             * 「잠행」이 2초 만에 풀리므로, 남은 시간이 긴 쪽을 남긴다.
+             */
+            if (until > e.stealthUntil) e.stealthUntil = until;
+            if (a.stealthPhase) e.noCollideUntil = e.stealthUntil;
+            // 시전 순간 발밑에서 터지는 독 안개
+            if (a.burstDot) {
+              const bd = a.burstDot;
+              for (const v of g.entities) {
+                if (!v.alive || v.team === e.team || isShielded(g, v)) continue;
+                if (def(v).tier === 'structure') continue;
+                if (dist2(e.x, e.y, v.x, v.y) > bd.radius * bd.radius) continue;
+                v.hp -= bd.damage;
+                if (isStatusImmune(v) || poisonWarded(g, v)) continue;
+                const dUntil = g.tick + bd.ticks;
+                if (dUntil > v.dotUntil) v.dotUntil = dUntil;
+                if (bd.dps > v.dotDps) v.dotDps = bd.dps;
+              }
             }
+            spendSkill(e, i, a);
             break;
+          }
+          case 'snipe': {
+            /*
+             * 「저격」 — 제자리에 서서 가장 먼 후열 하나를 쏜다.
+             *
+             * 시전을 시작만 하고 여기서 끝낸다. 실제 발사는 아래 채널 처리가
+             * 맡는다 — 그 사이에 맞으면 취소되고 쿨은 돌지 않아야 하기 때문이다.
+             * 잠행 중에는 쏘지 않는다(그림자에서 나올 이유가 없다).
+             */
+            if (!inCombat || hidden(g, e, d) || g.tick < e.snipeUntil) break;
+            const reach = a.castRange ?? tiles(16);
+            const melee = a.abortIfMeleeWithin ?? 0;
+            let foeClose = false;
+            let best: Entity | undefined;
+            let bestD2 = -1;
+            for (const v of g.entities) {
+              if (!v.alive || v.team === e.team || isShielded(g, v)) continue;
+              const vd2 = def(v);
+              if (vd2.tier === 'structure') continue;
+              const d2v = dist2(e.x, e.y, v.x, v.y);
+              // 근접이 코앞이면 서 있을 여유가 없다
+              if (melee > 0 && d2v <= melee * melee && vd2.weapon
+                && vd2.weapon.range <= tiles(2)) foeClose = true;
+              if (d2v > reach * reach) continue;
+              // 후열만 — 지원가·원거리·비행
+              const backline = isSupportFoe(vd2) || vd2.flying
+                || (vd2.weapon !== undefined && vd2.weapon.range > tiles(2));
+              if (!backline) continue;
+              if (d2v > bestD2) { best = v; bestD2 = d2v; } // 가장 먼 놈
+            }
+            if (foeClose || !best) break;
+            e.snipeUntil = g.tick + (a.channelTicks ?? 40);
+            e.snipeHp = e.hp;
+            e.snipeTargetId = best.id;
+            break;
+          }
+          case 'massCharm': {
+            /*
+             * 「환술」 — 반경 안의 적을 통째로 우리 편으로 돌린다.
+             * 앨리스의 실이 하나를 집는다면, 이건 한 무리를 통째로 뒤집는다.
+             * 영웅·네임드·구조물·수호자는 걸리지 않는다.
+             */
+            if (!inCombat) break;
+            const r = a.castRange ?? tiles(10);
+            let took = 0;
+            for (const v of g.entities) {
+              if (!v.alive || v.team === e.team || isShielded(g, v)) continue;
+              if (g.tick < v.invulnUntil || blocksStatus(g, v)) continue;
+              const vd2 = def(v);
+              if (vd2.tier === 'structure') continue;
+              if (vd2.tier === 'final' && vd2.summonOnly) continue; // 영웅·네임드 면역
+              if (dist2(e.x, e.y, v.x, v.y) > r * r) continue;
+              v.team = e.team;
+              v.owner = e.owner;
+              v.puppetized = true;
+              v.targetId = -1;
+              v.lastAttackerId = -1;
+              v.tauntedUntil = 0;
+              took++;
+            }
+            if (took > 0) spendSkill(e, i, a);
+            break;
+          }
           case 'legion': { // 「군세 소환」(인큐버스 해금) 고정 구성 대량 소환
             if (inCombat && a.legion) {
               let k = 0;
@@ -3068,6 +3296,8 @@ export function stepCombat(g: Game): void {
     if (isIncapacitated(g, e)) continue; // 기절·수면·빙결: 공격 불가
     if (g.tick < e.fearedUntil) continue; // 공포: 달아나느라 공격 불가
     if (g.tick < e.seducedUntil) continue; // 매혹: 싸움을 잊었다
+    if (g.tick < e.blindUntil) continue;   // 실명: 눈이 타서 조준을 못 한다 (걷기는 된다)
+    if (g.tick < e.snipeUntil) continue;   // 저격 시전 중 — 평타는 멈춘다
     // (혼란은 공격을 막지 않는다 — 타겟팅이 이미 자기 편을 조준하고 있다)
 
     const target = e.targetId >= 0 ? byId.get(e.targetId) : undefined;
@@ -3187,7 +3417,21 @@ export function stepCombat(g: Game): void {
         if (dist2(target.x, target.y, v.x, v.y) <= r * r) applyDamage(g, e, d, v);
       }
     } else {
-      applyDamage(g, e, d, target);
+      /*
+       * 잠행 중 아샤의 단검은 지상에서만 번진다 (stealthSplash).
+       * 그림자에서 나와 한 번 크게 긋는 그림이라, 하늘에는 닿지 않는다.
+       */
+      const hid = hidden(g, e, d);
+      const sSp = hid?.stealthSplash ?? 0;
+      if (sSp > 0 && !isFlying(g, target)) {
+        for (const v of g.entities) {
+          if (!v.alive || v.team !== target.team || v.id === e.id) continue;
+          if (isFlying(g, v) || !canHit(g, d, v) || isShielded(g, v)) continue;
+          if (dist2(target.x, target.y, v.x, v.y) <= sSp * sSp) applyDamage(g, e, d, v);
+        }
+      } else {
+        applyDamage(g, e, d, target);
+      }
     }
     // 장판 생성: 공격당 1번, 명중 지점에 (스플래시와 무관).
     // 근처(반경 이내)에 같은 팀·종류 장판이 있으면 새로 깔지 않고 갱신 —
@@ -3214,6 +3458,11 @@ export function stepCombat(g: Game): void {
       }
     }
     let cd = swingCooldown(e, d);
+    // 잠행 중 공속 — 그림자에서 연달아 긋는다
+    {
+      const hidCd = hidden(g, e, d)?.stealthAtkSpeedPct ?? 0;
+      if (hidCd > 0) cd = idiv(cd * 100, 100 + hidCd);
+    }
     // 공속 버프 (태엽 감기 + 숲의 가호 + 군세강화)
     const atkPct = atkSpeedPctOf(g, e, d);
     if (atkPct > 0) cd = Math.max(1, idiv(cd * 100, 100 + atkPct));
@@ -3311,6 +3560,14 @@ export function stepCombat(g: Game): void {
     }
   }
 
+  /*
+   * 폭산 — 아샤에게 표식이 찍힌 채 죽은 자는 제 편 한가운데서 터진다.
+   * 사망 처리보다 먼저 도는 이유: 아래에서 부활(최후의 함성·검은새)이
+   * 걸리면 아직 죽은 게 아니므로, 「죽는 것이 확정된 놈」만 터뜨려야 한다 —
+   * 그래서 폭발 자체는 사망 처리 안에서, 부활 판정을 지나온 뒤에 한다.
+   */
+  const bombs: { x: number; y: number; dmg: number; team: number }[] = [];
+
   // 6) 사망 처리
   for (const e of g.entities) {
     if (!e.alive || e.hp > 0) continue;
@@ -3376,6 +3633,13 @@ export function stepCombat(g: Game): void {
       }
     }
     e.alive = false;
+    if (g.tick < e.deathBombUntil && e.deathBombPct > 0) {
+      bombs.push({
+        x: e.x, y: e.y,
+        dmg: idiv(def(e).maxHp * e.deathBombPct, 100),
+        team: e.team,
+      });
+    }
     if (e.defId === 'tower') {
       const t = e.team as TeamId; // 구조물은 팀 0|1 만 존재
       g.events.push({ tick: g.tick, kind: 'towerDown', team: t });
@@ -3399,6 +3663,24 @@ export function stepCombat(g: Game): void {
       }
       g.events.push({ tick: g.tick, kind: 'guardianDown', team: t });
     }
+  }
+
+  /*
+   * 폭산이 터진다 — 죽은 자의 편에게만.
+   * 방어를 무시하는 고정 피해다(살점이 터지는 것에 갑옷은 소용없다).
+   * 연쇄로 또 표식이 옮지는 않는다 — 한 번의 죽음은 한 번만 터진다.
+   */
+  for (const b of bombs) {
+    const r = DEATH_BOMB_R;
+    for (const v of g.entities) {
+      if (!v.alive || v.team !== b.team) continue;
+      const vd = def(v);
+      if (vd.tier === 'structure' || isShielded(g, v)) continue;
+      if (g.tick < v.invulnUntil) continue;
+      if (dist2(b.x, b.y, v.x, v.y) > r * r) continue;
+      v.hp -= b.dmg;
+    }
+    g.events.push({ tick: g.tick, kind: 'deathBomb', team: b.team as TeamId, x: b.x, y: b.y });
   }
 
   // 7) 주기적 압축 (배열 순서 유지, 죽은 것만 제거)

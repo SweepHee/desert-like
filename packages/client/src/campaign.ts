@@ -465,6 +465,11 @@ const U11 = [...U8, 's_wyvern', 's_unicorn', 's_fairy'];
 const U13 = [...U11, 's_treekeeper'];
 // 숲의 명궁은 13 을 클리어해야 상시 해금 — 13 안에서는 에버그린이 데려올 때만 풀린다
 const U14 = [...U13, 's_marksman', 's_apostle', 's_treant'];
+// 15 금광 별동대: 카엘이 성문 앞 본대에서 데려갈 수 있는 제한 편성.
+const U15_MINE = [
+  's_gouto', 's_elf_archer', 's_marmot', 's_vine_hunter', 's_druid',
+  's_mushroom_bomber', 's_treekeeper', 's_thorn_witch', 's_treant',
+];
 const U17 = [...U14, 's_sage'];
 
 const seedOf = (id: number): number => (id * 7919 + 3) | 0;
@@ -1639,7 +1644,7 @@ export const SYLVARIN_CAMPAIGN: readonly CampaignStage[] = [
   },
   {
     id: 15, act: 3, title: '에메랄드 숲의 값', goal: '💰 금 20,000을 먼저 모아라 — 금광 여섯을 빼앗고 지켜라',
-    allowedUnits: U14, botDifficulty: 'normal',
+    allowedUnits: U15_MINE, botDifficulty: 'normal',
     // 카르자가 이미 고원을 차지하고 캐고 있다. 갱마다 주둔군이 박혀 있다.
     enemies: ['karja', 'karja', 'karja'],
     allies: [],
@@ -1662,23 +1667,24 @@ export const SYLVARIN_CAMPAIGN: readonly CampaignStage[] = [
     startMoney: 500,
     goldRace: {
       target: 20000,
-      // 새 가로형 고원의 갱 여섯. 인접 광산도 17타일 이상 떨어져 교전이 섞이지 않는다.
+      // 굽은 고원길의 갱 여섯. 좌표가 아니라 실제 지상 경로로 서로 격리된다.
       mines: [
-        { xTile: 15.3, yOffTile: -9.2, label: '북서 갱' },
-        { xTile: 36.9, yOffTile: -8.9, label: '북중 갱' },
-        { xTile: 56.8, yOffTile: -9.0, label: '북동 갱' },
-        { xTile: 16.3, yOffTile: 8.8, label: '남서 갱' },
-        { xTile: 37.3, yOffTile: 8.6, label: '남중 갱' },
-        { xTile: 57.1, yOffTile: 8.7, label: '남동 갱' },
+        { xTile: 34, yOffTile: -18, label: '북서 갱' },
+        { xTile: 65, yOffTile: -18, label: '북중 갱' },
+        { xTile: 98, yOffTile: -17, label: '북동 갱' },
+        { xTile: 36, yOffTile: 15, label: '남서 갱' },
+        { xTile: 68, yOffTile: 15, label: '남중 갱' },
+        { xTile: 113, yOffTile: 2, label: '남동 갱' },
       ],
       // 갱 말고 부대를 세울 수 있는 자리 — 사잇길을 잡으면 양쪽 갱을 다 받친다
       midpoints: [
-        { xTile: 36.9, yOffTile: 0.0, label: '가운데 사잇길' },
+        { xTile: 61, yOffTile: 0, label: '폐광 우회로' },
       ],
       radiusTiles: 4.5,
       captureSec: 10,
       goldPerMine: 40,
-      baseGold: 20,
+      // 금광이 없으면 수입도 0 — 양 진영 모두 점령한 광산에서만 금을 얻는다.
+      baseGold: 0,
       /*
        * 갱 주둔군 — 서쪽(가까운) 갱이 얇고 동쪽(적진 쪽)이 두껍다.
        * 순서는 mines 와 같다: 북서 · 북중 · 북동 · 남서 · 남중 · 남동.
@@ -1694,7 +1700,7 @@ export const SYLVARIN_CAMPAIGN: readonly CampaignStage[] = [
       workerDefIds: ['c_elf_miner'],
       workersPerMine: 3,
       // 적 요새는 못 친다 — 마지막 갱 너머로는 진군하지 않는다
-      holdLineXTile: 62,
+      holdLineXTile: 115,
     },
     // 카르자 본진은 갱을 되찾으러 계속 밀어낸다
     enemyAllowedUnits: [
@@ -1712,25 +1718,24 @@ export const SYLVARIN_CAMPAIGN: readonly CampaignStage[] = [
       k_tribal: 5, k_apprentice: 5, k_shaman: 3, k_falconer: 3,
       k_eagle: 5, k_beeswarm: 4, k_sandwraith: 3,
     },
+    // 본대와 다른 영웅들은 성문 앞에 남는다. 이 판의 영웅 출정은 카엘 단독.
     spawns: [
       { defId: 'c_kael', label: '🛡 숲지기 카엘 참전!', heroPick: true, everySec: 110,
-        concurrentCap: 1, respawnAfterDeathSec: 110, atXTile: 8, friendly: true },
-      { defId: 'c_elowyn', label: '🧙 현자 엘로윈 참전!', heroPick: true, everySec: 240,
-        concurrentCap: 1, respawnAfterDeathSec: 240, atXTile: 8, friendly: true },
-      { defId: 'c_evergreen', label: '🏹 신궁 에버그린 참전!', heroPick: true, everySec: 170,
-        concurrentCap: 1, respawnAfterDeathSec: 170, atXTile: 8, friendly: true },
+        concurrentCap: 1, respawnAfterDeathSec: 110, atXTile: 6, friendly: true },
       // 후반 압박 — 카르자가 갱을 되찾으러 정예를 보낸다
       { defId: 'k_highlander', label: '🐎 고원 기마전사', atSec: 480, everySec: 150, concurrentCap: 3 },
       { defId: 'k_sandgiant', label: '🗿 모래 거인', atSec: 720, everySec: 200, concurrentCap: 2 },
-      { defId: 'k_grandshaman', label: '👑 천막의 대주술사 하르간!', atSec: 960, everySec: 300, concurrentCap: 1 },
+      // 5턴부터 하르간이 직접 광산 탈환을 지휘한다. 쓰러진 시점부터 180초 뒤 부활.
+      { defId: 'k_grandshaman', label: '👑 천막의 대주술사 하르간!', atSec: 300, everySec: 180,
+        concurrentCap: 1, respawnAfterDeathSec: 180 },
     ],
     cutscenes: [
       {
-        atSec: 960,
+        atSec: 300,
         lines: [
           { who: '', text: '고원 전체에서 북소리가 한 번에 멎었다. 천막들이 열리고, 모래가 스스로 일어선다.' },
           { who: '하르간', text: '금을 캐 가겠다고? 이 산은 백 년을 우리 것이었다. 갱을 도로 묻어 버리지.' },
-          { who: '엘로윈', text: '저 노인이 서 있는 동안엔 카르자가 두 배로 강해진다 — 갱을 지켜라, 먼저 끊고.' },
+          { who: '카엘', text: '하르간이 직접 나섰다. 저 노인을 먼저 끊고 광산을 지켜라!' },
         ],
       },
     ],
@@ -1738,38 +1743,45 @@ export const SYLVARIN_CAMPAIGN: readonly CampaignStage[] = [
       { who: '', img: '/assets/cutscenes/cs31_gate.png',
         text: '세계수의 줄기를 되찾았지만, 발타르의 주둔지 정문은 열리지 않았다.\n주술로 봉인된 문 앞에서 사흘을 보냈고, 그 사흘 동안 뿌리는 다시 마르기 시작했다.' },
       { who: '카엘', text: '정면은 안 됩니다. 문을 두드릴 때마다 우리 쪽이 더 줄어요.' },
-      { who: '엘로윈', img: '/assets/cutscenes/cs31_emerald.png',
-        text: '문은 두드리는 게 아니라 열고 들어가는 거다. …에메랄드 숲으로 가자.' },
-      { who: '티아', text: '에메랄드 숲이요? 거긴 엘프인데 실바린이 아니라고… 300년 동안 한 번도 안 도왔다면서요.' },
-      { who: '엘로윈', text: '돕지 않았지. 대신 값을 받으면 움직인다. 자물쇠를 여는 일에 관해서는 대륙 최고다.' },
-      { who: '아샤', text: '(나무 그늘에서) 오랜만이군, 현자. 여전히 공짜로 남의 칼을 빌리려 드는가?' },
-      { who: '카엘', text: '…언제부터 거기 계셨습니까.' },
-      { who: '아샤', text: '너희가 숲에 들어선 순간부터. 값은 금이다 — 고원의 금 이만.' },
-      { who: '브리아', text: '이만? 그거 지금 카르자가 앉아서 캐고 있는데.' },
-      { who: '아샤', text: '알고 있다. 그러니 값인 거지. 쉬웠으면 벌써 우리가 캤을 테니.' },
+      { who: '엘로윈', text: '에메랄드 숲의 아샤라면 이 봉인을 열 수 있다. 하지만 본대와는 말도 섞지 않을 거다.' },
+      { who: '엘로윈', text: '카엘, 네가 직접 찾아가라. 나는 에버그린과 여기 남아 성의 병력을 묶어 두마.' },
+      { who: '카엘', text: '작은 별동대만 데려가겠습니다. 성문은 제가 돌아올 때까지 지켜 주십시오.' },
+      { who: '', img: '/assets/cutscenes/cs31_emerald.png',
+        text: '카엘은 본대를 성문 앞에 남겨 둔 채 에메랄드 숲 깊숙이 들어갔다.\n사흘째 해가 기울 무렵, 오래된 에메랄드 나무 아래에서 마침내 아샤를 찾았다.' },
+      { who: '카엘', text: '아샤 님을 찾아왔습니다. 발타르의 성문에 걸린 봉인을 열어 주십시오.' },
+      { who: '아샤', text: '현자의 군대와는 거래하지 않는다. 하지만 혼자 여기까지 온 네 말은 들어 주지.' },
+      { who: '아샤', text: '봉인을 여는 값은 고원의 금 2만 골드다. 가져오면 문 하나를 열어 주마.' },
+      { who: '카엘', text: '그 고원은 카르자가 점령하고 있습니다.' },
+      { who: '아샤', text: '알고 있다. 그래서 2만 골드인 거다. 쉬웠다면 벌써 우리가 캤겠지.' },
+      { who: '카엘', text: '좋습니다. 2만 골드를 가지고 이곳으로 돌아오겠습니다.' },
       { who: '', img: '/assets/cutscenes/cs31_mines.png',
-        text: '고원의 능선은 좁고 굽어 있었다. 갱 여섯에서 전부 붉은 깃발이 올라 있었고,\n광차가 쉬지 않고 카르자의 천막으로 굴러 들어갔다.' },
+        text: '카엘의 별동대가 고원에 닿았을 때, 갱 여섯에는 모두 붉은 깃발이 올라 있었다.\n광차는 쉬지 않고 카르자의 성채로 굴러 들어갔다.' },
       { who: '하르간', img: '/assets/cutscenes/cs31_hargan.png',
-        text: '숲 것들이 고원까지 올라왔군. 여긴 우리가 백 년을 걸어 찾은 땅이다. 돌아가라.' },
-      { who: '엘로윈', text: '우리도 물러설 곳이 없소. 뒤에 숲이 마르고 있어서.' },
-      { who: '하르간', text: '…그럼 캐는 속도로 정하자. 먼저 이만을 채우는 쪽이 이 산의 주인이다.' },
-      { who: '티아', img: '/assets/cutscenes/cs31_miners.png',
-        text: '갱을 뺏으면 광부들이 요새에서 곧장 올라가 캘게요! 대신 광부는 스스로 못 싸워요 — 꼭 지켜 주세요.' },
-      { who: '엘로윈', text: '갱 여섯을 하나씩 걷어내라. 뺏을수록 우리는 빨라지고 저쪽은 느려진다.',
-      },
-      { who: '아린', text: '적 요새까지는 못 갑니다 — 길이 막혀 있어요. 이 판은 갱으로만 결판납니다.' },
-      { who: '브리아', text: '갱들은 서로 멀리 떨어져 있어. 한 곳을 치는 부대가 다른 갱까지 건드리진 못해 — 어디부터 뺏을지 정해서 밀어붙여.' },
+        text: '숲의 장수가 병력까지 끌고 고원에 기어들었군. 여긴 우리가 백 년을 걸어 찾은 땅이다. 돌아가라.' },
+      { who: '카엘', text: '우리 본대는 오지 않았습니다. 하지만 2만 골드를 얻기 전까지 저도 돌아갈 수 없습니다.' },
+      { who: '하르간', text: '그 사정이 우리 광맥을 탐낼 명분이라도 되나? 탐욕스러운 숲 것들.' },
+      { who: '하르간', text: '금이 필요하면 와서 빼앗아 봐라. 2만 골드를 채우기 전에 네놈들 피가 먼저 고원을 적실 테니.' },
+      { who: '', img: '/assets/cutscenes/cs31_miners.png',
+        text: '광산을 점령하면 카엘이 데려온 엘프 광부들이 요새에서 출발한다.\n광부는 싸울 수 없으므로 별동대가 광산을 지켜야 한다.' },
+      { who: '카엘', text: '갱들은 서로 멀리 떨어져 있다. 하나씩 확실히 빼앗고 지킨다 — 목표는 적 성채가 아니라 2만 골드다.' },
     ],
     outro: [
-      { who: '하르간', text: '(광차가 멎는다) …북이 멎었군. 백 년을 걸어와서, 또 걸어 나가야 하나.' },
-      { who: '카엘', text: '금만 가져가겠습니다. 갱은 두고 갑니다 — 당신들이 다시 캐면 됩니다.' },
-      { who: '하르간', text: '…뭐?' },
-      { who: '카엘', text: '우리가 싸우는 상대는 당신이 아니라 겨울입니다. 겨울이 여기까지 오면, 이 금도 언 땅 밑에 묻힙니다.' },
-      { who: '하르간', text: '(오래 침묵한다) …이름이 뭐냐, 숲의 아이.' },
-      { who: '카엘', text: '카엘입니다.' },
-      { who: '하르간', text: '기억해 두마. 카르자는 빚을 잊지 않는다 — 갚을 때가 오면 북을 울리지.' },
-      { who: '아샤', text: '(광석을 손에 굴리며) 값은 받았다. 문 하나. 그 이상은 묻지 마라.' },
-      { who: '엘로윈', text: '그거면 충분하오.' },
+      { who: '하르간', text: '(광차가 멎는다) 도둑놈들… 백 년 동안 지켜 온 광맥을 끝내 뜯어 가는군.' },
+      { who: '카엘', text: '당신들이 길을 비켰다면 피를 흘릴 일도 없었습니다. 금은 우리가 가져가겠습니다.' },
+      { who: '하르간', text: '남의 땅에 칼을 들고 들어와 길을 비키라 했나? 숲의 오만은 썩은 뿌리보다 지독하군.' },
+      { who: '카엘', text: '우리를 막아선 대가는 이미 치렀을 겁니다. 또 막는다면 다음에도 같습니다.' },
+      { who: '하르간', text: '그 얼굴과 이름을 기억해 두마. 네가 어디로 달아나든 카르자의 북소리가 따라갈 것이다.' },
+      { who: '카엘', text: '숲지기 카엘입니다. 찾아오십시오. 다음엔 광산 하나로 끝나지 않을 테니.' },
+      { who: '', img: '/assets/cutscenes/cs31_emerald.png',
+        text: '카엘은 금을 실은 광차를 이끌고 에메랄드 숲으로 돌아왔다.\n아샤는 광석 하나를 집어 빛에 비춰 본 뒤 조용히 고개를 끄덕였다.' },
+      { who: '아샤', text: '값은 받았다. 문 하나를 열어 주기로 했지.' },
+      { who: '카엘', text: '문만 열고 끝내기엔 너무 큰 값입니다. 남은 금으로 당신의 칼도 고용하겠습니다.' },
+      { who: '아샤', text: '나를 고용하겠다고? 하르간의 광맥을 털어 온 직후에 그런 말을 하는 배짱은 마음에 드는군.' },
+      { who: '아샤', text: '좋다. 이 전쟁이 끝날 때까지 네 별동대에 붙겠다. 다만 명령은 네게서만 듣는다.' },
+      { who: '카엘', text: '충분합니다. 본대가 기다리고 있습니다 — 함께 돌아가시죠.' },
+      { who: '', img: '/assets/cutscenes/cs31_gate.png',
+        text: '카엘과 아샤가 발타르의 성문 앞으로 돌아오자 봉인의 빛이 마지막 불꽃처럼 꺼졌다.\n아샤는 본대와 말을 섞지 않은 채 카엘의 별동대 곁에 섰다.' },
+      { who: '엘로윈', text: '문도 열고 칼도 하나 데려왔구나. 하지만 네 뒤를 따라오는 북소리가 들린다 — 오늘 만든 적은 오래 따라붙겠어.' },
     ],
   },
   {

@@ -7,7 +7,7 @@
 import { createGame, spawnUnit } from '../game.ts';
 import { stepCombat } from '../battle.ts';
 import { tiles, seconds, TICK_HZ } from '../math.ts';
-import { DEFS, MAPS, applyBoons, unitsOfRace, flowFieldOf, maskStepsOf, isWalkable, maskIndexOf } from '../data.ts';
+import { DEFS, MAPS, applyBoons, unitsOfRace, flowFieldOf, flowStepTo, maskStepsOf, isWalkable, maskIndexOf } from '../data.ts';
 import type { Entity, Game, RaceId, TeamId } from '../types.ts';
 
 const races: RaceId[] = ['sylvarin', 'pandemonium', 'marionetta', 'sylvarin', 'pandemonium', 'marionetta'];
@@ -1312,16 +1312,16 @@ function unlockSage(g: Game, sage: Entity): void {
   /*
    * 15 「에메랄드 숲의 값」 지형 계약.
    * 새 그림의 가로 공간과 광산 격리를 수치로 잠가, 좌표를 다시 좁혀 옛 문제가
-   * 돌아오지 않게 한다. 가장 가까운 두 광산도 17타일보다 멀어야 한다.
+   * 돌아오지 않게 한다. 목적지별 흐름장이 의도한 우회로를 타는지도 잠근다.
    */
   const m = MAPS['goldmine']!;
-  ok(m.length === tiles(74) && m.halfW === tiles(16),
-    '금광 고원: 새 74×32타일 가로형 전장');
-  ok(m.mask?.rows === 148 && m.mask.cols === 64 && m.mask.data.length === 148 * 64,
-    '금광 고원: 148×64 통행 마스크');
-  const mines = [[15.3, -9.2], [36.9, -8.9], [56.8, -9.0],
-                 [16.3, 8.8], [37.3, 8.6], [57.1, 8.7]];
-  const sites = [[5.2, 0], [68.4, 0], [36.9, 0], ...mines];
+  ok(m.length === tiles(120) && m.halfW === tiles(27),
+    '금광 고원: 새 120×54타일 유기적 전장');
+  ok(m.mask?.rows === 240 && m.mask.cols === 108 && m.mask.data.length === 240 * 108,
+    '금광 고원: 240×108 통행 마스크');
+  const mines = [[34, -18], [65, -18], [98, -17],
+                 [36, 15], [68, 15], [113, 2]];
+  const sites = [[4, 1], [118, 1], [61, 0], ...mines];
   ok(sites.every(([x, y]) => isWalkable(m, tiles(x!), tiles(y!))),
     '금광 고원: 양 본진·광산 6곳·중앙 집결지가 전부 길 위');
   let nearest = Infinity;
@@ -1330,12 +1330,33 @@ function unlockSage(g: Game, sage: Entity): void {
     const dy = mines[i]![1]! - mines[j]![1]!;
     nearest = Math.min(nearest, Math.hypot(dx, dy));
   }
-  ok(nearest >= 17, `금광 고원: 광산 간 최소 ${nearest.toFixed(1)}타일 (교전 격리)`);
+  ok(nearest >= 24, `금광 고원: 광산 간 최소 ${nearest.toFixed(1)}타일 (교전 격리)`);
+  const allySpawn = m.spawnPos![0];
+  ok(isWalkable(m, allySpawn[0], allySpawn[1])
+    && Math.abs(allySpawn[0] - m.nexusX[0]) <= tiles(2),
+  '금광 고원: 아군 병력은 북서 갱이 아니라 넥서스 바로 앞에서 출정');
   const steps = maskStepsOf(m);
   const enemySpawn = m.spawnPos![1];
   const idx = maskIndexOf(m, enemySpawn[0], enemySpawn[1]);
   ok(idx >= 0 && (steps?.[1]?.[idx] ?? -1) >= 0,
     '금광 고원: 양 본진 사이 지상 경로가 이어진다');
+
+  const routeNear = (from: number[], to: number[], via: number[], radius: number): boolean => {
+    let x = tiles(from[0]!); let y = tiles(from[1]!);
+    const rr = tiles(radius) ** 2;
+    for (let n = 0; n < 500; n++) {
+      const dx = x - tiles(via[0]!); const dy = y - tiles(via[1]!);
+      if (dx * dx + dy * dy <= rr) return true;
+      const next = flowStepTo(m, tiles(to[0]!), tiles(to[1]!), x, y);
+      if (!next) break;
+      x = next.x; y = next.y;
+    }
+    return false;
+  };
+  ok(routeNear([65, -18], [68, 15], [61, 0], 3),
+    '금광 고원 경로: 북중→남중은 중앙 폐광 우회로를 탄다');
+  ok(routeNear([34, -18], [68, 15], [36, 15], 6),
+    '금광 고원 경로: 북서→남중은 남서 광산을 거쳐 간다');
 }
 
 {

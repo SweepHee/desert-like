@@ -2631,7 +2631,7 @@ function tickGoldRace(): void {
   }
 
   if (goldAlly >= gr.target) campaignFinish(true);
-  else if (goldFoe >= gr.target) campaignFinish(false, '카르자가 먼저 이만을 채웠다');
+  else if (goldFoe >= gr.target) campaignFinish(false, '카르자가 먼저 2만 골드를 채웠다');
 }
 
 /** 캠페인 스테이지 종료 처리 — 승리 시 outro 대화 후 저장. */

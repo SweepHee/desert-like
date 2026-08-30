@@ -2612,6 +2612,10 @@ export function stepCombat(g: Game): void {
                   ?? pick((v) => (def(v).weapon?.range ?? 0) >= tiles(2))
                   ?? pick(() => true);
             if (jumpTo) {
+              // 지상 도약도 산맥·강을 관통하는 순간이동은 아니다. 목표까지 실제
+              // 통행선이 막혔으면 다리를 돌아 접근한 뒤 다시 시도한다.
+              if (blockedByTerrain(g, d)
+                && !walkLineClear(g.map, e.x, e.y, jumpTo.x, jumpTo.y)) break;
               const jd = def(jumpTo);
               e.x = clamp(jumpTo.x - (jd.radius + d.radius), 0, g.map.length);
               e.y = clampLaneY(g.map, e.x, jumpTo.y);

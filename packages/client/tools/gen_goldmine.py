@@ -7,7 +7,8 @@ goldmine_organic_base.png는 13라운드의 굽은 숲길 구성과 15라운드�
 from collections import deque
 from pathlib import Path
 from math import hypot
-from PIL import Image, ImageDraw, ImageFilter
+import random
+from PIL import Image, ImageDraw, ImageEnhance, ImageFilter, ImageOps
 
 ROOT = Path(__file__).resolve().parents[3]
 BASE = ROOT / 'packages/client/tools/goldmine_organic_base.png'
@@ -135,6 +136,38 @@ def decorate(bg, old_sheet, new_sheet):
         place(bg, obj, x, y, scale)
 
 
+def paint_walkable(base, mask_im, _old_dir):
+    """통행 마스크 자체로 밝은 길을 그려 그림과 충돌의 불일치를 없앤다."""
+    dark = ImageEnhance.Brightness(base).enhance(.58)
+    # 고정 시드의 다중 스케일 흙 질감. 작은 타일을 반복하지 않아 격자 이음새나
+    # 복제된 산봉우리 패턴이 없고, 생성기를 다시 돌려도 같은 결과가 나온다.
+    rng = random.Random(150013)
+    nw, nh = OUT_W // 4, OUT_H // 4
+    noise = Image.frombytes('L', (nw, nh), bytes(rng.randrange(256) for _ in range(nw * nh)))
+    broad = noise.filter(ImageFilter.GaussianBlur(9))
+    fine = noise.filter(ImageFilter.GaussianBlur(1))
+    broad = broad.resize((OUT_W, OUT_H), Image.Resampling.BICUBIC)
+    fine = fine.resize((OUT_W, OUT_H), Image.Resampling.BICUBIC)
+    road = ImageOps.colorize(broad, (82, 55, 28), (184, 142, 83)).convert('RGBA')
+    grain = ImageOps.colorize(fine, (75, 51, 28), (173, 132, 76)).convert('RGBA')
+    road = Image.blend(road, grain, .32)
+    road = Image.blend(road, base, .22)
+    mask_big = mask_im.resize((OUT_W, OUT_H), Image.Resampling.NEAREST)
+    edge = mask_big.filter(ImageFilter.MaxFilter(41)).filter(ImageFilter.GaussianBlur(8))
+    rim = Image.new('RGBA', base.size, (47, 31, 17, 210))
+    dark.paste(rim, (0, 0), edge)
+    soft = mask_big.filter(ImageFilter.GaussianBlur(5))
+    dark.paste(road, (0, 0), soft)
+    # 다리는 원화에 이미 제대로 그려져 있으므로 길 질감으로 덮지 않고 복원한다.
+    keep = Image.new('L', base.size, 0); kd = ImageDraw.Draw(keep)
+    for x, y in BRIDGES:
+        px, py = at_px(x, y); rad = 78
+        kd.ellipse((px-rad, py-rad, px+rad, py+rad), fill=255)
+    keep = keep.filter(ImageFilter.GaussianBlur(6))
+    dark.paste(base, (0, 0), keep)
+    return dark
+
+
 def grid_xy(x, y):
     return round(x * CPT), round((y + HALF_T) * CPT)
 
@@ -194,7 +227,7 @@ def main():
     old_dir, new_dir = source_dirs()
     base = Image.open(BASE).convert('RGBA').resize((OUT_W, OUT_H), Image.Resampling.LANCZOS)
     mask_im = terrain_mask(base)
-    bg = base.copy()
+    bg = paint_walkable(base, mask_im, old_dir)
     old_objects, new_objects = image_of(old_dir, (1448, 1086), True), image_of(new_dir, (1672, 941))
     decorate(bg, old_objects, new_objects)
     MAP_OUT.parent.mkdir(parents=True, exist_ok=True)

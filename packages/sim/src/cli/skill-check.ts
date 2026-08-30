@@ -1362,6 +1362,20 @@ function unlockSage(g: Game, sage: Entity): void {
     '금광 고원 물길: 나무다리 6곳은 통행 가능');
   ok([[23, -12], [88, 2]].every(([x, y]) => !isWalkable(m, tiles(x!), tiles(y!))),
     '금광 고원 물길: 다리 밖의 강바닥은 통행 불가');
+
+  const gg = createGame({
+    seed: 150013, mapId: 'goldmine',
+    players: races.map((race, i) => ({ race, isBot: true, team: (i < 3 ? 0 : 1) as TeamId })),
+  });
+  const walker = spawnUnit(gg, 'k_scimitar', 0, tiles(34), tiles(-18));
+  gg.entities = [walker];
+  gg.rallyX = tiles(68); gg.rallyY = tiles(15);
+  let leftRoad = false;
+  for (let t = 0; t < seconds(90); t++) {
+    gg.tick++; stepCombat(gg);
+    if (!isWalkable(m, walker.x, walker.y)) { leftRoad = true; break; }
+  }
+  ok(!leftRoad, '금광 고원 이동: 지상 유닛은 장거리 이동 내내 통행 마스크 안에 있다');
 }
 
 {

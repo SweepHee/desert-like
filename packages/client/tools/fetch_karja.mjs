@@ -2,14 +2,15 @@
  * 카르자 스프라이트 내려받기 — 픽셀랩 캐릭터 → 게임 에셋.
  *
  * 캐릭터마다 download zip 을 한 번 받아 필요한 것만 꺼낸다:
- *   Idle/rotations/east.png                      -> <id>.png        (전장 스프라이트)
+ *   Idle/rotations/{east,west,north,south}.png   -> <id>_{e,w,n,s}.png
+ *   Idle/rotations/east.png                      -> <id>.png        (기존 폴백)
  *   Idle/rotations/south.png                     -> <id>_icon.png   (상점 아이콘)
  *   Idle/animations/karja_attack/east/frame_00N  -> <id>_atk0..3.png
  *   Idle/animations/karja_fly/east/frame_00N     -> <id>_fly0..3.png
  *
  * 프레임은 5장(0 = 기준 자세 + 1~4 동작)이라 1~4 를 쓴다.
- * east 만 받는 이유: 전장 그림은 east 한 장이고 서쪽은 좌우 반전이다.
- * (8방향을 다 구우면 애니메이션이 방향당 1 generation 씩 더 든다)
+ * 15라운드가 굽은 길을 쓰므로 네 방향을 모두 꺼낸다. 회전 그림과 이미 생성된
+ * 방향별 애니메이션을 ZIP에서 추출하는 작업이라 추가 generation은 들지 않는다.
  *
  * 픽셀랩 캐릭터 id 를 아래 표에 박아 둔다 — 언제든 이 스크립트만 돌리면 다시 받는다.
  *
@@ -58,11 +59,15 @@ def dump(src, dst):
         with open(os.path.join(out, dst), 'wb') as f:
             f.write(z.read(src))
         got.append(dst)
+dirs = (('east', 'e'), ('west', 'w'), ('north', 'n'), ('south', 's'))
 dump('Idle/rotations/east.png', unit + '.png')
 dump('Idle/rotations/south.png', unit + '_icon.png')
+for dirname, short in dirs:
+    dump('Idle/rotations/%s.png' % dirname, '%s_%s.png' % (unit, short))
 for kind, suffix in (('karja_attack', '_atk'), ('karja_fly', '_fly')):
     for i in range(4):
-        dump('Idle/animations/%s/east/frame_%03d.png' % (kind, i + 1), '%s%s%d.png' % (unit, suffix, i))
+        src = 'Idle/animations/%s/east/frame_%03d.png' % (kind, i + 1)
+        dump(src, '%s%s%d.png' % (unit, suffix, i))
 print(' '.join(got))
 `;
 

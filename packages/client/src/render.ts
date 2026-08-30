@@ -392,7 +392,14 @@ const atk4 = (id: string): string[][] => [[0, 1, 2, 3].map((n) => `/assets/units
  * 등록된다 (하나라도 빠지면 기존 좌우 반전 방식 유지).
  * 엘프 궁수는 여/남 변형이라 제외 — 변형과 방향을 함께 다루려면 별도 작업 필요.
  */
+const KARJA_DIR_UNITS = new Set([
+  'k_scimitar', 'k_hunter', 'k_wolf', 'k_wolfrider', 'k_apprentice', 'k_tribal',
+  'k_shaman', 'k_spiritcaller', 'k_highlander', 'k_sandgiant', 'k_falconer',
+  'k_eagle', 'k_beeswarm', 'k_sandwraith', 'k_grandshaman', 'k_falcon', 'k_spirit',
+]);
+
 const DIR_SPRITE_UNITS: string[] = [
+  ...KARJA_DIR_UNITS,
   'c_evergreen',
   'c_kael',
   // 마을 주민 — 상하좌우 그림이 다 있다 (없으면 좌우 반전이라 위/아래가 어색하다)
@@ -3881,7 +3888,12 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
         const want = frames[fi];
         if (want && sp.texture !== want) sp.texture = want;
       } else {
-        const atkVariants = (vfx.atkAir ? airAttackTex.get(e.defId) : undefined) ?? attackTex.get(e.defId);
+        // 카르자 ZIP의 공격 애니메이션은 동향만 존재한다. 북/남을 공격할 때
+        // 동향 프레임을 억지로 틀지 않고 실제 북/남 기본 자세 + 반동/돌진 연출을 쓴다.
+        const karjaVertical = KARJA_DIR_UNITS.has(e.defId)
+          && (vfx.faceDir === 'n' || vfx.faceDir === 's');
+        const atkVariants = karjaVertical ? undefined
+          : (vfx.atkAir ? airAttackTex.get(e.defId) : undefined) ?? attackTex.get(e.defId);
         if (atkVariants) {
           const baseVariants = assetTex.get(e.defId);
           const vi = e.id % (baseVariants?.length ?? atkVariants.length);
@@ -3908,7 +3920,7 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
           if (sp.scale.x < 0) sp.scale.x = -sp.scale.x;
         } else if (dt && now < vfx.aimUntil) {
           const atkTgt = e.targetId >= 0 ? byId.get(e.targetId) : undefined;
-          if (attackTex.has(e.defId) || airAttackTex.has(e.defId)) {
+          if ((attackTex.has(e.defId) || airAttackTex.has(e.defId)) && !karjaVertical) {
             // 공격 프레임은 동향(east)으로 그려져 있다 — 서쪽 목표면 뒤집어 맞춘다.
             // 좌우는 faceDir 이 아니라 「목표가 실제로 어느 쪽인지」로 정한다
             // (faceDir 만 보면 위·아래 목표일 때 늘 동쪽을 향해 휘둘렀다).

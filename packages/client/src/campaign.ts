@@ -192,6 +192,10 @@ export interface CampaignStage {
   readonly goldRace?: {
     /** 먼저 이만큼 모으면 이긴다. */
     readonly target: number;
+    /** 시작 시 부대가 머무는 우리 기지 집합점. 집합지 선택 목록의 기본값이다. */
+    readonly home: {
+      readonly xTile: number; readonly yOffTile: number; readonly label: string;
+    };
     /** 갱 여섯 — 화면에 보이는 갱구 자리 그대로 (gen_goldmine.py 실측). */
     readonly mines: readonly {
       readonly xTile: number; readonly yOffTile: number; readonly label: string;
@@ -210,8 +214,8 @@ export interface CampaignStage {
     readonly baseGold: number;
     /** 갱마다 처음 박혀 있는 카르자 주둔군. */
     readonly garrisons: readonly (readonly { readonly defId: string; readonly count: number }[])[];
-    /** 갱을 가진 쪽이 보내는 일꾼 — 죽으면 다시 걸어온다. */
-    readonly workerDefIds: readonly string[];
+    /** 팀별 광부 — [실바린, 카르자]. 죽으면 각 진영 기지에서 다시 걸어온다. */
+    readonly workerDefIds: readonly [readonly string[], readonly string[]];
     readonly workersPerMine: number;
     /** 이 x 너머로는 진군하지 않는다 (적 요새는 못 친다). */
     readonly holdLineXTile: number;
@@ -1667,6 +1671,7 @@ export const SYLVARIN_CAMPAIGN: readonly CampaignStage[] = [
     startMoney: 500,
     goldRace: {
       target: 20000,
+      home: { xTile: 6, yOffTile: 1, label: '내 기지' },
       // 굽은 고원길의 갱 여섯. 좌표가 아니라 실제 지상 경로로 서로 격리된다.
       mines: [
         { xTile: 34, yOffTile: -18, label: '북서 갱' },
@@ -1697,7 +1702,7 @@ export const SYLVARIN_CAMPAIGN: readonly CampaignStage[] = [
         [{ defId: 'k_scimitar', count: 4 }, { defId: 'k_hunter', count: 3 }, { defId: 'k_wolf', count: 2 }],
         [{ defId: 'k_tribal', count: 3 }, { defId: 'k_hunter', count: 4 }, { defId: 'k_shaman', count: 1 }],
       ],
-      workerDefIds: ['c_elf_miner'],
+      workerDefIds: [['c_elf_miner'], ['k_miner']],
       workersPerMine: 3,
       // 적 요새는 못 친다 — 마지막 갱 너머로는 진군하지 않는다
       holdLineXTile: 115,

@@ -5,16 +5,17 @@ goldmine_organic_base.png는 13라운드의 굽은 숲길 구성과 15라운드�
 15라운드·신15라운드 오브젝트를 섞고, 원화의 길과 같은 연결망을 마스크로 굽는다.
 """
 from collections import deque
+from heapq import heappop, heappush
 from pathlib import Path
 from math import hypot
-import random
-from PIL import Image, ImageDraw, ImageEnhance, ImageFilter, ImageOps
+from PIL import Image, ImageDraw, ImageFilter
 
 ROOT = Path(__file__).resolve().parents[3]
 BASE = ROOT / 'packages/client/tools/goldmine_organic_base.png'
 MAP_OUT = ROOT / 'packages/client/public/assets/maps/goldmine.png'
 NEXUS_OUT = ROOT / 'packages/client/public/assets/units/nexus_goldkeep.png'
 MASK_OUT = ROOT / 'packages/client/tools/goldmine_mask.txt'
+MASK_TS_OUT = ROOT / 'packages/sim/src/goldmine-mask.ts'
 
 LEN_T, HALF_T, CPT = 120, 27, 2
 ROWS, COLS = LEN_T * CPT, HALF_T * 2 * CPT
@@ -27,19 +28,39 @@ BRIDGES = [(29, 3), (46, -3), (52, -14), (53, 19), (86, -6), (83, 11)]
 # 원화 위 길의 중심선. 직선 격자가 아니라 굴곡의 샘플점이며, 색상 판독이
 # 다리 그림자에서 끊겨도 통행 연결이 유지되게 하는 안전 골격이다.
 ROUTES = [
-    [(4, 1), (12, -3), (20, 0), (29, 3), (31, -7), (34, -18)],
-    [(4, 1), (13, 5), (22, 7), (29, 3), (31, 9), (36, 15)],
-    # 북서와 북중 사이의 원화 속 옛길은 무너진 폐광 구간이다. 통행망에는 넣지
-    # 않고 아래의 바위 소품으로 막는다 — 남중으로 갈 때 남서를 타는 이유다.
-    [(34, -18), (31, -8), (29, 3), (31, 10), (36, 15)],
-    [(36, 15), (44, 17), (53, 19), (61, 17), (68, 15)],
-    # 중앙 폐광 우회로 — 북중↔남중의 가장 짧은 세로 통로
-    [(65, -18), (58, -16), (52, -14), (48, -8), (46, -3),
-     (53, 1), (50, 10), (53, 19), (61, 17), (68, 15)],
-    [(65, -18), (73, -12), (80, -10), (86, -6), (91, -11), (98, -17)],
-    [(68, 15), (76, 12), (83, 11), (94, 7), (104, 8), (113, 2)],
-    [(98, -17), (92, -10), (86, -6), (94, -1), (103, 1), (113, 2)],
+    # 서부: 기지 → 첫 다리 → 서부 갈림길 → 북서/남서 갱.
+    [(4, 1), (11, 4), (20, 6), (27, 4), (29, 3),
+     (34, 1), (37, -4), (38, -10), (34, -18)],
+    [(4, 1), (11, 4), (20, 6), (27, 4), (29, 3),
+     (34, 1), (38, 5), (42, 10), (39, 14), (36, 15)],
+    # 북서→남중은 표시선대로 남서 갱과 남쪽 나무다리를 탄다.
+    [(34, -18), (38, -10), (37, -4), (34, 1), (38, 5), (42, 10),
+     (36, 15), (44, 16), (49, 19), (53, 19), (57, 13), (59, 7),
+     (64, 10), (68, 15)],
+    # 서부 갈림길→중앙 상단. 산을 직선으로 자르지 않고 실제 왼쪽 다리와 굽은 길을 돈다.
+    [(34, 1), (40, -2), (46, -3), (53, -1), (58, -5), (61, -10), (65, -12)],
+    # 북중→남중 중앙 폐광 우회로.
+    [(65, -18), (65, -12), (61, -10), (58, -5), (60, -1),
+     (57, 4), (59, 7), (64, 10), (68, 15)],
+    # 북부 동쪽 길: 북중→북동.
+    [(65, -18), (65, -12), (73, -10), (80, -10), (86, -6),
+     (91, -11), (95, -14), (98, -17)],
+    # 남부 동쪽 길: 남중→남동.
+    [(68, 15), (75, 13), (83, 11), (89, 7), (97, 8), (105, 7), (113, 2)],
+    # 동부: 북동→남동. 북쪽 다리와 동부 굽은 길을 따른다.
+    [(98, -17), (95, -14), (91, -11), (86, -6), (92, -2),
+     (99, 0), (105, 1), (113, 2)],
     [(113, 2), (118, 1)],
+]
+
+# 사용자가 표시한 통행 그래프. 각 간선의 실제 픽셀 경로는 원화의 황토길 질감을
+# 비용으로 삼는 다익스트라가 찾는다. 따라서 좌표 사이를 직선으로 잘라 산을 넘지 않는다.
+ROUTE_EDGES = [
+    ((4, 1), (34, -18)), ((4, 1), (36, 15)),
+    ((34, -18), (65, -18)), ((36, 15), (68, 15)),
+    ((65, -18), (68, 15)), ((65, -18), (98, -17)),
+    ((68, 15), (113, 2)), ((98, -17), (113, 2)),
+    ((113, 2), (118, 1)),
 ]
 
 
@@ -136,38 +157,6 @@ def decorate(bg, old_sheet, new_sheet):
         place(bg, obj, x, y, scale)
 
 
-def paint_walkable(base, mask_im, _old_dir):
-    """통행 마스크 자체로 밝은 길을 그려 그림과 충돌의 불일치를 없앤다."""
-    dark = ImageEnhance.Brightness(base).enhance(.58)
-    # 고정 시드의 다중 스케일 흙 질감. 작은 타일을 반복하지 않아 격자 이음새나
-    # 복제된 산봉우리 패턴이 없고, 생성기를 다시 돌려도 같은 결과가 나온다.
-    rng = random.Random(150013)
-    nw, nh = OUT_W // 4, OUT_H // 4
-    noise = Image.frombytes('L', (nw, nh), bytes(rng.randrange(256) for _ in range(nw * nh)))
-    broad = noise.filter(ImageFilter.GaussianBlur(9))
-    fine = noise.filter(ImageFilter.GaussianBlur(1))
-    broad = broad.resize((OUT_W, OUT_H), Image.Resampling.BICUBIC)
-    fine = fine.resize((OUT_W, OUT_H), Image.Resampling.BICUBIC)
-    road = ImageOps.colorize(broad, (82, 55, 28), (184, 142, 83)).convert('RGBA')
-    grain = ImageOps.colorize(fine, (75, 51, 28), (173, 132, 76)).convert('RGBA')
-    road = Image.blend(road, grain, .32)
-    road = Image.blend(road, base, .22)
-    mask_big = mask_im.resize((OUT_W, OUT_H), Image.Resampling.NEAREST)
-    edge = mask_big.filter(ImageFilter.MaxFilter(41)).filter(ImageFilter.GaussianBlur(8))
-    rim = Image.new('RGBA', base.size, (47, 31, 17, 210))
-    dark.paste(rim, (0, 0), edge)
-    soft = mask_big.filter(ImageFilter.GaussianBlur(5))
-    dark.paste(road, (0, 0), soft)
-    # 다리는 원화에 이미 제대로 그려져 있으므로 길 질감으로 덮지 않고 복원한다.
-    keep = Image.new('L', base.size, 0); kd = ImageDraw.Draw(keep)
-    for x, y in BRIDGES:
-        px, py = at_px(x, y); rad = 78
-        kd.ellipse((px-rad, py-rad, px+rad, py+rad), fill=255)
-    keep = keep.filter(ImageFilter.GaussianBlur(6))
-    dark.paste(base, (0, 0), keep)
-    return dark
-
-
 def grid_xy(x, y):
     return round(x * CPT), round((y + HALF_T) * CPT)
 
@@ -192,26 +181,88 @@ def smooth_route(points, samples=10):
 
 
 def terrain_mask(_base):
-    """원화와 같은 굴곡을 갖는 6~8타일 폭의 명시적 통행망."""
-    grid = Image.new('L', (ROWS, COLS), 0)
-    draw = ImageDraw.Draw(grid)
-    for route in ROUTES:
-        draw.line(smooth_route(route), fill=255, width=13, joint='curve')
-    for x, y in LANDMARKS:
-        gx, gy = grid_xy(x, y)
-        rad = 11 if (x, y) in MINES else 9
-        draw.ellipse((gx - rad, gy - rad, gx + rad, gy + rad), fill=255)
-    # 물색 픽셀은 모두 닫는다. 다리는 아래 좌표에서만 다시 열기 때문에 배경의
-    # 강을 아무 데서나 건너는 일은 없다.
+    """사용자가 표시한 길과 원화의 다리·흙길을 직접 따라가는 통행망."""
+    # 물은 절대 경로 후보가 아니다. 아래의 다리 여섯 주변만 다시 후보로 연다.
     water_src = _base.convert('RGB').resize((ROWS, COLS), Image.Resampling.BOX)
     water = Image.new('L', (ROWS, COLS), 0)
-    wp, sp = water.load(), water_src.load()
+    wp, srcp = water.load(), water_src.load()
     for r in range(ROWS):
         for c in range(COLS):
-            red, green, blue = sp[r, c]
+            red, green, blue = srcp[r, c]
             if blue >= 18 and blue * 100 >= red * 125 and blue * 100 >= green * 108:
                 wp[r, c] = 255
     water = water.filter(ImageFilter.MaxFilter(3))
+    wp = water.load()
+    bridge_cells = [grid_xy(x, y) for x, y in BRIDGES]
+
+    # 길은 산보다 밝고 매끈하다. 작은 표본의 평균 밝기와 명암 분산으로 비용을
+    # 만들면, 금빛 산맥과 황토길의 색이 비슷해도 경로는 자연스럽게 길을 택한다.
+    sample = _base.convert('RGB').resize((ROWS * 4, COLS * 4), Image.Resampling.BOX)
+    sp = sample.load()
+    costs = [0] * (ROWS * COLS)
+    for r in range(ROWS):
+        for c in range(COLS):
+            vals = []
+            sr = sg = sb = 0
+            for yy in range(c * 4, c * 4 + 4):
+                for xx in range(r * 4, r * 4 + 4):
+                    red, green, blue = sp[xx, yy]
+                    sr += red; sg += green; sb += blue
+                    vals.append((red * 3 + green * 5 + blue * 2) // 10)
+            red, green, blue = sr // 16, sg // 16, sb // 16
+            mean = sum(vals) // 16
+            variance = sum((v - mean) * (v - mean) for v in vals) // 16
+            dark = max(0, 72 - mean)
+            rough = max(0, variance - 150)
+            cool = max(0, blue * 145 - red * 100) // 20
+            costs[r * COLS + c] = 8 + dark * 5 + rough // 3 + cool
+
+    def bridge_cell(r, c):
+        return any(abs(r - br) <= 2 and abs(c - bc) <= 2 for br, bc in bridge_cells)
+
+    def shortest(a, b):
+        sr, sc = grid_xy(*a); tr, tc = grid_xy(*b)
+        start, goal = sr * COLS + sc, tr * COLS + tc
+        dist = [10**12] * (ROWS * COLS)
+        prev = [-1] * (ROWS * COLS)
+        dist[start] = 0
+        heap = [(0, start)]
+        while heap:
+            cur, idx = heappop(heap)
+            if cur != dist[idx]: continue
+            if idx == goal: break
+            r, c = divmod(idx, COLS)
+            for dr, dc, step in ((-1,0,10),(1,0,10),(0,-1,10),(0,1,10),
+                                 (-1,-1,14),(-1,1,14),(1,-1,14),(1,1,14)):
+                nr, nc = r + dr, c + dc
+                if nr < 0 or nr >= ROWS or nc < 0 or nc >= COLS: continue
+                if wp[nr, nc] and not bridge_cell(nr, nc): continue
+                ni = nr * COLS + nc
+                nd = cur + step * costs[ni]
+                if nd < dist[ni]:
+                    dist[ni] = nd; prev[ni] = idx; heappush(heap, (nd, ni))
+        if prev[goal] < 0 and goal != start:
+            raise RuntimeError(f'통행 경로를 찾지 못했습니다: {a} -> {b}')
+        out = []
+        at = goal
+        while at >= 0:
+            out.append(divmod(at, COLS))
+            if at == start: break
+            at = prev[at]
+        out.reverse()
+        return out
+
+    grid = Image.new('L', (ROWS, COLS), 0)
+    draw = ImageDraw.Draw(grid)
+    for a, b in ROUTE_EDGES:
+        # 다익스트라가 찾은 흙길 중심을 2.5타일 폭으로 연다.
+        draw.line(shortest(a, b), fill=255, width=5, joint='curve')
+    for x, y in LANDMARKS:
+        gx, gy = grid_xy(x, y)
+        rad = 7 if (x, y) in MINES else 5
+        draw.ellipse((gx - rad, gy - rad, gx + rad, gy + rad), fill=255)
+    # 물색 픽셀은 모두 닫는다. 다리는 아래 좌표에서만 다시 열기 때문에 배경의
+    # 강을 아무 데서나 건너는 일은 없다.
     gp, wp = grid.load(), water.load()
     for r in range(ROWS):
         for c in range(COLS):
@@ -219,7 +270,9 @@ def terrain_mask(_base):
     draw = ImageDraw.Draw(grid)
     for x, y in BRIDGES:
         gx, gy = grid_xy(x, y)
-        draw.ellipse((gx - 4, gy - 4, gx + 4, gy + 4), fill=255)
+        # 물 위에서는 다리 중심의 한 타일 폭만 다시 연다. 넓은 원으로 열면
+        # 다리 난간 바깥 강바닥까지 통행 가능해진다.
+        draw.ellipse((gx - 2, gy - 2, gx + 2, gy + 2), fill=255)
     return grid
 
 
@@ -227,7 +280,9 @@ def main():
     old_dir, new_dir = source_dirs()
     base = Image.open(BASE).convert('RGBA').resize((OUT_W, OUT_H), Image.Resampling.LANCZOS)
     mask_im = terrain_mask(base)
-    bg = paint_walkable(base, mask_im, old_dir)
+    # 통행 마스크는 시뮬레이션 판정에만 사용한다. 배경 원화에 마스크를 칠하면
+    # 길이 단색 띠처럼 보여 원래의 자연스러운 지형과 물길이 훼손된다.
+    bg = base.copy()
     old_objects, new_objects = image_of(old_dir, (1448, 1086), True), image_of(new_dir, (1672, 941))
     decorate(bg, old_objects, new_objects)
     MAP_OUT.parent.mkdir(parents=True, exist_ok=True)
@@ -237,6 +292,11 @@ def main():
     px = mask_im.load()
     data = ''.join('.' if px[r, c] else '#' for r in range(ROWS) for c in range(COLS))
     MASK_OUT.write_text(data, encoding='utf-8')
+    MASK_TS_OUT.write_text(
+        '// gen_goldmine.py가 생성한다. 직접 수정하지 말 것.\n'
+        f"export const MASK_GOLDMINE = '{data}';\n",
+        encoding='utf-8',
+    )
     print(f'background {OUT_W}x{OUT_H}; world {LEN_T}x{HALF_T * 2} tiles')
     print(f'mask {ROWS}x{COLS}: {data.count(".")}/{len(data)} walkable')
 

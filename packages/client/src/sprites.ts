@@ -243,6 +243,7 @@ const SHAPES: Record<string, string[]> = {
  */
 const LOOK: Record<string, { shape: string; pal: string; accent?: string }> = {
   c_elf_miner: { shape: 'soldier', pal: 'sylvarin', accent: '#c9a05a' },
+  k_miner: { shape: 'soldier', pal: 'karja', accent: '#d89b43' },
   // 🏜️ 카르자 (캠페인 전용) — 픽셀 아트가 붙기 전까지 쓰는 폴백
   k_scimitar: { shape: 'soldier', pal: 'karja', accent: '#e8d5b0' },
   k_hunter: { shape: 'archer', pal: 'karja' },

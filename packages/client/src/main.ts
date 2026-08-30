@@ -2194,6 +2194,12 @@ async function startCampaignStage(st: CampaignStage): Promise<void> {
     ]
     : st.goldRace
       ? [
+        {
+          x: Math.round(st.goldRace.home.xTile * FP),
+          y: Math.round(st.goldRace.home.yOffTile * FP),
+          label: st.goldRace.home.label,
+          r: Math.round(2.5 * FP),
+        },
         ...st.goldRace.mines.map((m) => ({
           x: Math.round(m.xTile * FP), y: Math.round(m.yOffTile * FP), label: m.label,
           r: Math.round(st.goldRace!.radiusTiles * FP),
@@ -2272,7 +2278,14 @@ async function startCampaignStage(st: CampaignStage): Promise<void> {
     if (campaignStartHold) { campaignHold = true; setHoldRally(true); }
     else {
       const first = campaignLanes.find((l) => !l.hold);
-      if (first) setDeployLane(game, first.y);
+      if (first?.x !== undefined) {
+        // 금광·마을처럼 x가 있는 선택지는 출정 레인이 아니라 집합지다.
+        // 첫 값을 실제 rally 좌표로 적용해야 부대가 기본 적진 목표로 떠나지 않는다.
+        game.rallyX = first.x;
+        game.rallyY = laneCenterY(game.map, first.x) + first.y;
+      } else if (first) {
+        setDeployLane(game, first.y);
+      }
     }
   }
   syncLaneBtn();
@@ -2486,7 +2499,8 @@ function spawnGoldMiners(i: number, team: 0 | 1): void {
   const now = campNowSec();
   if (now < (goldMinerNext[i] ?? 0)) return;
   goldMinerNext[i] = now + 8;
-  const defId = gr.workerDefIds[ids.length % gr.workerDefIds.length]!;
+  const teamWorkers = gr.workerDefIds[team];
+  const defId = teamWorkers[ids.length % teamWorkers.length]!;
   const from = game.map.spawnX[team];
   const k = ids.length;
   const e = spawnUnit(game, defId, team, from, laneCenterY(game.map, from));
@@ -2538,7 +2552,7 @@ function tickGoldRace(): void {
     let ally = 0;
     let foe = 0;
     for (const e of game.entities) {
-      if (!e.alive || e.defId === 'c_elf_miner') continue;
+      if (!e.alive || gr.workerDefIds.some((ids) => ids.includes(e.defId))) continue;
       const d = DEFS[e.defId];
       if (!d || d.tier === 'structure' || !d.weapon) continue;
       const dx = e.x - c.x;

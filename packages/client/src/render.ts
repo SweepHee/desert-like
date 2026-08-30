@@ -76,6 +76,8 @@ export function worldH(): number {
 export const ASSET_UNITS: Record<string, string | string[]> = {
   // ⛏ 엘프 광부 (15 금광 고원)
   c_elf_miner: '/assets/units/c_elf_miner.png',
+  // ⛏ 카르자 광부 — 적 소유 광맥은 카르자 일꾼이 캔다
+  k_miner: '/assets/units/k_miner.png',
   // 🏜️ 카르자 (캠페인 전용) — packages/client/tools/fetch_karja.mjs 가 받아 온다
   k_scimitar: '/assets/units/k_scimitar.png',
   k_hunter: '/assets/units/k_hunter.png',
@@ -277,6 +279,7 @@ export const ASSET_UNITS: Record<string, string | string[]> = {
 /** 상점 아이콘용 정면(south) 스프라이트. 전장은 측면, 아이콘은 정면. */
 const ASSET_ICONS: Record<string, string> = {
   c_elf_miner: '/assets/units/c_elf_miner_icon.png',
+  k_miner: '/assets/units/k_miner_icon.png',
   // 🏜️ 카르자 — 상점 아이콘(정면)
   k_scimitar: '/assets/units/k_scimitar_icon.png',
   k_hunter: '/assets/units/k_hunter_icon.png',
@@ -2349,6 +2352,8 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
   const blessBursts: { x: number; y: number; start: number; r: number }[] = [];
   /** 「질풍의 노래」(에버그린) — 초록 바람이 소용돌이치며 잎과 음표를 실어 나른다. */
   const galeSongs: { x: number; y: number; start: number; r: number }[] = [];
+  /** 하르간 「대지의 가호」 — 황토 룬과 돌조각이 솟는 카르자 전용 연출. */
+  const earthBlessings: { x: number; y: number; start: number; r: number }[] = [];
   const corpses: Corpse[] = [];
 
   // 카메라
@@ -2386,7 +2391,11 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
     if (a?.kind === 'levitate') return 'cast_gravity';
     if (casterId === 'c_kael'
       && (a?.kind === 'taunt' || a?.kind === 'invuln' || a?.kind === 'reflect')) return 'cast_bulwark';
-    if (a?.kind === 'hasteAlly') return casterId === 'c_evergreen' ? 'cast_windsong' : 'cast_bless';
+    if (a?.kind === 'hasteAlly') {
+      if (casterId === 'c_evergreen') return 'cast_windsong';
+      if (casterId === 'k_grandshaman') return 'cast_karja_earth';
+      return 'cast_bless';
+    }
     if (a?.kind === 'critAura') return 'cast_bless';
     if (a?.kind === 'slowFoe' || a?.kind === 'timelock') return 'cast_ice';
     if (a?.kind === 'burrow') return 'cast_quake';
@@ -3262,6 +3271,12 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
               impacts.push({ x: cx, y: cy, start: now, radius: gr * 0.4, color: 0xd8ffd0 });
               impacts.push({ x: cx, y: cy, start: now + 110, radius: gr * 0.78, color: 0x9ae86a });
               impacts.push({ x: cx, y: cy, start: now + 230, radius: gr * 1.1, color: 0xe8fff0 });
+            } else if (e.defId === 'k_grandshaman') {
+              const er = Math.max(R, 48);
+              earthBlessings.push({ x: cx, y: cy, start: now, r: er });
+              ring(er * 0.42, 0xd98732);
+              ring(er * 0.76, 0x8f5528, 110);
+              ring(er, 0xe2b15c, 220);
             } else ring(Math.max(R, 40), 0xffe14d);
           } else if (castKind === 'slowFoe') {
             ring(Math.max(R, 44), 0x7ad0ff);
@@ -4638,6 +4653,40 @@ export async function createRenderer(mount: HTMLElement): Promise<Renderer> {
         const bdy = Math.sin(ang) * dist * 0.5 - rise;
         fx.circle(ovx(bb.x, bdx, bdy), ovy(bb.y, bdx, bdy), 2.6 * fade + 0.7)
           .fill({ color: k % 3 === 0 ? 0xfff0b0 : 0xc8ecff, alpha: fade * 0.95 });
+      }
+    }
+    // ── 하르간 「대지의 가호」: 각진 부족 룬 + 솟구치는 돌조각 (1.1초) ──
+    for (let i = earthBlessings.length - 1; i >= 0; i--) {
+      const eb = earthBlessings[i]!;
+      const t = (now - eb.start) / 1100;
+      if (t >= 1) { earthBlessings.splice(i, 1); continue; }
+      if (t < 0) continue;
+      const fade = 1 - t;
+      const ease = 1 - (1 - t) * (1 - t);
+      // 카르자 문양은 매끈한 원이 아니라 여덟 개의 꺾인 토템 획이다.
+      for (let k = 0; k < 8; k++) {
+        const a = (k / 8) * Math.PI * 2;
+        const r0 = eb.r * (0.24 + ease * 0.62);
+        const r1 = r0 + eb.r * 0.18;
+        const x0 = eb.x + Math.cos(a) * r0;
+        const y0 = eb.y + Math.sin(a) * r0 * 0.5;
+        const x1 = eb.x + Math.cos(a) * r1;
+        const y1 = eb.y + Math.sin(a) * r1 * 0.5;
+        const hook = a + (k % 2 === 0 ? 0.58 : -0.58);
+        fx.moveTo(x0, y0).lineTo(x1, y1)
+          .lineTo(x1 + Math.cos(hook) * 8, y1 + Math.sin(hook) * 4)
+          .stroke({ color: k % 2 === 0 ? 0xe6ad52 : 0x8f5428, width: 3.2, alpha: fade * 0.9 });
+      }
+      // 바닥에서 튀는 돌과 금빛 모래. 잎·음표 연출과 실루엣부터 다르다.
+      for (let k = 0; k < 14; k++) {
+        const a = (k / 14) * Math.PI * 2 + 0.18;
+        const dist = eb.r * ease * (0.35 + (k % 3) * 0.22);
+        const hop = Math.sin(t * Math.PI) * (10 + (k % 4) * 3);
+        const px = eb.x + Math.cos(a) * dist;
+        const py = eb.y + Math.sin(a) * dist * 0.5 - hop;
+        const sz = 2.5 + (k % 3);
+        fx.poly([px, py - sz, px + sz, py, px, py + sz * 0.7, px - sz, py])
+          .fill({ color: k % 3 === 0 ? 0xf0bd58 : k % 3 === 1 ? 0x9b6130 : 0x604027, alpha: fade * 0.95 });
       }
     }
     /*

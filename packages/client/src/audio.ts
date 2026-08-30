@@ -64,6 +64,8 @@ const SFX: Record<string, readonly string[]> = {
   // 에버그린 — 삼연사 / 「질풍의 노래」
   atk_bow_triple: ['/assets/sfx/atk_bow_triple1.mp3'],
   cast_windsong: ['/assets/sfx/cast_windsong2.mp3', '/assets/sfx/cast_windsong1.mp3'],
+  // 하르간 「대지의 가호」 — 낮은 부족 북과 돌이 갈리는 울림
+  cast_karja_earth: ['/assets/sfx/cast_karja_earth1.mp3'],
   // 영웅 강화 — 찍을 때 / 되돌릴 때
   ui_heroup: ['/assets/sfx/ui_heroup1.mp3'],
   ui_herodown: ['/assets/sfx/ui_herodown1.mp3'],

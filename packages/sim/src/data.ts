@@ -1,5 +1,6 @@
 import { FP, idiv, seconds, tiles, tilesPerSecond } from './math.ts';
 import type { ActiveSkill, BonusKey, EntityDef, RaceId, TeamId, Weapon, ZoneKind } from './types.ts';
+import { MASK_GOLDMINE } from './goldmine-mask.ts';
 
 // ── 맵 상수 ────────────────────────────────────────────────────────────────
 export const MAP = {
@@ -173,7 +174,7 @@ const MASK_OWLKEEP =
  * 갈라졌다 합류한다. 갱 여섯에는 넓은 점령 공간을 둔다.
  * 손으로 고치지 말고 스크립트를 다시 돌릴 것.
  */
-const MASK_GOLDMINE =
+const MASK_GOLDMINE_LEGACY =
   '####################################################.........###############################################' +
   '##################################################.............#############################################' +
   '#################################################...............############################################' +
@@ -3060,6 +3061,12 @@ reg(D({
    */
   id: 'c_elf_miner', race: null, name: '엘프 광부', tier: 'basic', summonOnly: true,
   cost: 0, supply: 0, maxHp: 90, armor: 0, tags: ['cloth', 'bio'], ...GROUND,
+  speed: tilesPerSecond(2.2), radius: tiles(0.28), acquireRange: 0,
+}));
+reg(D({
+  /* 카르자 소유 광맥에서 나오는 부족 광부. 전투 능력 없이 광맥 자리만 지킨다. */
+  id: 'k_miner', race: 'karja', name: '카르자 광부', tier: 'basic', summonOnly: true,
+  cost: 0, supply: 0, maxHp: 100, armor: 0, tags: ['cloth', 'bio'], ...GROUND,
   speed: tilesPerSecond(2.2), radius: tiles(0.28), acquireRange: 0,
 }));
 

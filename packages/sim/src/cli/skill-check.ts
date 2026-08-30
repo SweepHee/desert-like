@@ -1315,6 +1315,9 @@ function unlockSage(g: Game, sage: Entity): void {
    * 돌아오지 않게 한다. 목적지별 흐름장이 의도한 우회로를 타는지도 잠근다.
    */
   const m = MAPS['goldmine']!;
+  const karjaMiner = DEFS['k_miner'];
+  ok(karjaMiner?.race === 'karja' && karjaMiner.summonOnly === true && !karjaMiner.weapon,
+    '금광 고원 광부: 카르자 전용 비전투 광부가 등록되어 있다');
   ok(m.length === tiles(120) && m.halfW === tiles(27),
     '금광 고원: 새 120×54타일 유기적 전장');
   ok(m.mask?.rows === 240 && m.mask.cols === 108 && m.mask.data.length === 240 * 108,
@@ -1353,15 +1356,18 @@ function unlockSage(g: Game, sage: Entity): void {
     }
     return false;
   };
-  ok(routeNear([65, -18], [68, 15], [52, 1], 4),
-    '금광 고원 경로: 북중→남중은 중앙 폐광 우회로를 탄다');
-  ok(routeNear([34, -18], [68, 15], [36, 15], 6),
-    '금광 고원 경로: 북서→남중은 남서 광산을 거쳐 간다');
+  ok(routeNear([65, -18], [68, 15], [62, -5], 4),
+    '금광 고원 경로: 북중→남중은 표시된 중앙 굽은길을 탄다');
+  ok(routeNear([34, -18], [68, 15], [48, -15], 4),
+    '금광 고원 경로: 북서→남중은 표시된 북부 연결로를 탄다');
   const bridges = [[29, 3], [46, -3], [52, -14], [53, 19], [86, -6], [83, 11]];
   ok(bridges.every(([x, y]) => isWalkable(m, tiles(x!), tiles(y!))),
     '금광 고원 물길: 나무다리 6곳은 통행 가능');
   ok([[23, -12], [88, 2]].every(([x, y]) => !isWalkable(m, tiles(x!), tiles(y!))),
     '금광 고원 물길: 다리 밖의 강바닥은 통행 불가');
+  const mountainCells = [[20, -10], [45, 10], [75, 0], [105, -12], [55, -20], [90, 15]];
+  ok(mountainCells.every(([x, y]) => !isWalkable(m, tiles(x!), tiles(y!))),
+    '금광 고원 산맥: 표시 경로 바깥 능선 표본은 전부 통행 불가');
 
   const gg = createGame({
     seed: 150013, mapId: 'goldmine',

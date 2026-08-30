@@ -1321,7 +1321,7 @@ function unlockSage(g: Game, sage: Entity): void {
     '금광 고원: 240×108 통행 마스크');
   const mines = [[34, -18], [65, -18], [98, -17],
                  [36, 15], [68, 15], [113, 2]];
-  const sites = [[4, 1], [118, 1], [61, 0], ...mines];
+  const sites = [[4, 1], [118, 1], [52, 1], ...mines];
   ok(sites.every(([x, y]) => isWalkable(m, tiles(x!), tiles(y!))),
     '금광 고원: 양 본진·광산 6곳·중앙 집결지가 전부 길 위');
   let nearest = Infinity;
@@ -1353,10 +1353,15 @@ function unlockSage(g: Game, sage: Entity): void {
     }
     return false;
   };
-  ok(routeNear([65, -18], [68, 15], [61, 0], 3),
+  ok(routeNear([65, -18], [68, 15], [52, 1], 4),
     '금광 고원 경로: 북중→남중은 중앙 폐광 우회로를 탄다');
   ok(routeNear([34, -18], [68, 15], [36, 15], 6),
     '금광 고원 경로: 북서→남중은 남서 광산을 거쳐 간다');
+  const bridges = [[29, 3], [46, -3], [52, -14], [53, 19], [86, -6], [83, 11]];
+  ok(bridges.every(([x, y]) => isWalkable(m, tiles(x!), tiles(y!))),
+    '금광 고원 물길: 나무다리 6곳은 통행 가능');
+  ok([[23, -12], [88, 2]].every(([x, y]) => !isWalkable(m, tiles(x!), tiles(y!))),
+    '금광 고원 물길: 다리 밖의 강바닥은 통행 불가');
 }
 
 {

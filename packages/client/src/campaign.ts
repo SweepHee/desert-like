@@ -1678,7 +1678,7 @@ export const SYLVARIN_CAMPAIGN: readonly CampaignStage[] = [
       ],
       // 갱 말고 부대를 세울 수 있는 자리 — 사잇길을 잡으면 양쪽 갱을 다 받친다
       midpoints: [
-        { xTile: 61, yOffTile: 0, label: '폐광 우회로' },
+        { xTile: 52, yOffTile: 1, label: '폐광 우회로' },
       ],
       radiusTiles: 4.5,
       captureSec: 10,

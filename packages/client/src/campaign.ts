@@ -2541,7 +2541,7 @@ export const HERO_UPGRADES: readonly HeroUpgradeDef[] = [
     desc: '치명타가 터졌을 때의 배율이 오르고 무작위가 된다',
     steps: ['치명타 피해 150%', '치명타 피해 150~200% (무작위)',
       '치명타 피해 170~220% (무작위)', '치명타 피해 200~250% (무작위)'] },
-  // 영웅 능력 (클라가 처리 — 부활·동반 출정) + 아샤 고유 패시브·액티브
+  // 영웅 능력 (클라가 처리 — 부활·동반 출정)
   { id: 'a_revive', hero: 'c_asha', group: 'hero', name: '부활 속도 증가', icon: '⏳', max: 3,
     desc: '쓰러진 뒤 다시 나오기까지 걸리는 시간이 짧아진다',
     steps: ['부활 150초', '부활 138초', '부활 126초', '부활 114초'] },
@@ -2556,14 +2556,16 @@ export const HERO_UPGRADES: readonly HeroUpgradeDef[] = [
     steps: ['충전 없음',
       '살아 있는 동안 부활이 1회 충전 — 충전돼 있으면 즉시 부활',
       '부활 2회까지 충전 (각각 따로 찬다)'] },
-  { id: 'a_ghost', hero: 'c_asha', group: 'hero', name: '그림자의 몸', icon: '👻', max: 1,
+  // 영웅 스킬
+  // 「그림자의 몸」·「폭산」은 부활·별동대와 성격이 달라 스킬 칸에 둔다 —
+  // 둘 다 아샤 자신이 싸우는 방식을 바꾸는 것이지, 출정 규칙이 아니다.
+  { id: 'a_ghost', hero: 'c_asha', group: 'skill', name: '그림자의 몸', icon: '👻', max: 1,
     desc: '누구와도 부딪히지 않는다 — 아군 전열을 그대로 통과해 후열로 간다',
     steps: ['몸싸움을 한다', '몸싸움이 아예 사라진다 (영구)'] },
-  { id: 'a_bomb', hero: 'c_asha', group: 'hero', name: '폭산', icon: '💥', max: 3,
+  { id: 'a_bomb', hero: 'c_asha', group: 'skill', name: '폭산', icon: '💥', max: 3,
     desc: '아샤에게 베인 적은 죽을 때 제 편 한가운데서 터진다 (영웅·네임드 제외)',
     steps: ['터지지 않는다', '죽을 때 5타일 안 제 편에게 최대 체력의 30%',
       '40%', '50%'] },
-  // 영웅 스킬
   { id: 'a_prowl', hero: 'c_asha', group: 'skill', name: '잠행', icon: '🌫', max: 3,
     desc: '길게 은신하며 발밑에 독 안개를 터뜨린다 — 그동안 칼이 완전히 달라진다',
     steps: ['은신 15초 · 독안개 40 · 쿨 55초', '은신 17초 · 독안개 60 · 쿨 50초',
